@@ -17,7 +17,7 @@ repository = "https://github.com/user/genomicsem-rs"
 
 [workspace.dependencies]
 # Core math
-faer = "0.22"
+faer = "0.24"
 statrs = "0.18"
 
 # Parallelism
@@ -41,7 +41,7 @@ flate2 = "1.1"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
+indicatif = "0.18"
 
 # FFI bindings
 extendr-api = "0.7"
