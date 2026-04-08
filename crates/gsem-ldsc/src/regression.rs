@@ -120,8 +120,16 @@ mod tests {
         let y = vec![3.0, 5.0, 7.0, 9.0, 11.0];
         let w = vec![1.0; 5];
         let result = block_regression(&ld, &y, &w, 5);
-        assert!((result.coef[0] - 2.0).abs() < 1e-10, "slope should be 2.0, got {}", result.coef[0]);
-        assert!((result.coef[1] - 1.0).abs() < 1e-10, "intercept should be 1.0, got {}", result.coef[1]);
+        assert!(
+            (result.coef[0] - 2.0).abs() < 1e-10,
+            "slope should be 2.0, got {}",
+            result.coef[0]
+        );
+        assert!(
+            (result.coef[1] - 1.0).abs() < 1e-10,
+            "intercept should be 1.0, got {}",
+            result.coef[1]
+        );
     }
 
     #[test]

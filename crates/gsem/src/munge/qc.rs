@@ -139,7 +139,12 @@ pub fn run_qc_pipeline(
 
     log::info!(
         "QC summary: {} no ref, {} missing P/effect/N, {} bad alleles, {} allele mismatch, {} INFO filtered, {} MAF filtered",
-        n_no_ref, n_missing, n_bad_alleles, n_allele_mismatch, n_info_filtered, n_maf_filtered
+        n_no_ref,
+        n_missing,
+        n_bad_alleles,
+        n_allele_mismatch,
+        n_info_filtered,
+        n_maf_filtered
     );
 
     Ok(output)
@@ -235,7 +240,13 @@ mod tests {
                 snp: "rs1".to_string(),
                 effect: Some(0.05),
                 p: Some(0.5),
-                a1: None, a2: None, se: None, n: None, z: None, info: None, maf: None,
+                a1: None,
+                a2: None,
+                se: None,
+                n: None,
+                z: None,
+                info: None,
+                maf: None,
             })
             .collect();
         assert!(!detect_or(&records));
@@ -248,7 +259,13 @@ mod tests {
                 snp: "rs1".to_string(),
                 effect: Some(1.05),
                 p: Some(0.5),
-                a1: None, a2: None, se: None, n: None, z: None, info: None, maf: None,
+                a1: None,
+                a2: None,
+                se: None,
+                n: None,
+                z: None,
+                info: None,
+                maf: None,
             })
             .collect();
         assert!(detect_or(&records));

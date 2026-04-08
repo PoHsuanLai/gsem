@@ -46,10 +46,7 @@ mod tests {
 
     #[test]
     fn test_numpy_roundtrip() {
-        let mat = faer::mat![
-            [1.0, 2.0],
-            [3.0, 4.0],
-        ];
+        let mat = faer::mat![[1.0, 2.0], [3.0, 4.0],];
         let (flat, nrows, ncols) = mat_to_numpy_flat(&mat);
         assert_eq!(flat, vec![1.0, 2.0, 3.0, 4.0]);
         let recovered = numpy_flat_to_mat(&flat, nrows, ncols);

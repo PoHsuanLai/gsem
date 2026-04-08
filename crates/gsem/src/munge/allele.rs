@@ -11,10 +11,7 @@ pub enum AlleleMatch {
 
 /// Check if a pair of alleles is strand-ambiguous (A/T or C/G).
 pub fn is_strand_ambiguous(a1: &str, a2: &str) -> bool {
-    matches!(
-        (a1, a2),
-        ("A", "T") | ("T", "A") | ("C", "G") | ("G", "C")
-    )
+    matches!((a1, a2), ("A", "T") | ("T", "A") | ("C", "G") | ("G", "C"))
 }
 
 /// Get the complement of an allele (strand flip).

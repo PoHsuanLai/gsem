@@ -84,8 +84,16 @@ mod tests {
 
         let result = estimate_h2(&z, &n, &ld, &w_ld, 1000000.0, 50).unwrap();
         // h2 should be close to 0 under null
-        assert!(result.h2.abs() < 0.1, "h2 should be near 0, got {}", result.h2);
+        assert!(
+            result.h2.abs() < 0.1,
+            "h2 should be near 0, got {}",
+            result.h2
+        );
         // Intercept should be close to 1
-        assert!((result.intercept - 1.0).abs() < 0.5, "intercept should be near 1, got {}", result.intercept);
+        assert!(
+            (result.intercept - 1.0).abs() < 0.5,
+            "intercept should be near 1, got {}",
+            result.intercept
+        );
     }
 }

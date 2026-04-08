@@ -109,11 +109,7 @@ mod tests {
 
     #[test]
     fn test_write_model_single_factor() {
-        let loadings = faer::mat![
-            [0.8],
-            [0.7],
-            [0.6],
-        ];
+        let loadings = faer::mat![[0.8], [0.7], [0.6],];
         let names = vec!["V1".to_string(), "V2".to_string(), "V3".to_string()];
         let model = write_model(&loadings, &names, 0.3, false, false);
         assert!(model.contains("F1 =~"));
@@ -124,11 +120,7 @@ mod tests {
 
     #[test]
     fn test_write_model_cutoff() {
-        let loadings = faer::mat![
-            [0.8],
-            [0.1],
-            [0.6],
-        ];
+        let loadings = faer::mat![[0.8], [0.1], [0.6],];
         let names = vec!["V1".to_string(), "V2".to_string(), "V3".to_string()];
         let model = write_model(&loadings, &names, 0.3, false, false);
         // V2 should NOT be included (loading 0.1 < cutoff 0.3)
@@ -137,10 +129,7 @@ mod tests {
 
     #[test]
     fn test_write_model_with_residuals() {
-        let loadings = faer::mat![
-            [0.8],
-            [0.7],
-        ];
+        let loadings = faer::mat![[0.8], [0.7],];
         let names = vec!["V1".to_string(), "V2".to_string()];
         let model = write_model(&loadings, &names, 0.3, true, false);
         assert!(model.contains("> 0.0001"));

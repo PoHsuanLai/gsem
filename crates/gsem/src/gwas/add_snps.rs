@@ -11,12 +11,7 @@ use super::gc_correction::{self, GcMode};
 ///   S_Full[0,0] = var_snp
 ///   S_Full[0, 1..=k] = var_snp * beta_snp (SNP-phenotype covariances)
 ///   S_Full[1..=k, 1..=k] = S_LD
-pub fn build_s_full(
-    s_ld: &Mat<f64>,
-    beta_snp: &[f64],
-    var_snp: f64,
-    k: usize,
-) -> Mat<f64> {
+pub fn build_s_full(s_ld: &Mat<f64>, beta_snp: &[f64], var_snp: f64, k: usize) -> Mat<f64> {
     let n = k + 1;
     let mut s_full = Mat::zeros(n, n);
 
@@ -105,10 +100,7 @@ mod tests {
 
     #[test]
     fn test_build_s_full_structure() {
-        let s_ld = faer::mat![
-            [0.3, 0.1],
-            [0.1, 0.4],
-        ];
+        let s_ld = faer::mat![[0.3, 0.1], [0.1, 0.4],];
         let beta_snp = vec![0.05, -0.03];
         let var_snp = 0.25;
         let s = build_s_full(&s_ld, &beta_snp, var_snp, 2);

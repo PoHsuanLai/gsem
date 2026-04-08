@@ -63,13 +63,7 @@ pub fn build_v_snp(
 /// Compute GC-adjusted Z-scores for a single SNP.
 ///
 /// Port of `.get_Z_pre()` from GenomicSEM's utils.R.
-pub fn gc_adjusted_z(
-    beta: &[f64],
-    se: &[f64],
-    i_ld: &Mat<f64>,
-    gc: GcMode,
-    k: usize,
-) -> Vec<f64> {
+pub fn gc_adjusted_z(beta: &[f64], se: &[f64], i_ld: &Mat<f64>, gc: GcMode, k: usize) -> Vec<f64> {
     (0..k)
         .map(|x| {
             let denom = match gc {

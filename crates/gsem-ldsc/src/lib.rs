@@ -96,9 +96,7 @@ pub fn ldsc(
     let n_snps = merged.n_snps;
     let n_blocks = config.n_blocks.min(n_snps);
 
-    log::info!(
-        "LDSC: {k} traits, {n_snps} SNPs after merge, {n_blocks} jackknife blocks"
-    );
+    log::info!("LDSC: {k} traits, {n_snps} SNPs after merge, {n_blocks} jackknife blocks");
 
     let kstar = vech::vech_size(k);
     let mut s = Mat::zeros(k, k);

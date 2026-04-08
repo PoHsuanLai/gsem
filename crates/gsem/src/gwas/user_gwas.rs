@@ -1,9 +1,9 @@
 use faer::Mat;
 use gsem_matrix::smooth;
-use gsem_sem::syntax::{self, ParTable};
-use gsem_sem::model::Model;
 use gsem_sem::estimator;
+use gsem_sem::model::Model;
 use gsem_sem::sandwich;
+use gsem_sem::syntax::{self, ParTable};
 use rayon::prelude::*;
 use statrs::distribution::ContinuousCDF;
 
@@ -63,9 +63,9 @@ pub fn run_user_gwas(
     s_ld: &Mat<f64>,
     v_ld: &Mat<f64>,
     i_ld: &Mat<f64>,
-    beta_snp: &[Vec<f64>],  // n_snps × k
-    se_snp: &[Vec<f64>],    // n_snps × k
-    var_snp: &[f64],        // n_snps
+    beta_snp: &[Vec<f64>], // n_snps × k
+    se_snp: &[Vec<f64>],   // n_snps × k
+    var_snp: &[f64],       // n_snps
 ) -> Vec<SnpResult> {
     let n_snps = var_snp.len();
     let k = s_ld.nrows();
@@ -169,8 +169,7 @@ fn process_single_snp(
             let se_val = se.get(i).copied().unwrap_or(0.0);
             let z = if se_val > 0.0 { est / se_val } else { 0.0 };
             let p = if z.is_finite() {
-                2.0 * statrs::distribution::Normal::standard()
-                    .cdf(-z.abs())
+                2.0 * statrs::distribution::Normal::standard().cdf(-z.abs())
             } else {
                 1.0
             };

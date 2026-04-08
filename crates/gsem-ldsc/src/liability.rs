@@ -66,7 +66,8 @@ pub fn liability_conversion_factor(sample_prev: f64, pop_prev: f64) -> f64 {
     let normal = Normal::standard();
     let threshold = normal.inverse_cdf(1.0 - pop_prev);
     let z_density = normal.pdf(threshold);
-    (pop_prev.powi(2) * (1.0 - pop_prev).powi(2)) / (sample_prev * (1.0 - sample_prev) * z_density.powi(2))
+    (pop_prev.powi(2) * (1.0 - pop_prev).powi(2))
+        / (sample_prev * (1.0 - sample_prev) * z_density.powi(2))
 }
 
 #[cfg(test)]
@@ -78,7 +79,10 @@ mod tests {
         // For a rare disease with K=0.01, P=0.5 (case-control 50/50)
         let cf = liability_conversion_factor(0.5, 0.01);
         // Conversion factor should be positive and finite
-        assert!(cf > 0.0 && cf.is_finite(), "cf should be positive and finite, got {cf}");
+        assert!(
+            cf > 0.0 && cf.is_finite(),
+            "cf should be positive and finite, got {cf}"
+        );
     }
 
     #[test]

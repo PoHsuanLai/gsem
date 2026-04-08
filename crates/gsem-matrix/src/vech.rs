@@ -57,21 +57,14 @@ mod tests {
 
     #[test]
     fn test_vech_2x2() {
-        let mat = faer::mat![
-            [1.0, 2.0],
-            [2.0, 3.0],
-        ];
+        let mat = faer::mat![[1.0, 2.0], [2.0, 3.0],];
         let v = vech(&mat);
         assert_eq!(v, vec![1.0, 2.0, 3.0]);
     }
 
     #[test]
     fn test_vech_3x3() {
-        let mat = faer::mat![
-            [1.0, 4.0, 5.0],
-            [4.0, 2.0, 6.0],
-            [5.0, 6.0, 3.0],
-        ];
+        let mat = faer::mat![[1.0, 4.0, 5.0], [4.0, 2.0, 6.0], [5.0, 6.0, 3.0],];
         // Column-major lower tri: (0,0), (1,0), (2,0), (1,1), (2,1), (2,2)
         let v = vech(&mat);
         assert_eq!(v, vec![1.0, 4.0, 5.0, 2.0, 6.0, 3.0]);
@@ -79,11 +72,7 @@ mod tests {
 
     #[test]
     fn test_vech_roundtrip() {
-        let mat = faer::mat![
-            [1.0, 0.5, 0.3],
-            [0.5, 2.0, 0.7],
-            [0.3, 0.7, 3.0],
-        ];
+        let mat = faer::mat![[1.0, 0.5, 0.3], [0.5, 2.0, 0.7], [0.3, 0.7, 3.0],];
         let v = vech(&mat);
         let reconstructed = vech_reverse(&v, 3);
         for i in 0..3 {
@@ -104,9 +93,6 @@ mod tests {
     #[test]
     fn test_vech_indices() {
         let idx = vech_indices(3);
-        assert_eq!(
-            idx,
-            vec![(0, 0), (1, 0), (2, 0), (1, 1), (2, 1), (2, 2)]
-        );
+        assert_eq!(idx, vec![(0, 0), (1, 0), (2, 0), (1, 1), (2, 1), (2, 2)]);
     }
 }

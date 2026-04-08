@@ -168,13 +168,11 @@ impl Model {
     pub fn get_param_vec(&self) -> Vec<f64> {
         self.free_params
             .iter()
-            .map(|loc| {
-                match loc.matrix {
-                    MatrixId::Lambda => self.lambda[(loc.row, loc.col)],
-                    MatrixId::Psi => self.psi[(loc.row, loc.col)],
-                    MatrixId::Theta => self.theta[(loc.row, loc.col)],
-                    MatrixId::Beta => self.beta[(loc.row, loc.col)],
-                }
+            .map(|loc| match loc.matrix {
+                MatrixId::Lambda => self.lambda[(loc.row, loc.col)],
+                MatrixId::Psi => self.psi[(loc.row, loc.col)],
+                MatrixId::Theta => self.theta[(loc.row, loc.col)],
+                MatrixId::Beta => self.beta[(loc.row, loc.col)],
             })
             .collect()
     }

@@ -163,10 +163,7 @@ mod tests {
 
     #[test]
     fn test_already_pd() {
-        let mat = faer::mat![
-            [2.0, 1.0],
-            [1.0, 2.0],
-        ];
+        let mat = faer::mat![[2.0, 1.0], [1.0, 2.0],];
         let result = nearest_pd_default(&mat).unwrap();
         for i in 0..2 {
             for j in 0..2 {
@@ -183,10 +180,7 @@ mod tests {
     #[test]
     fn test_not_pd() {
         // eigenvalues are 3 and -1, so not PD
-        let mat = faer::mat![
-            [1.0, 2.0],
-            [2.0, 1.0],
-        ];
+        let mat = faer::mat![[1.0, 2.0], [2.0, 1.0],];
         let result = nearest_pd_default(&mat).unwrap();
         assert!(result.llt(Side::Lower).is_ok(), "result should be PD");
         assert!((result[(0, 1)] - result[(1, 0)]).abs() < 1e-12);
@@ -194,11 +188,7 @@ mod tests {
 
     #[test]
     fn test_3x3_not_pd() {
-        let mat = faer::mat![
-            [1.0, 0.9, 0.9],
-            [0.9, 1.0, 0.9],
-            [0.9, 0.9, 0.0],
-        ];
+        let mat = faer::mat![[1.0, 0.9, 0.9], [0.9, 1.0, 0.9], [0.9, 0.9, 0.0],];
         let result = nearest_pd_default(&mat).unwrap();
         assert!(result.llt(Side::Lower).is_ok(), "result should be PD");
         for i in 0..3 {
@@ -213,10 +203,7 @@ mod tests {
 
     #[test]
     fn test_keep_diag() {
-        let mat = faer::mat![
-            [1.0, 2.0],
-            [2.0, 1.0],
-        ];
+        let mat = faer::mat![[1.0, 2.0], [2.0, 1.0],];
         let result = nearest_pd(&mat, true, 100, 1e-8).unwrap();
         assert!((result[(0, 0)] - 1.0).abs() < 1e-12);
         assert!((result[(1, 1)] - 1.0).abs() < 1e-12);

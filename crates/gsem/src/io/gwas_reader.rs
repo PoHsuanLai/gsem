@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 
-use super::column_detect::{detect_columns, DetectedColumns};
+use super::column_detect::{DetectedColumns, detect_columns};
 
 /// A single row of raw GWAS summary statistics.
 #[derive(Debug, Clone)]
@@ -48,15 +48,11 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
     let mut lines = reader.lines();
 
     // Read header line
-    let header_line = lines
-        .next()
-        .context("empty file")??;
+    let header_line = lines.next().context("empty file")??;
     let headers = split_delimited(&header_line);
     let detected = detect_columns(&headers);
 
-    let snp_idx = detected
-        .get("SNP")
-        .context("SNP column not found")?;
+    let snp_idx = detected.get("SNP").context("SNP column not found")?;
 
     let mut records = Vec::new();
 
@@ -116,17 +112,30 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
     let mut lines = reader.lines();
 
     // Read and validate header
-    let header_line = lines
-        .next()
-        .context("empty sumstats file")??;
+    let header_line = lines.next().context("empty sumstats file")??;
     let headers = split_delimited(&header_line);
     let upper: Vec<String> = headers.iter().map(|h| h.to_uppercase()).collect();
 
-    let snp_idx = upper.iter().position(|h| h == "SNP").context("SNP column not found in sumstats")?;
-    let n_idx = upper.iter().position(|h| h == "N").context("N column not found in sumstats")?;
-    let z_idx = upper.iter().position(|h| h == "Z").context("Z column not found in sumstats")?;
-    let a1_idx = upper.iter().position(|h| h == "A1").context("A1 column not found in sumstats")?;
-    let a2_idx = upper.iter().position(|h| h == "A2").context("A2 column not found in sumstats")?;
+    let snp_idx = upper
+        .iter()
+        .position(|h| h == "SNP")
+        .context("SNP column not found in sumstats")?;
+    let n_idx = upper
+        .iter()
+        .position(|h| h == "N")
+        .context("N column not found in sumstats")?;
+    let z_idx = upper
+        .iter()
+        .position(|h| h == "Z")
+        .context("Z column not found in sumstats")?;
+    let a1_idx = upper
+        .iter()
+        .position(|h| h == "A1")
+        .context("A1 column not found in sumstats")?;
+    let a2_idx = upper
+        .iter()
+        .position(|h| h == "A2")
+        .context("A2 column not found in sumstats")?;
 
     let mut records = Vec::new();
     for line_result in lines {

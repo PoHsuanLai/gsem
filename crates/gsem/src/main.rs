@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use gsem::munge;
 use gsem::io::gwas_reader;
+use gsem::munge;
 
 #[derive(Parser)]
 #[command(name = "genomicsem", about = "Genomic Structural Equation Modeling")]
@@ -153,9 +153,15 @@ fn main() -> Result<()> {
             maf_filter,
             n,
             out,
-        } => {
-            run_munge(&files, &hm3, trait_names.as_deref(), info_filter, maf_filter, n, &out)
-        }
+        } => run_munge(
+            &files,
+            &hm3,
+            trait_names.as_deref(),
+            info_filter,
+            maf_filter,
+            n,
+            &out,
+        ),
         Commands::Ldsc {
             traits,
             sample_prev,
@@ -165,7 +171,16 @@ fn main() -> Result<()> {
             trait_names,
             n_blocks,
             out,
-        } => run_ldsc(&traits, sample_prev, pop_prev, &ld, wld, trait_names, n_blocks, &out),
+        } => run_ldsc(
+            &traits,
+            sample_prev,
+            pop_prev,
+            &ld,
+            wld,
+            trait_names,
+            n_blocks,
+            &out,
+        ),
         Commands::Sem {
             covstruc,
             model,
@@ -182,7 +197,16 @@ fn main() -> Result<()> {
             gc,
             threads,
             out,
-        } => run_gwas(&covstruc, &sumstats, model, model_file, &estimation, &gc, threads, &out),
+        } => run_gwas(
+            &covstruc,
+            &sumstats,
+            model,
+            model_file,
+            &estimation,
+            &gc,
+            threads,
+            &out,
+        ),
     }
 }
 
@@ -197,8 +221,7 @@ fn run_munge(
 ) -> Result<()> {
     // Read reference
     eprintln!("Reading reference panel: {}", hm3.display());
-    let reference = munge::read_reference(hm3)
-        .context("failed to read HapMap3 reference")?;
+    let reference = munge::read_reference(hm3).context("failed to read HapMap3 reference")?;
     eprintln!("Loaded {} reference SNPs", reference.len());
 
     let config = munge::MungeConfig {
@@ -255,10 +278,14 @@ fn run_ldsc(
 
     // Read LD scores
     let wld_dir = wld.as_ref().unwrap_or(ld);
-    let ld_data = gsem::io::ld_reader::read_ld_scores(ld, wld_dir, 22)
-        .context("failed to read LD scores")?;
+    let ld_data =
+        gsem::io::ld_reader::read_ld_scores(ld, wld_dir, 22).context("failed to read LD scores")?;
 
-    eprintln!("Loaded {} LD score SNPs, M={}", ld_data.records.len(), ld_data.total_m);
+    eprintln!(
+        "Loaded {} LD score SNPs, M={}",
+        ld_data.records.len(),
+        ld_data.total_m
+    );
 
     // Parse prevalences
     let k = traits.len();
@@ -287,8 +314,7 @@ fn run_ldsc(
 
     // Write JSON output
     let json = result.to_json_string()?;
-    std::fs::write(out, &json)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(out, &json).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("LDSC complete. Results written to {}", out.display());
 
@@ -296,13 +322,17 @@ fn run_ldsc(
     let k = result.s.nrows();
     eprintln!("\nGenetic covariance matrix (S):");
     for i in 0..k {
-        let row: Vec<String> = (0..k).map(|j| format!("{:8.4}", result.s[(i, j)])).collect();
+        let row: Vec<String> = (0..k)
+            .map(|j| format!("{:8.4}", result.s[(i, j)]))
+            .collect();
         eprintln!("  {}", row.join(" "));
     }
 
     eprintln!("\nIntercepts (I):");
     for i in 0..k {
-        let row: Vec<String> = (0..k).map(|j| format!("{:8.4}", result.i_mat[(i, j)])).collect();
+        let row: Vec<String> = (0..k)
+            .map(|j| format!("{:8.4}", result.i_mat[(i, j)]))
+            .collect();
         eprintln!("  {}", row.join(" "));
     }
 
@@ -325,8 +355,7 @@ fn run_sem(
     let model_str = if let Some(m) = model {
         m
     } else if let Some(f) = model_file {
-        std::fs::read_to_string(&f)
-            .with_context(|| format!("failed to read {}", f.display()))?
+        std::fs::read_to_string(&f).with_context(|| format!("failed to read {}", f.display()))?
     } else {
         anyhow::bail!("must provide --model or --model-file");
     };
@@ -334,8 +363,8 @@ fn run_sem(
     eprintln!("Fitting SEM model (estimation={estimation})...");
 
     // Parse and fit
-    let pt = gsem_sem::syntax::parse_model(&model_str, false)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pt =
+        gsem_sem::syntax::parse_model(&model_str, false).map_err(|e| anyhow::anyhow!("{e}"))?;
     let k = ldsc_result.s.nrows();
     let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
     let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
@@ -357,11 +386,13 @@ fn run_sem(
     for (i, row) in pt.rows.iter().enumerate() {
         if row.free > 0 {
             let est = fit.params.get(i).copied().unwrap_or(0.0);
-            output.push_str(&format!("{}\t{}\t{}\t{:.6}\n", row.lhs, row.op, row.rhs, est));
+            output.push_str(&format!(
+                "{}\t{}\t{}\t{:.6}\n",
+                row.lhs, row.op, row.rhs, est
+            ));
         }
     }
-    std::fs::write(out, &output)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Results written to {}", out.display());
     Ok(())
@@ -405,11 +436,16 @@ fn run_gwas(
         model_str.len()
     );
     eprintln!("Note: full GWAS requires merged sumstats with SNP-level betas/SEs.");
-    eprintln!("Use the library API (gsem::gwas::user_gwas::run_user_gwas) for programmatic access.");
+    eprintln!(
+        "Use the library API (gsem::gwas::user_gwas::run_user_gwas) for programmatic access."
+    );
 
     // Placeholder output
-    std::fs::write(out, "# GWAS results (run with library API for full output)\n")
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(
+        out,
+        "# GWAS results (run with library API for full output)\n",
+    )
+    .with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Output: {}", out.display());
     Ok(())

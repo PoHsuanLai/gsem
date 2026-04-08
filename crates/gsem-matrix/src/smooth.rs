@@ -70,28 +70,19 @@ mod tests {
 
     #[test]
     fn test_is_pd_positive() {
-        let mat = faer::mat![
-            [2.0, 1.0],
-            [1.0, 2.0],
-        ];
+        let mat = faer::mat![[2.0, 1.0], [1.0, 2.0],];
         assert!(is_pd(&mat));
     }
 
     #[test]
     fn test_is_pd_negative() {
-        let mat = faer::mat![
-            [1.0, 2.0],
-            [2.0, 1.0],
-        ];
+        let mat = faer::mat![[1.0, 2.0], [2.0, 1.0],];
         assert!(!is_pd(&mat));
     }
 
     #[test]
     fn test_smooth_if_needed_already_pd() {
-        let mut mat = faer::mat![
-            [2.0, 1.0],
-            [1.0, 2.0],
-        ];
+        let mut mat = faer::mat![[2.0, 1.0], [1.0, 2.0],];
         let original = mat.clone();
         let smoothed = smooth_if_needed(&mut mat);
         assert!(!smoothed);
@@ -104,10 +95,7 @@ mod tests {
 
     #[test]
     fn test_smooth_if_needed_not_pd() {
-        let mut mat = faer::mat![
-            [1.0, 2.0],
-            [2.0, 1.0],
-        ];
+        let mut mat = faer::mat![[1.0, 2.0], [2.0, 1.0],];
         let smoothed = smooth_if_needed(&mut mat);
         assert!(smoothed);
         assert!(is_pd(&mat));
@@ -115,10 +103,7 @@ mod tests {
 
     #[test]
     fn test_cov_to_cor() {
-        let cov = faer::mat![
-            [4.0, 2.0],
-            [2.0, 9.0],
-        ];
+        let cov = faer::mat![[4.0, 2.0], [2.0, 9.0],];
         let cor = cov_to_cor(&cov);
         assert!((cor[(0, 0)] - 1.0).abs() < 1e-12);
         assert!((cor[(1, 1)] - 1.0).abs() < 1e-12);
@@ -129,10 +114,7 @@ mod tests {
 
     #[test]
     fn test_cor_to_cov_roundtrip() {
-        let cov = faer::mat![
-            [4.0, 2.0],
-            [2.0, 9.0],
-        ];
+        let cov = faer::mat![[4.0, 2.0], [2.0, 9.0],];
         let sds: Vec<f64> = (0..2usize).map(|i| f64::sqrt(cov[(i, i)])).collect();
         let cor = cov_to_cor(&cov);
         let recovered = cor_to_cov(&cor, &sds);

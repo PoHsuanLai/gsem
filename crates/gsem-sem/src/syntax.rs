@@ -102,7 +102,9 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
             let r = line[idx + 1..].trim();
             (l, Op::Regression, r)
         } else {
-            return Err(SemError::SyntaxError(format!("no operator found in: {line}")));
+            return Err(SemError::SyntaxError(format!(
+                "no operator found in: {line}"
+            )));
         };
 
         let lhs_str = lhs.to_string();
@@ -218,15 +220,16 @@ impl ParTable {
         let mut seen = std::collections::HashSet::new();
 
         for row in &self.rows {
-            if row.op == Op::Loading && !latent.contains(&row.rhs) && seen.insert(row.rhs.clone())
-            {
+            if row.op == Op::Loading && !latent.contains(&row.rhs) && seen.insert(row.rhs.clone()) {
                 observed.push(row.rhs.clone());
             }
         }
 
         // Also include regression targets that aren't latent
         for row in &self.rows {
-            if row.op == Op::Regression && !latent.contains(&row.rhs) && seen.insert(row.rhs.clone())
+            if row.op == Op::Regression
+                && !latent.contains(&row.rhs)
+                && seen.insert(row.rhs.clone())
             {
                 observed.push(row.rhs.clone());
             }
@@ -313,11 +316,7 @@ mod tests {
     fn test_parse_constraint() {
         let model = "F1 =~ V1 + V2\nV1 ~~ res1*V1\nres1 > 0.0001";
         let pt = parse_model(model, false).unwrap();
-        let constrained: Vec<_> = pt
-            .rows
-            .iter()
-            .filter(|r| r.lower_bound.is_some())
-            .collect();
+        let constrained: Vec<_> = pt.rows.iter().filter(|r| r.lower_bound.is_some()).collect();
         assert_eq!(constrained.len(), 1);
         assert_eq!(constrained[0].lower_bound, Some(0.0001));
     }

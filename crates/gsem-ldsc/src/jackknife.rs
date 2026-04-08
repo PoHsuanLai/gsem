@@ -131,7 +131,10 @@ mod tests {
         assert_eq!(v.ncols(), 3);
         for i in 0..3 {
             for j in 0..3 {
-                assert!((v[(i, j)] - v[(j, i)]).abs() < 1e-15, "V not symmetric at ({i},{j})");
+                assert!(
+                    (v[(i, j)] - v[(j, i)]).abs() < 1e-15,
+                    "V not symmetric at ({i},{j})"
+                );
             }
         }
     }

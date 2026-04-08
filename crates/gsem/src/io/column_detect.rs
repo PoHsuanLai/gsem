@@ -7,8 +7,19 @@ fn build_alias_map() -> HashMap<&'static str, Vec<&'static str>> {
     m.insert(
         "SNP",
         vec![
-            "SNP", "SNPID", "RSID", "RS_NUMBER", "RS_NUMBERS", "MARKERNAME", "ID", "PREDICTOR",
-            "SNP_ID", "VARIANTID", "VARIANT_ID", "RSIDS", "RS_ID",
+            "SNP",
+            "SNPID",
+            "RSID",
+            "RS_NUMBER",
+            "RS_NUMBERS",
+            "MARKERNAME",
+            "ID",
+            "PREDICTOR",
+            "SNP_ID",
+            "VARIANTID",
+            "VARIANT_ID",
+            "RSIDS",
+            "RS_ID",
         ],
     );
     m.insert(
@@ -26,8 +37,16 @@ fn build_alias_map() -> HashMap<&'static str, Vec<&'static str>> {
     m.insert(
         "A2",
         vec![
-            "A2", "ALLELE2", "ALLELE0", "OTHER_ALLELE", "NON_EFFECT_ALLELE", "DEC_ALLELE", "OA",
-            "NEA", "ALT", "A0",
+            "A2",
+            "ALLELE2",
+            "ALLELE0",
+            "OTHER_ALLELE",
+            "NON_EFFECT_ALLELE",
+            "DEC_ALLELE",
+            "OA",
+            "NEA",
+            "ALT",
+            "A0",
         ],
     );
     m.insert(
@@ -49,7 +68,14 @@ fn build_alias_map() -> HashMap<&'static str, Vec<&'static str>> {
     m.insert(
         "P",
         vec![
-            "P", "PVALUE", "PVAL", "P_VALUE", "P-VALUE", "P.VALUE", "P_VAL", "GC_PVALUE",
+            "P",
+            "PVALUE",
+            "PVAL",
+            "P_VALUE",
+            "P-VALUE",
+            "P.VALUE",
+            "P_VAL",
+            "GC_PVALUE",
             "WALD_P",
         ],
     );
@@ -109,10 +135,7 @@ fn build_alias_map() -> HashMap<&'static str, Vec<&'static str>> {
             "STANDARD_ERROR",
         ],
     );
-    m.insert(
-        "DIRECTION",
-        vec!["DIRECTION", "DIREC", "DIRE", "SIGN"],
-    );
+    m.insert("DIRECTION", vec!["DIRECTION", "DIREC", "DIRE", "SIGN"]);
     // Special N columns that need doubling
     m.insert("NEFFDIV2", vec!["NEFFDIV2"]);
     m.insert("NEFF_HALF", vec!["NEFF_HALF"]);
@@ -187,10 +210,11 @@ mod tests {
 
     #[test]
     fn test_case_insensitive() {
-        let headers: Vec<String> = vec!["rsid", "allele1", "allele2", "beta", "pvalue", "samplesize"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let headers: Vec<String> =
+            vec!["rsid", "allele1", "allele2", "beta", "pvalue", "samplesize"]
+                .into_iter()
+                .map(String::from)
+                .collect();
         let detected = detect_columns(&headers);
         assert_eq!(detected.get("SNP"), Some(0));
         assert_eq!(detected.get("A1"), Some(1));
@@ -218,10 +242,7 @@ mod tests {
 
     #[test]
     fn test_missing_columns() {
-        let headers: Vec<String> = vec!["SNP", "P"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let headers: Vec<String> = vec!["SNP", "P"].into_iter().map(String::from).collect();
         let detected = detect_columns(&headers);
         assert!(detected.has("SNP"));
         assert!(detected.has("P"));

@@ -7,11 +7,7 @@ use faer::Mat;
 /// The V matrix is the sampling covariance of vech(S). Its rows/columns correspond
 /// to elements of the lower triangle of S. When the SEM model reorders variables
 /// internally, V must be permuted accordingly.
-pub fn reorder_v(
-    v: &Mat<f64>,
-    user_order: &[String],
-    model_order: &[String],
-) -> Mat<f64> {
+pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) -> Mat<f64> {
     let k = user_order.len();
     assert_eq!(k, model_order.len());
     let kstar = k * (k + 1) / 2;
@@ -79,11 +75,7 @@ mod tests {
 
     #[test]
     fn test_reorder_identity() {
-        let v = faer::mat![
-            [1.0, 0.5, 0.3],
-            [0.5, 2.0, 0.4],
-            [0.3, 0.4, 3.0],
-        ];
+        let v = faer::mat![[1.0, 0.5, 0.3], [0.5, 2.0, 0.4], [0.3, 0.4, 3.0],];
         let order = vec!["A".to_string(), "B".to_string()];
         let result = reorder_v(&v, &order, &order);
         for i in 0..3 {
@@ -96,11 +88,7 @@ mod tests {
     #[test]
     fn test_reorder_swap() {
         // 2 variables: vech has 3 elements: (0,0), (1,0), (1,1)
-        let v = faer::mat![
-            [1.0, 0.2, 0.3],
-            [0.2, 2.0, 0.4],
-            [0.3, 0.4, 3.0],
-        ];
+        let v = faer::mat![[1.0, 0.2, 0.3], [0.2, 2.0, 0.4], [0.3, 0.4, 3.0],];
         let user = vec!["A".to_string(), "B".to_string()];
         let model = vec!["B".to_string(), "A".to_string()];
         let result = reorder_v(&v, &user, &model);

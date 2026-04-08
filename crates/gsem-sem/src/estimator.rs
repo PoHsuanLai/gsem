@@ -20,15 +20,13 @@ pub struct FitResult {
 ///
 /// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
 /// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
-pub fn fit_dwls(
-    model: &mut Model,
-    s_obs: &Mat<f64>,
-    v_diag: &[f64],
-    max_iter: usize,
-) -> FitResult {
+pub fn fit_dwls(model: &mut Model, s_obs: &Mat<f64>, v_diag: &[f64], max_iter: usize) -> FitResult {
     let s_vec = vech::vech(s_obs);
     // Weight matrix: W = 1/diag(V)
-    let w: Vec<f64> = v_diag.iter().map(|&v| if v > 1e-30 { 1.0 / v } else { 0.0 }).collect();
+    let w: Vec<f64> = v_diag
+        .iter()
+        .map(|&v| if v > 1e-30 { 1.0 / v } else { 0.0 })
+        .collect();
 
     let mut params = model.get_param_vec();
 
@@ -117,11 +115,7 @@ pub fn fit_dwls(
 /// Fit a model using Maximum Likelihood.
 ///
 /// Minimizes: F = log|Sigma| + tr(S * Sigma^{-1}) - log|S| - p
-pub fn fit_ml(
-    model: &mut Model,
-    s_obs: &Mat<f64>,
-    max_iter: usize,
-) -> FitResult {
+pub fn fit_ml(model: &mut Model, s_obs: &Mat<f64>, max_iter: usize) -> FitResult {
     let _s_vec = vech::vech(s_obs);
     let mut params = model.get_param_vec();
 
@@ -241,12 +235,7 @@ fn ml_objective(model: &Model, s_obs: &Mat<f64>) -> f64 {
 }
 
 /// Numerical gradient for DWLS objective via central differences.
-fn numerical_gradient(
-    model: &mut Model,
-    params: &[f64],
-    s_vec: &[f64],
-    w: &[f64],
-) -> Vec<f64> {
+fn numerical_gradient(model: &mut Model, params: &[f64], s_vec: &[f64], w: &[f64]) -> Vec<f64> {
     let eps = 1e-7;
     let n = params.len();
     let mut grad = vec![0.0; n];
@@ -271,11 +260,7 @@ fn numerical_gradient(
 }
 
 /// Numerical gradient for ML objective.
-fn numerical_gradient_ml(
-    model: &mut Model,
-    params: &[f64],
-    s_obs: &Mat<f64>,
-) -> Vec<f64> {
+fn numerical_gradient_ml(model: &mut Model, params: &[f64], s_obs: &Mat<f64>) -> Vec<f64> {
     let eps = 1e-7;
     let n = params.len();
     let mut grad = vec![0.0; n];

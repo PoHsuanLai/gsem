@@ -19,11 +19,7 @@ pub struct PaResult {
 /// computes eigenvalues, and compares observed to 95th percentile.
 ///
 /// Port of GenomicSEM's `paLDSC()`.
-pub fn parallel_analysis(
-    s: &Mat<f64>,
-    v: &Mat<f64>,
-    n_sim: usize,
-) -> PaResult {
+pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     let k = s.nrows();
 
     // Convert S to correlation matrix for eigenanalysis
@@ -133,11 +129,7 @@ mod tests {
     #[test]
     fn test_parallel_analysis_one_factor() {
         // Strong 1-factor structure
-        let s = faer::mat![
-            [1.0, 0.8, 0.8],
-            [0.8, 1.0, 0.8],
-            [0.8, 0.8, 1.0],
-        ];
+        let s = faer::mat![[1.0, 0.8, 0.8], [0.8, 1.0, 0.8], [0.8, 0.8, 1.0],];
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
         let result = parallel_analysis(&s, &v, 200);
         assert!(result.n_factors >= 1);

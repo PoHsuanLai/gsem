@@ -78,10 +78,7 @@ mod tests {
 
     #[test]
     fn test_r_matrix_roundtrip() {
-        let mat = faer::mat![
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-        ];
+        let mat = faer::mat![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0],];
         let r_data: Vec<f64> = {
             // Column-major: col0=[1,4], col1=[2,5], col2=[3,6]
             vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]
@@ -98,7 +95,11 @@ mod tests {
     fn test_ldsc_json_roundtrip() {
         let result = LdscResult {
             s: faer::mat![[0.3, 0.1], [0.1, 0.4]],
-            v: faer::mat![[0.01, 0.002, 0.003], [0.002, 0.02, 0.004], [0.003, 0.004, 0.03]],
+            v: faer::mat![
+                [0.01, 0.002, 0.003],
+                [0.002, 0.02, 0.004],
+                [0.003, 0.004, 0.03]
+            ],
             i_mat: faer::mat![[1.05, 0.02], [0.02, 1.03]],
             n_vec: vec![50000.0, 50000.0, 50000.0],
             m: 1000000.0,

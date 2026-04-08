@@ -84,14 +84,22 @@ mod tests {
         // Two independent traits should have gcov ≈ 0
         let n_snps = 500;
         // Alternating signs, no correlation
-        let z1: Vec<f64> = (0..n_snps).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
-        let z2: Vec<f64> = (0..n_snps).map(|i| if i % 3 == 0 { 1.0 } else { -1.0 }).collect();
+        let z1: Vec<f64> = (0..n_snps)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let z2: Vec<f64> = (0..n_snps)
+            .map(|i| if i % 3 == 0 { 1.0 } else { -1.0 })
+            .collect();
         let n1 = vec![50000.0; n_snps];
         let n2 = vec![50000.0; n_snps];
         let ld: Vec<f64> = (0..n_snps).map(|i| 10.0 + (i as f64) * 0.02).collect();
         let w_ld = ld.clone();
 
         let result = estimate_gcov(&z1, &z2, &n1, &n2, &ld, &w_ld, 1000000.0, 50).unwrap();
-        assert!(result.gcov.abs() < 0.5, "gcov should be near 0, got {}", result.gcov);
+        assert!(
+            result.gcov.abs() < 0.5,
+            "gcov should be near 0, got {}",
+            result.gcov
+        );
     }
 }

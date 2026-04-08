@@ -40,9 +40,18 @@ pub struct RefSnp {
 /// Expects a file with at least columns: SNP, A1, A2.
 pub fn read_reference(path: &Path) -> Result<HashMap<String, RefSnp>> {
     let data = gwas_reader::read_gwas_file(path)?;
-    let _snp_idx = data.detected.get("SNP").context("SNP column not found in reference")?;
-    let _a1_idx = data.detected.get("A1").context("A1 column not found in reference")?;
-    let _a2_idx = data.detected.get("A2").context("A2 column not found in reference")?;
+    let _snp_idx = data
+        .detected
+        .get("SNP")
+        .context("SNP column not found in reference")?;
+    let _a1_idx = data
+        .detected
+        .get("A1")
+        .context("A1 column not found in reference")?;
+    let _a2_idx = data
+        .detected
+        .get("A2")
+        .context("A2 column not found in reference")?;
 
     let mut map = HashMap::new();
     for rec in &data.records {
@@ -74,7 +83,10 @@ pub fn munge_file(
 
     let records = qc::run_qc_pipeline(data.records, reference, config)?;
     let n_output = records.len();
-    log::info!("After QC: {n_output} SNPs remain ({} removed)", n_input - n_output);
+    log::info!(
+        "After QC: {n_output} SNPs remain ({} removed)",
+        n_input - n_output
+    );
 
     Ok(records)
 }

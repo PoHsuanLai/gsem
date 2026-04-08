@@ -6,20 +6,18 @@
 /// - het_w = 1 / (2 * (1 + c * ld)^2)
 /// - oc_w = 1 / max(w_ld, 1)
 /// - w = het_w * oc_w, normalized: sqrt(w) / sum(sqrt(w))
-pub fn compute_h2_weights(
-    chi2: &[f64],
-    ld: &[f64],
-    w_ld: &[f64],
-    n_bar: f64,
-    m: f64,
-) -> Vec<f64> {
+pub fn compute_h2_weights(chi2: &[f64], ld: &[f64], w_ld: &[f64], n_bar: f64, m: f64) -> Vec<f64> {
     let n_snps = chi2.len();
     assert_eq!(n_snps, ld.len());
     assert_eq!(n_snps, w_ld.len());
 
     // Compute total aggregated heritability
     let mean_chi2: f64 = chi2.iter().sum::<f64>() / n_snps as f64;
-    let mean_ld_n: f64 = ld.iter().zip(std::iter::repeat(n_bar)).map(|(l, n)| l * n).sum::<f64>()
+    let mean_ld_n: f64 = ld
+        .iter()
+        .zip(std::iter::repeat(n_bar))
+        .map(|(l, n)| l * n)
+        .sum::<f64>()
         / n_snps as f64;
 
     let tot_agg = if mean_ld_n > 0.0 {
@@ -63,7 +61,11 @@ pub fn compute_gcov_weights(
     let w_k = compute_h2_weights(chi2_k, ld, w_ld, n_k, m);
 
     // Average weights
-    let mut w_avg: Vec<f64> = w_j.iter().zip(w_k.iter()).map(|(a, b)| (a + b) / 2.0).collect();
+    let mut w_avg: Vec<f64> = w_j
+        .iter()
+        .zip(w_k.iter())
+        .map(|(a, b)| (a + b) / 2.0)
+        .collect();
 
     // Re-normalize
     let sum: f64 = w_avg.iter().sum();

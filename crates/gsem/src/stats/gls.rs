@@ -20,11 +20,7 @@ pub struct GlsResult {
 ///
 /// beta_gls = (X' V^{-1} X)^{-1} X' V^{-1} y
 /// SE = sqrt(diag((X' V^{-1} X)^{-1}))
-pub fn summary_gls(
-    x: &Mat<f64>,
-    y: &[f64],
-    v: &Mat<f64>,
-) -> Option<GlsResult> {
+pub fn summary_gls(x: &Mat<f64>, y: &[f64], v: &Mat<f64>) -> Option<GlsResult> {
     let n = x.nrows();
     let p = x.ncols();
     assert_eq!(n, y.len());
@@ -85,12 +81,7 @@ mod tests {
     #[test]
     fn test_gls_identity_weights() {
         // With V = I, GLS = OLS
-        let x = faer::mat![
-            [1.0, 1.0],
-            [1.0, 2.0],
-            [1.0, 3.0],
-            [1.0, 4.0],
-        ];
+        let x = faer::mat![[1.0, 1.0], [1.0, 2.0], [1.0, 3.0], [1.0, 4.0],];
         let y = vec![2.0, 4.0, 6.0, 8.0]; // y = 2x
         let v = Mat::<f64>::identity(4, 4);
         let result = summary_gls(&x, &y, &v).unwrap();
