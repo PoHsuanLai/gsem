@@ -31,6 +31,9 @@ src/*.dll
 *~
 .DS_Store
 
+# Reference R package (cloned for validation)
+/GenomicSEM/
+
 # Test data / outputs
 *.sumstats.gz
 ldsc_result.json
