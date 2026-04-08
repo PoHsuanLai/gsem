@@ -62,7 +62,6 @@ pub fn reorder_v(
 /// Build a mapping: for a k×k matrix, vech position of element (i,j) where i>=j.
 /// Returns a flat array indexed by i*(i+1)/2 + j.
 fn vech_index_map(k: usize) -> Vec<usize> {
-    let kstar = k * (k + 1) / 2;
     let mut map = vec![0usize; k * (k + 1) / 2 + k]; // extra space
     let mut idx = 0;
     for j in 0..k {

@@ -19,7 +19,6 @@ pub fn compute_fit(
     q_null: Option<f64>,
     df_null: Option<usize>,
 ) -> ModelFit {
-    let p = s_obs.nrows();
     let s_vec = vech::vech(s_obs);
     let sigma_vec = vech::vech(sigma_hat);
 
