@@ -20,147 +20,193 @@ pub struct FitResult {
 ///
 /// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
 /// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
-pub fn fit_dwls(model: &mut Model, s_obs: &Mat<f64>, v_diag: &[f64], max_iter: usize) -> FitResult {
+pub fn fit_dwls(
+    model: &mut Model,
+    s_obs: &Mat<f64>,
+    v_diag: &[f64],
+    max_iter: usize,
+) -> FitResult {
     let s_vec = vech::vech(s_obs);
-    // Weight matrix: W = 1/diag(V)
     let w: Vec<f64> = v_diag
         .iter()
         .map(|&v| if v > 1e-30 { 1.0 / v } else { 0.0 })
         .collect();
 
-    let mut params = model.get_param_vec();
+    let lower_bounds: Vec<Option<f64>> = model.lower_bounds.clone();
 
-    // Simple gradient descent with line search
-    let mut best_obj = dwls_objective(model, &s_vec, &w);
-    let mut converged = false;
+    let obj_fn = |model: &Model| -> f64 { dwls_objective(model, &s_vec, &w) };
 
-    for _iter in 0..max_iter {
-        // Compute gradient via central differences
-        let grad = numerical_gradient(model, &params, &s_vec, &w);
+    let grad_fn = |model: &mut Model, params: &[f64]| -> Vec<f64> {
+        numerical_gradient(model, params, &s_vec, &w)
+    };
 
-        // Line search
-        let mut step = 0.1;
-        let mut improved = false;
-
-        for _ in 0..20 {
-            let trial: Vec<f64> = params
-                .iter()
-                .zip(grad.iter())
-                .enumerate()
-                .map(|(i, (&p, &g))| {
-                    let new_val = p - step * g;
-                    // Apply lower bounds
-                    if let Some(lb) = model.lower_bounds[i] {
-                        new_val.max(lb)
-                    } else {
-                        new_val
-                    }
-                })
-                .collect();
-
-            model.set_param_vec(&trial);
-            let obj = dwls_objective(model, &s_vec, &w);
-
-            if obj < best_obj {
-                params = trial;
-                best_obj = obj;
-                improved = true;
-                break;
-            }
-            step *= 0.5;
-        }
-
-        if !improved {
-            // Try smaller step sizes
-            step = 0.001;
-            let trial: Vec<f64> = params
-                .iter()
-                .zip(grad.iter())
-                .enumerate()
-                .map(|(i, (&p, &g))| {
-                    let new_val = p - step * g;
-                    if let Some(lb) = model.lower_bounds[i] {
-                        new_val.max(lb)
-                    } else {
-                        new_val
-                    }
-                })
-                .collect();
-
-            model.set_param_vec(&trial);
-            let obj = dwls_objective(model, &s_vec, &w);
-            if obj < best_obj {
-                params = trial;
-                best_obj = obj;
-            }
-        }
-
-        // Check convergence
-        let grad_norm: f64 = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
-        if grad_norm < 1e-6 {
-            converged = true;
-            break;
-        }
-    }
-
-    model.set_param_vec(&params);
-
-    FitResult {
-        params,
-        objective: best_obj,
-        converged,
-    }
+    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn)
 }
 
 /// Fit a model using Maximum Likelihood.
 ///
 /// Minimizes: F = log|Sigma| + tr(S * Sigma^{-1}) - log|S| - p
 pub fn fit_ml(model: &mut Model, s_obs: &Mat<f64>, max_iter: usize) -> FitResult {
-    let _s_vec = vech::vech(s_obs);
-    let mut params = model.get_param_vec();
+    let lower_bounds: Vec<Option<f64>> = model.lower_bounds.clone();
+    let s_owned = s_obs.to_owned();
 
-    let mut best_obj = ml_objective(model, s_obs);
+    let obj_fn = |model: &Model| -> f64 { ml_objective(model, &s_owned) };
+
+    let grad_fn = |model: &mut Model, params: &[f64]| -> Vec<f64> {
+        numerical_gradient_ml(model, params, &s_owned)
+    };
+
+    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn)
+}
+
+/// L-BFGS optimizer with projected lower bounds.
+///
+/// Uses the two-loop recursion for approximate inverse Hessian direction
+/// and backtracking line search with Armijo condition.
+fn lbfgs_minimize<F, G>(
+    model: &mut Model,
+    max_iter: usize,
+    lower_bounds: &[Option<f64>],
+    obj_fn: F,
+    mut grad_fn: G,
+) -> FitResult
+where
+    F: Fn(&Model) -> f64,
+    G: FnMut(&mut Model, &[f64]) -> Vec<f64>,
+{
+    let memory_size = 10;
+    let c1 = 1e-4; // Armijo condition constant
+    let max_ls = 30; // Max line search steps
+
+    let mut params = model.get_param_vec();
+    let n = params.len();
+
+    if n == 0 {
+        return FitResult {
+            params,
+            objective: obj_fn(model),
+            converged: true,
+        };
+    }
+
+    let mut obj = obj_fn(model);
+    let mut grad = grad_fn(model, &params);
+
+    // L-BFGS storage: circular buffer of {s, y, rho} pairs
+    let mut s_history: Vec<Vec<f64>> = Vec::with_capacity(memory_size);
+    let mut y_history: Vec<Vec<f64>> = Vec::with_capacity(memory_size);
+    let mut rho_history: Vec<f64> = Vec::with_capacity(memory_size);
     let mut converged = false;
 
-    for _ in 0..max_iter {
-        let grad = numerical_gradient_ml(model, &params, s_obs);
+    for _iter in 0..max_iter {
+        // Check gradient convergence
+        let grad_norm: f64 = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+        if grad_norm < 1e-6 {
+            converged = true;
+            break;
+        }
 
-        let mut step = 0.05;
-        let mut improved = false;
+        // Compute search direction via L-BFGS two-loop recursion
+        let direction = lbfgs_direction(&grad, &s_history, &y_history, &rho_history);
 
-        for _ in 0..20 {
-            let trial: Vec<f64> = params
-                .iter()
-                .zip(grad.iter())
-                .enumerate()
-                .map(|(i, (&p_val, &g))| {
-                    let new_val = p_val - step * g;
-                    if let Some(lb) = model.lower_bounds[i] {
-                        new_val.max(lb)
-                    } else {
-                        new_val
-                    }
-                })
-                .collect();
+        // Ensure descent direction
+        let dg: f64 = direction.iter().zip(grad.iter()).map(|(d, g)| d * g).sum();
+        let direction = if dg >= 0.0 {
+            // Fall back to steepest descent if direction is not descent
+            grad.iter().map(|g| -g).collect::<Vec<_>>()
+        } else {
+            direction
+        };
 
-            model.set_param_vec(&trial);
-            let obj = ml_objective(model, s_obs);
+        let dg: f64 = direction.iter().zip(grad.iter()).map(|(d, g)| d * g).sum();
 
-            if obj < best_obj && obj.is_finite() {
-                params = trial;
-                best_obj = obj;
-                improved = true;
+        // Backtracking line search with Armijo condition
+        let mut step = 1.0;
+        let mut new_params = vec![0.0; n];
+        let mut new_obj = f64::INFINITY;
+        let mut ls_success = false;
+
+        for _ in 0..max_ls {
+            for i in 0..n {
+                new_params[i] = params[i] + step * direction[i];
+                // Project onto lower bounds
+                if let Some(lb) = lower_bounds[i] {
+                    new_params[i] = new_params[i].max(lb);
+                }
+            }
+
+            model.set_param_vec(&new_params);
+            new_obj = obj_fn(model);
+
+            // Armijo sufficient decrease condition
+            if new_obj.is_finite() && new_obj <= obj + c1 * step * dg {
+                ls_success = true;
                 break;
             }
             step *= 0.5;
         }
 
-        if !improved {
-            break;
+        if !ls_success {
+            // Try a very small step as last resort
+            step = 1e-4;
+            for i in 0..n {
+                new_params[i] = params[i] + step * direction[i];
+                if let Some(lb) = lower_bounds[i] {
+                    new_params[i] = new_params[i].max(lb);
+                }
+            }
+            model.set_param_vec(&new_params);
+            new_obj = obj_fn(model);
+
+            if !new_obj.is_finite() || new_obj >= obj {
+                // Cannot make progress — converged or stuck
+                model.set_param_vec(&params);
+                break;
+            }
         }
 
-        let grad_norm: f64 = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
-        if grad_norm < 1e-6 {
+        // Compute new gradient
+        let new_grad = grad_fn(model, &new_params);
+
+        // Update L-BFGS history
+        let s_k: Vec<f64> = new_params
+            .iter()
+            .zip(params.iter())
+            .map(|(a, b)| a - b)
+            .collect();
+        let y_k: Vec<f64> = new_grad
+            .iter()
+            .zip(grad.iter())
+            .map(|(a, b)| a - b)
+            .collect();
+        let sy: f64 = s_k.iter().zip(y_k.iter()).map(|(s, y)| s * y).sum();
+
+        if sy > 1e-10 {
+            // Only update if curvature condition holds
+            if s_history.len() >= memory_size {
+                s_history.remove(0);
+                y_history.remove(0);
+                rho_history.remove(0);
+            }
+            s_history.push(s_k);
+            y_history.push(y_k);
+            rho_history.push(1.0 / sy);
+        }
+
+        // Check for convergence: relative objective change
+        let rel_change = (obj - new_obj).abs() / (obj.abs() + 1e-10);
+        let param_change: f64 = new_params
+            .iter()
+            .zip(params.iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+
+        params = new_params;
+        obj = new_obj;
+        grad = new_grad;
+
+        if rel_change < 1e-8 && param_change < 1e-6 {
             converged = true;
             break;
         }
@@ -169,9 +215,63 @@ pub fn fit_ml(model: &mut Model, s_obs: &Mat<f64>, max_iter: usize) -> FitResult
     model.set_param_vec(&params);
     FitResult {
         params,
-        objective: best_obj,
+        objective: obj,
         converged,
     }
+}
+
+/// L-BFGS two-loop recursion to compute search direction.
+///
+/// Returns: direction = -H_k * grad (approximate Newton direction)
+fn lbfgs_direction(
+    grad: &[f64],
+    s_history: &[Vec<f64>],
+    y_history: &[Vec<f64>],
+    rho_history: &[f64],
+) -> Vec<f64> {
+    let n = grad.len();
+    let m = s_history.len();
+
+    if m == 0 {
+        // No history: use steepest descent
+        return grad.iter().map(|g| -g).collect();
+    }
+
+    // First loop: traverse history from most recent to oldest
+    let mut q = grad.to_vec();
+    let mut alpha = vec![0.0; m];
+
+    for i in (0..m).rev() {
+        alpha[i] = rho_history[i] * dot(&s_history[i], &q);
+        for j in 0..n {
+            q[j] -= alpha[i] * y_history[i][j];
+        }
+    }
+
+    // Initial Hessian approximation: H0 = gamma * I
+    // gamma = s_{k-1}' y_{k-1} / y_{k-1}' y_{k-1}
+    let last = m - 1;
+    let sy: f64 = dot(&s_history[last], &y_history[last]);
+    let yy: f64 = dot(&y_history[last], &y_history[last]);
+    let gamma = if yy > 1e-30 { sy / yy } else { 1.0 };
+
+    let mut r: Vec<f64> = q.iter().map(|&qi| gamma * qi).collect();
+
+    // Second loop: traverse from oldest to most recent
+    for i in 0..m {
+        let beta = rho_history[i] * dot(&y_history[i], &r);
+        for j in 0..n {
+            r[j] += (alpha[i] - beta) * s_history[i][j];
+        }
+    }
+
+    // Negate for descent direction
+    r.iter().map(|x| -x).collect()
+}
+
+/// Dot product of two vectors.
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
 /// DWLS objective function value.
@@ -235,7 +335,12 @@ fn ml_objective(model: &Model, s_obs: &Mat<f64>) -> f64 {
 }
 
 /// Numerical gradient for DWLS objective via central differences.
-fn numerical_gradient(model: &mut Model, params: &[f64], s_vec: &[f64], w: &[f64]) -> Vec<f64> {
+fn numerical_gradient(
+    model: &mut Model,
+    params: &[f64],
+    s_vec: &[f64],
+    w: &[f64],
+) -> Vec<f64> {
     let eps = 1e-7;
     let n = params.len();
     let mut grad = vec![0.0; n];
@@ -260,7 +365,11 @@ fn numerical_gradient(model: &mut Model, params: &[f64], s_vec: &[f64], w: &[f64
 }
 
 /// Numerical gradient for ML objective.
-fn numerical_gradient_ml(model: &mut Model, params: &[f64], s_obs: &Mat<f64>) -> Vec<f64> {
+fn numerical_gradient_ml(
+    model: &mut Model,
+    params: &[f64],
+    s_obs: &Mat<f64>,
+) -> Vec<f64> {
     let eps = 1e-7;
     let n = params.len();
     let mut grad = vec![0.0; n];
@@ -282,4 +391,35 @@ fn numerical_gradient_ml(model: &mut Model, params: &[f64], s_obs: &Mat<f64>) ->
 
     model.set_param_vec(params);
     grad
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::syntax::parse_model;
+    use crate::model::Model;
+
+    #[test]
+    fn test_lbfgs_converges_simple_cfa() {
+        // 1-factor CFA: F1 =~ V1 + V2 + V3
+        // Must explicitly add residual variances (parser doesn't auto-add like lavaan)
+        let s = faer::mat![
+            [1.0, 0.6, 0.5],
+            [0.6, 1.0, 0.4],
+            [0.5, 0.4, 1.0],
+        ];
+        let v_diag = vec![0.01; 6]; // kstar = 3*4/2 = 6
+
+        let model_str = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3";
+        let pt = parse_model(model_str, false).unwrap();
+        let obs_names: Vec<String> = vec!["V1", "V2", "V3"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let mut model = Model::from_partable(&pt, &obs_names);
+
+        let result = fit_dwls(&mut model, &s, &v_diag, 1000);
+        assert!(result.converged, "L-BFGS should converge for simple CFA");
+        assert!(result.objective < 0.1, "Objective should be small: {}", result.objective);
+    }
 }

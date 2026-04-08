@@ -1,4 +1,5 @@
 use faer::{Mat, Side};
+use gsem_matrix::vech;
 use rand::Rng;
 use rand_distr::StandardNormal;
 
@@ -15,12 +16,14 @@ pub struct PaResult {
 
 /// Perform parallel analysis on an LDSC genetic correlation matrix.
 ///
-/// Monte Carlo simulation: generates random correlation matrices from V,
-/// computes eigenvalues, and compares observed to 95th percentile.
+/// Monte Carlo simulation: generates random correlation matrices from
+/// N(null_vec, V) where null_vec is vech of the diagonal-only S,
+/// then compares observed eigenvalues to 95th percentile.
 ///
 /// Port of GenomicSEM's `paLDSC()`.
 pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     let k = s.nrows();
+    let kstar = k * (k + 1) / 2;
 
     // Convert S to correlation matrix for eigenanalysis
     let sds: Vec<f64> = (0..k).map(|i| s[(i, i)].sqrt().max(1e-10)).collect();
@@ -29,38 +32,38 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     // Observed eigenvalues
     let observed = eigenvalues_sorted(&cor);
 
+    // Null model: diagonal-only S (no off-diagonal correlations)
+    let mut s_null = Mat::zeros(k, k);
+    for i in 0..k {
+        s_null[(i, i)] = cor[(i, i)]; // = 1.0 for correlation matrix
+    }
+    let null_vec = vech::vech(&s_null);
+
+    // Cholesky of V for multivariate normal sampling: L such that V = L L'
+    let chol_l = compute_cholesky_l(v, kstar);
+
     // Simulate null eigenvalue distributions
     let mut sim_eigenvalues: Vec<Vec<f64>> = vec![Vec::with_capacity(n_sim); k];
     let mut rng = rand::rng();
 
     for _ in 0..n_sim {
-        // Generate random symmetric matrix with structure from V
-        let mut sim_cor = Mat::from_fn(k, k, |i, j| {
-            if i == j {
-                1.0
-            } else {
-                let noise: f64 = rng.sample(StandardNormal);
-                // Scale noise by approximate SE from V
-                let kstar_idx_i = vech_index(i, j, k);
-                let se = if kstar_idx_i < v.nrows() {
-                    v[(kstar_idx_i, kstar_idx_i)].sqrt()
-                } else {
-                    0.1
-                };
-                (noise * se).clamp(-0.99, 0.99)
-            }
-        });
+        // Generate z ~ N(0, I) of length kstar
+        let z: Vec<f64> = (0..kstar).map(|_| rng.sample(StandardNormal)).collect();
 
-        // Symmetrize
-        for i in 0..k {
-            for j in (i + 1)..k {
-                let avg = (sim_cor[(i, j)] + sim_cor[(j, i)]) / 2.0;
-                sim_cor[(i, j)] = avg;
-                sim_cor[(j, i)] = avg;
+        // sample = null_vec + L * z (multivariate normal)
+        let mut sample = null_vec.clone();
+        for i in 0..kstar {
+            let mut lz = 0.0;
+            for j in 0..kstar {
+                lz += chol_l[(i, j)] * z[j];
             }
+            sample[i] += lz;
         }
 
-        let eigs = eigenvalues_sorted(&sim_cor);
+        // Reconstruct matrix from vech and symmetrize
+        let sim_mat = vech::vech_reverse(&sample, k);
+
+        let eigs = eigenvalues_sorted(&sim_mat);
         for (f, &eig) in eigs.iter().enumerate() {
             sim_eigenvalues[f].push(eig);
         }
@@ -92,6 +95,31 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     }
 }
 
+/// Compute Cholesky factor L of V, with fallback to nearPD then diagonal.
+fn compute_cholesky_l(v: &Mat<f64>, kstar: usize) -> Mat<f64> {
+    if let Ok(llt) = v.llt(Side::Lower) {
+        let l_ref = llt.L();
+        return Mat::from_fn(kstar, kstar, |i, j| l_ref[(i, j)]);
+    }
+
+    // V is not PD; apply nearPD then retry
+    if let Ok(v_pd) = gsem_matrix::near_pd::nearest_pd(v, false, 100, 1e-8) {
+        if let Ok(llt) = v_pd.llt(Side::Lower) {
+            let l_ref = llt.L();
+            return Mat::from_fn(kstar, kstar, |i, j| l_ref[(i, j)]);
+        }
+    }
+
+    // Last resort: use diagonal sqrt
+    Mat::from_fn(kstar, kstar, |i, j| {
+        if i == j {
+            v[(i, i)].max(0.0).sqrt()
+        } else {
+            0.0
+        }
+    })
+}
+
 /// Get eigenvalues of a symmetric matrix, sorted descending.
 fn eigenvalues_sorted(mat: &Mat<f64>) -> Vec<f64> {
     let Ok(eigen) = mat.self_adjoint_eigen(Side::Lower) else {
@@ -101,12 +129,6 @@ fn eigenvalues_sorted(mat: &Mat<f64>) -> Vec<f64> {
     let mut eigs: Vec<f64> = (0..mat.nrows()).map(|i| s[i]).collect();
     eigs.sort_by(|a, b| b.partial_cmp(a).unwrap());
     eigs
-}
-
-/// Convert (row, col) with row >= col to vech index.
-fn vech_index(row: usize, col: usize, _k: usize) -> usize {
-    let (r, c) = if row >= col { (row, col) } else { (col, row) };
-    r * (r + 1) / 2 + c
 }
 
 #[cfg(test)]
@@ -120,7 +142,6 @@ mod tests {
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.01 } else { 0.0 });
         let result = parallel_analysis(&s, &v, 100);
         assert_eq!(result.observed.len(), 3);
-        // All eigenvalues should be ~1
         for &eig in &result.observed {
             assert!((eig - 1.0).abs() < 1e-10);
         }
@@ -129,7 +150,11 @@ mod tests {
     #[test]
     fn test_parallel_analysis_one_factor() {
         // Strong 1-factor structure
-        let s = faer::mat![[1.0, 0.8, 0.8], [0.8, 1.0, 0.8], [0.8, 0.8, 1.0],];
+        let s = faer::mat![
+            [1.0, 0.8, 0.8],
+            [0.8, 1.0, 0.8],
+            [0.8, 0.8, 1.0],
+        ];
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
         let result = parallel_analysis(&s, &v, 200);
         assert!(result.n_factors >= 1);

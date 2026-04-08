@@ -54,6 +54,20 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
 
     let snp_idx = detected.get("SNP").context("SNP column not found")?;
 
+    // Determine N column source and whether doubling is needed.
+    // NEFFDIV2 / NEFF_HALF columns store N_eff / 2 and must be doubled.
+    let (n_col_idx, n_multiply) = if let Some(idx) = detected.get("N") {
+        (Some(idx), 1.0)
+    } else if let Some(idx) = detected.get("NEFFDIV2") {
+        log::info!("Detected NEFFDIV2 column — N values will be doubled");
+        (Some(idx), 2.0)
+    } else if let Some(idx) = detected.get("NEFF_HALF") {
+        log::info!("Detected NEFF_HALF column — N values will be doubled");
+        (Some(idx), 2.0)
+    } else {
+        (None, 1.0)
+    };
+
     let mut records = Vec::new();
 
     for line_result in lines {
@@ -65,6 +79,10 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
         if fields.len() <= snp_idx {
             continue;
         }
+
+        let n_raw: Option<f64> = n_col_idx
+            .and_then(|i| fields.get(i))
+            .and_then(|s| s.parse().ok());
 
         let record = GwasRecord {
             snp: fields[snp_idx].clone(),
@@ -82,10 +100,7 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
                 .get("P")
                 .and_then(|i| fields.get(i))
                 .and_then(|s| s.parse().ok()),
-            n: detected
-                .get("N")
-                .and_then(|i| fields.get(i))
-                .and_then(|s| s.parse().ok()),
+            n: n_raw.map(|v| v * n_multiply),
             z: detected
                 .get("Z")
                 .and_then(|i| fields.get(i))

@@ -8,6 +8,10 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[features]
+default = []
+pyo3 = ["dep:pyo3", "dep:numpy"]
+
 [dependencies]
 gsem = { workspace = true }
 gsem-matrix = { workspace = true }
@@ -16,5 +20,6 @@ gsem-sem = { workspace = true }
 faer = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-# pyo3 = { workspace = true }    # Enable when building Python wheel
-# numpy = { workspace = true }   # Enable when building Python wheel
+log = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }

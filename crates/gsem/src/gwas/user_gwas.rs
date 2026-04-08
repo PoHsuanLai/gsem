@@ -41,6 +41,9 @@ pub struct UserGwasConfig {
     pub gc: GcMode,
     pub max_iter: usize,
     pub std_lv: bool,
+    /// Override for SNP SE (default: 0.0005, treating MAF as fixed).
+    /// Matches R's `SNPSE` parameter.
+    pub snp_se: Option<f64>,
 }
 
 impl Default for UserGwasConfig {
@@ -51,6 +54,7 @@ impl Default for UserGwasConfig {
             gc: GcMode::Standard,
             max_iter: 500,
             std_lv: false,
+            snp_se: None,
         }
     }
 }
@@ -120,7 +124,9 @@ fn process_single_snp(
 ) -> SnpResult {
     // Build S_Full and V_Full
     let mut s_full = add_snps::build_s_full(s_ld, beta_snp, var_snp, k);
-    let var_snp_se2 = var_snp * var_snp * 0.001; // approximate
+    // R: varSNPSE2 <- (.0005)^2 — small constant, treating MAF as fixed
+    let snp_se = config.snp_se.unwrap_or(0.0005);
+    let var_snp_se2 = snp_se.powi(2);
     let mut v_full = add_snps::build_v_full(v_ld, se_snp, var_snp, var_snp_se2, i_ld, config.gc, k);
 
     // Smooth if needed

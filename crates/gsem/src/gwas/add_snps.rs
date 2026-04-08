@@ -1,5 +1,4 @@
 use faer::Mat;
-use gsem_matrix::vech;
 
 use super::gc_correction::{self, GcMode};
 
@@ -54,40 +53,28 @@ pub fn build_v_full(
 ) -> Mat<f64> {
     let kstar_full = (k + 1) * (k + 2) / 2;
     let kstar_ld = k * (k + 1) / 2;
-    let mut v_full = Mat::zeros(kstar_full, kstar_full);
 
-    // V_SNP block
+    // R initializes V_Full as identity: V_Full <- diag(kstar_full)
+    let mut v_full = Mat::<f64>::identity(kstar_full, kstar_full);
+
+    // V_SNP block (k×k)
     let v_snp = gc_correction::build_v_snp(se_snp, i_ld, var_snp, gc, k);
-    let v_snp_vech = vech::vech(&v_snp);
 
-    // Position 0: variance of SNP variance estimate
+    // Position [0,0]: variance of SNP variance estimate
     v_full[(0, 0)] = var_snp_se2;
 
-    // Positions 1..=k: V_SNP (as vech of k×k)
-    for i in 0..v_snp_vech.len().min(k) {
-        for j in 0..v_snp_vech.len().min(k) {
-            if (1 + i) < kstar_full && (1 + j) < kstar_full {
-                v_full[(1 + i, 1 + j)] = v_snp[(i.min(k - 1), j.min(k - 1))];
-            }
-        }
-    }
-
-    // Simple approach: put V_SNP diagonal elements
+    // Positions [1..=k, 1..=k]: V_SNP (full k×k matrix)
     for i in 0..k {
-        v_full[(1 + i, 1 + i)] = v_snp[(i, i)];
-        for j in (i + 1)..k {
+        for j in 0..k {
             v_full[(1 + i, 1 + j)] = v_snp[(i, j)];
-            v_full[(1 + j, 1 + i)] = v_snp[(j, i)];
         }
     }
 
-    // V_LD block
+    // Positions [k+1.., k+1..]: V_LD (kstar_ld × kstar_ld)
     let ld_offset = k + 1;
     for i in 0..kstar_ld {
         for j in 0..kstar_ld {
-            if (ld_offset + i) < kstar_full && (ld_offset + j) < kstar_full {
-                v_full[(ld_offset + i, ld_offset + j)] = v_ld[(i, j)];
-            }
+            v_full[(ld_offset + i, ld_offset + j)] = v_ld[(i, j)];
         }
     }
 

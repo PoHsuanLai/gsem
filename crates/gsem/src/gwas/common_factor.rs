@@ -53,6 +53,7 @@ pub fn run_common_factor_gwas(
         gc,
         max_iter: 500,
         std_lv: false,
+        snp_se: None,
     };
 
     user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp)

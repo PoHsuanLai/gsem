@@ -430,7 +430,7 @@ fn run_gwas(
         anyhow::bail!("must provide --model or --model-file");
     };
 
-    let gc_mode = gsem::gwas::gc_correction::GcMode::from_str(gc);
+    let _gc_mode = gsem::gwas::gc_correction::GcMode::from_str(gc);
     eprintln!(
         "GWAS: estimation={estimation}, gc={gc:?}, model length={} chars",
         model_str.len()
