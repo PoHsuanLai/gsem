@@ -32,11 +32,8 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     // Observed eigenvalues
     let observed = eigenvalues_sorted(&cor);
 
-    // Null model: diagonal-only S (no off-diagonal correlations)
-    let mut s_null = Mat::zeros(k, k);
-    for i in 0..k {
-        s_null[(i, i)] = cor[(i, i)]; // = 1.0 for correlation matrix
-    }
+    // Null model: identity correlation matrix (no off-diagonal correlations)
+    let s_null = Mat::<f64>::identity(k, k);
     let null_vec = vech::vech(&s_null);
 
     // Cholesky of V for multivariate normal sampling: L such that V = L L'
@@ -46,18 +43,20 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     let mut sim_eigenvalues: Vec<Vec<f64>> = vec![Vec::with_capacity(n_sim); k];
     let mut rng = rand::rng();
 
+    // Pre-allocate buffers reused each iteration
+    let mut z = vec![0.0; kstar];
+    let mut sample = vec![0.0; kstar];
+
     for _ in 0..n_sim {
         // Generate z ~ N(0, I) of length kstar
-        let z: Vec<f64> = (0..kstar).map(|_| rng.sample(StandardNormal)).collect();
+        for zi in z.iter_mut() {
+            *zi = rng.sample(StandardNormal);
+        }
 
         // sample = null_vec + L * z (multivariate normal)
-        let mut sample = null_vec.clone();
         for i in 0..kstar {
-            let mut lz = 0.0;
-            for j in 0..kstar {
-                lz += chol_l[(i, j)] * z[j];
-            }
-            sample[i] += lz;
+            let lz: f64 = (0..kstar).map(|j| chol_l[(i, j)] * z[j]).sum();
+            sample[i] = null_vec[i] + lz;
         }
 
         // Reconstruct matrix from vech and symmetrize
@@ -69,14 +68,14 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
         }
     }
 
-    // Compute 95th percentile for each eigenvalue
+    // Compute 95th percentile for each eigenvalue using partial sort
+    let percentile_idx = ((n_sim as f64) * 0.95) as usize;
     let simulated_95: Vec<f64> = sim_eigenvalues
-        .iter()
+        .iter_mut()
         .map(|eigs| {
-            let mut sorted = eigs.clone();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let idx = ((n_sim as f64) * 0.95) as usize;
-            sorted[idx.min(sorted.len() - 1)]
+            let idx = percentile_idx.min(eigs.len().saturating_sub(1));
+            eigs.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap());
+            eigs[idx]
         })
         .collect();
 
@@ -103,11 +102,11 @@ fn compute_cholesky_l(v: &Mat<f64>, kstar: usize) -> Mat<f64> {
     }
 
     // V is not PD; apply nearPD then retry
-    if let Ok(v_pd) = gsem_matrix::near_pd::nearest_pd(v, false, 100, 1e-8) {
-        if let Ok(llt) = v_pd.llt(Side::Lower) {
-            let l_ref = llt.L();
-            return Mat::from_fn(kstar, kstar, |i, j| l_ref[(i, j)]);
-        }
+    if let Ok(v_pd) = gsem_matrix::near_pd::nearest_pd(v, false, 100, 1e-8)
+        && let Ok(llt) = v_pd.llt(Side::Lower)
+    {
+        let l_ref = llt.L();
+        return Mat::from_fn(kstar, kstar, |i, j| l_ref[(i, j)]);
     }
 
     // Last resort: use diagonal sqrt
@@ -150,11 +149,7 @@ mod tests {
     #[test]
     fn test_parallel_analysis_one_factor() {
         // Strong 1-factor structure
-        let s = faer::mat![
-            [1.0, 0.8, 0.8],
-            [0.8, 1.0, 0.8],
-            [0.8, 0.8, 1.0],
-        ];
+        let s = faer::mat![[1.0, 0.8, 0.8], [0.8, 1.0, 0.8], [0.8, 0.8, 1.0],];
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
         let result = parallel_analysis(&s, &v, 200);
         assert!(result.n_factors >= 1);

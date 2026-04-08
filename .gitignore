@@ -1,1 +1,38 @@
+# Rust
 /target
+**/*.rs.bk
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+
+# R
+*.Rhistory
+*.RData
+*.Rproj.user
+src/*.o
+src/*.so
+src/*.dll
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test data / outputs
+*.sumstats.gz
+ldsc_result.json
+sem_result.tsv
+gwas_result.tsv

@@ -25,38 +25,36 @@ pub fn simulate_sumstats(
             Mat::from_fn(k, k, |i, j| l[(i, j)])
         }
         Err(_) => {
-            // If not PD, use eigendecomposition
-            let eigen = s.self_adjoint_eigen(Side::Lower).unwrap();
+            // If not PD, use eigendecomposition square root
+            let Ok(eigen) = s.self_adjoint_eigen(Side::Lower) else {
+                // Cannot decompose — return zeros
+                return vec![vec![0.0; n_snps]; k];
+            };
             let u = eigen.U();
             let sv = eigen.S().column_vector();
-            let sqrt_s = Mat::from_fn(k, k, |i, j| {
-                let mut val = 0.0;
-                for l in 0..k {
-                    val += u[(i, l)] * sv[l].max(0.0).sqrt() * u[(j, l)];
-                }
-                val
-            });
-            sqrt_s
+            Mat::from_fn(k, k, |i, j| {
+                (0..k)
+                    .map(|l| u[(i, l)] * sv[l].max(0.0).sqrt() * u[(j, l)])
+                    .sum()
+            })
         }
     };
 
     // Generate Z-scores per SNP
     let mut z_all = vec![vec![0.0; n_snps]; k];
+    let mut ind = vec![0.0; k];
 
     for s_idx in 0..n_snps {
-        // Expected chi2 contribution from this SNP's LD score
         let ld = ld_scores[s_idx];
 
         // Generate independent standard normals
-        let ind: Vec<f64> = (0..k).map(|_| rng.sample(StandardNormal)).collect();
+        for v in ind.iter_mut() {
+            *v = rng.sample(StandardNormal);
+        }
 
         // Correlate using Cholesky factor and scale by LD
         for j in 0..k {
-            let mut z = 0.0;
-            for l in 0..k {
-                z += chol[(j, l)] * ind[l];
-            }
-            // Scale: Z ~ N(0, 1 + h2/M * LD * N)
+            let z: f64 = (0..k).map(|l| chol[(j, l)] * ind[l]).sum();
             let scale = (1.0 + s[(j, j)] / m * ld * n_per_trait[j]).sqrt();
             z_all[j][s_idx] = z * scale;
         }

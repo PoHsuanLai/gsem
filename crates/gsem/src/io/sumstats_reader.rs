@@ -46,7 +46,10 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
     let mut lines = reader.lines();
 
     let header_line = lines.next().context("empty file")??;
-    let headers: Vec<String> = header_line.split('\t').map(|s| s.trim().to_string()).collect();
+    let headers: Vec<String> = header_line
+        .split('\t')
+        .map(|s| s.trim().to_string())
+        .collect();
 
     // Find fixed columns
     let snp_idx = col_idx(&headers, "SNP")?;

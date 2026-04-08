@@ -1,3 +1,14 @@
+//! LD Score Regression engine for estimating genetic covariance.
+//!
+//! Standalone crate implementing multivariate LDSC with block jackknife,
+//! producing the S (genetic covariance), V (sampling covariance), and
+//! I (intercept) matrices needed for downstream SEM analysis.
+//!
+//! # Entry point
+//!
+//! Use [`ldsc()`] to run the full pipeline. Results are returned as
+//! [`LdscResult`], which supports JSON serialization.
+
 pub mod covariance;
 pub mod error;
 pub mod heritability;

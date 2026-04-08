@@ -20,32 +20,12 @@ pub fn run_common_factor_gwas(
     var_snp: &[f64],
     gc: GcMode,
 ) -> Vec<SnpResult> {
-    let _k = trait_names.len();
-
     // Auto-generate model
-    let mut model_lines = Vec::new();
-
-    // Factor loadings: F1 =~ NA*V1 + V2 + ... + Vk
-    let mut loading_terms = Vec::new();
-    for (i, name) in trait_names.iter().enumerate() {
-        if i == 0 {
-            loading_terms.push(format!("NA*{name}"));
-        } else {
-            loading_terms.push(name.clone());
-        }
-    }
-    model_lines.push(format!("F1 =~ {}", loading_terms.join(" + ")));
-
-    // SNP regression
-    model_lines.push("F1 ~ SNP".to_string());
-
-    // Fix factor variance
-    model_lines.push("F1 ~~ 1*F1".to_string());
-
-    // SNP variance
-    model_lines.push("SNP ~~ SNP".to_string());
-
-    let model = model_lines.join("\n");
+    let loading = std::iter::once(format!("NA*{}", trait_names[0]))
+        .chain(trait_names[1..].iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let model = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
 
     let config = UserGwasConfig {
         model,

@@ -75,7 +75,16 @@ fn ldsc_r(
         chisq_max: None,
     };
 
-    match gsem_ldsc::ldsc(&trait_data, &sp, &pp, &ld_scores, &ld_data.w_ld, &ld_snps, ld_data.total_m, &config) {
+    match gsem_ldsc::ldsc(
+        &trait_data,
+        &sp,
+        &pp,
+        &ld_scores,
+        &ld_data.w_ld,
+        &ld_snps,
+        ld_data.total_m,
+        &config,
+    ) {
         Ok(result) => conversions::ldsc_result_to_json(&result),
         Err(e) => format!("{{\"error\": \"{e}\"}}"),
     }
@@ -161,10 +170,7 @@ fn munge_r(
 
     let mut output_paths = Vec::new();
     for (i, file) in files.iter().enumerate() {
-        let name = trait_names
-            .get(i)
-            .map(|s| s.as_str())
-            .unwrap_or("trait");
+        let name = trait_names.get(i).map(|s| s.as_str()).unwrap_or("trait");
         let out_path = std::path::Path::new(out_dir).join(format!("{name}.sumstats.gz"));
 
         match gsem::munge::munge_and_write(

@@ -4,6 +4,7 @@ description = "LD Score Regression engine with block jackknife for genetic covar
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 gsem-matrix = { workspace = true }

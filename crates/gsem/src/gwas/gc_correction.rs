@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use faer::Mat;
 
 /// Genomic control correction mode.
@@ -9,13 +11,25 @@ pub enum GcMode {
 }
 
 impl GcMode {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+    /// GC scaling factor for a diagonal element of the LD intercept matrix.
+    fn scale(self, i_ld_diag: f64) -> f64 {
+        match self {
+            GcMode::Conservative => i_ld_diag,
+            GcMode::Standard => i_ld_diag.sqrt(),
+            GcMode::None => 1.0,
+        }
+    }
+}
+
+impl FromStr for GcMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "conserv" | "conservative" => GcMode::Conservative,
-            "standard" | "std" => GcMode::Standard,
             "none" | "off" => GcMode::None,
             _ => GcMode::Standard,
-        }
+        })
     }
 }
 
@@ -34,23 +48,10 @@ pub fn build_v_snp(
     for x in 0..k {
         for y in x..k {
             let val = if x == y {
-                // Diagonal
-                let base = se_snp[x] * var_snp;
-                match gc {
-                    GcMode::Conservative => (base * i_ld[(x, x)]).powi(2),
-                    GcMode::Standard => (base * i_ld[(x, x)].sqrt()).powi(2),
-                    GcMode::None => base.powi(2),
-                }
+                (se_snp[x] * var_snp * gc.scale(i_ld[(x, x)])).powi(2)
             } else {
-                // Off-diagonal
                 let base = se_snp[x] * se_snp[y] * var_snp.powi(2);
-                match gc {
-                    GcMode::Conservative => base * i_ld[(x, y)] * i_ld[(x, x)] * i_ld[(y, y)],
-                    GcMode::Standard => {
-                        base * i_ld[(x, y)] * i_ld[(x, x)].sqrt() * i_ld[(y, y)].sqrt()
-                    }
-                    GcMode::None => base * i_ld[(x, y)],
-                }
+                base * i_ld[(x, y)] * gc.scale(i_ld[(x, x)]) * gc.scale(i_ld[(y, y)])
             };
             v_snp[(x, y)] = val;
             v_snp[(y, x)] = val;
@@ -66,11 +67,7 @@ pub fn build_v_snp(
 pub fn gc_adjusted_z(beta: &[f64], se: &[f64], i_ld: &Mat<f64>, gc: GcMode, k: usize) -> Vec<f64> {
     (0..k)
         .map(|x| {
-            let denom = match gc {
-                GcMode::Conservative => se[x] * i_ld[(x, x)],
-                GcMode::Standard => se[x] * i_ld[(x, x)].sqrt(),
-                GcMode::None => se[x],
-            };
+            let denom = se[x] * gc.scale(i_ld[(x, x)]);
             if denom.abs() > 1e-30 {
                 beta[x] / denom
             } else {
@@ -110,5 +107,17 @@ mod tests {
         let i_ld = faer::mat![[1.0]];
         let z = gc_adjusted_z(&beta, &se, &i_ld, GcMode::None, 1);
         assert!((z[0] - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_parse_gc_mode() {
+        assert_eq!(
+            "conservative".parse::<GcMode>().unwrap(),
+            GcMode::Conservative
+        );
+        assert_eq!("conserv".parse::<GcMode>().unwrap(), GcMode::Conservative);
+        assert_eq!("standard".parse::<GcMode>().unwrap(), GcMode::Standard);
+        assert_eq!("none".parse::<GcMode>().unwrap(), GcMode::None);
+        assert_eq!("unknown".parse::<GcMode>().unwrap(), GcMode::Standard);
     }
 }

@@ -4,6 +4,7 @@ description = "GenomicSEM-rs: Genomic Structural Equation Modeling from GWAS sum
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "genomicsem"

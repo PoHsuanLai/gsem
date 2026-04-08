@@ -32,17 +32,15 @@ pub fn compute_q_snp(
     let u = eigen.U();
     let s_diag = eigen.S().column_vector();
 
-    let mut q = 0.0;
-    for i in 0..n {
-        let eigenval = s_diag[i];
-        if eigenval > 1e-10 {
-            let mut dot = 0.0;
-            for j in 0..n {
-                dot += u[(j, i)] * eta[j];
-            }
-            q += dot * dot / eigenval;
-        }
-    }
+    let q: f64 = (0..n)
+        .filter_map(|i| {
+            let eigenval = s_diag[i];
+            (eigenval > 1e-10).then(|| {
+                let dot: f64 = eta.iter().enumerate().map(|(j, &e)| u[(j, i)] * e).sum();
+                dot * dot / eigenval
+            })
+        })
+        .sum();
 
     let df = p.saturating_sub(1);
     let p_val = if df > 0 && q.is_finite() {

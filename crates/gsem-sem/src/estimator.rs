@@ -22,12 +22,7 @@ pub struct FitResult {
 ///
 /// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
 /// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
-pub fn fit_dwls(
-    model: &mut Model,
-    s_obs: &Mat<f64>,
-    v_diag: &[f64],
-    max_iter: usize,
-) -> FitResult {
+pub fn fit_dwls(model: &mut Model, s_obs: &Mat<f64>, v_diag: &[f64], max_iter: usize) -> FitResult {
     let s_vec = vech::vech(s_obs);
     let w: Vec<f64> = v_diag
         .iter()
@@ -361,18 +356,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syntax::parse_model;
     use crate::model::Model;
+    use crate::syntax::parse_model;
 
     #[test]
     fn test_lbfgs_converges_simple_cfa() {
         // 1-factor CFA: F1 =~ V1 + V2 + V3
         // Must explicitly add residual variances (parser doesn't auto-add like lavaan)
-        let s = faer::mat![
-            [1.0, 0.6, 0.5],
-            [0.6, 1.0, 0.4],
-            [0.5, 0.4, 1.0],
-        ];
+        let s = faer::mat![[1.0, 0.6, 0.5], [0.6, 1.0, 0.4], [0.5, 0.4, 1.0],];
         let v_diag = vec![0.01; 6]; // kstar = 3*4/2 = 6
 
         let model_str = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3";
@@ -385,6 +376,10 @@ mod tests {
 
         let result = fit_dwls(&mut model, &s, &v_diag, 1000);
         assert!(result.converged, "L-BFGS should converge for simple CFA");
-        assert!(result.objective < 0.1, "Objective should be small: {}", result.objective);
+        assert!(
+            result.objective < 0.1,
+            "Objective should be small: {}",
+            result.objective
+        );
     }
 }

@@ -49,7 +49,10 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
 
     // Read header line
     let header_line = lines.next().context("empty file")??;
-    let headers = split_delimited(&header_line);
+    let headers: Vec<String> = split_delimited(&header_line)
+        .into_iter()
+        .map(|s| s.to_owned())
+        .collect();
     let detected = detect_columns(&headers);
 
     let snp_idx = detected.get("SNP").context("SNP column not found")?;
@@ -85,9 +88,15 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
             .and_then(|s| s.parse().ok());
 
         let record = GwasRecord {
-            snp: fields[snp_idx].clone(),
-            a1: detected.get("A1").and_then(|i| fields.get(i)).cloned(),
-            a2: detected.get("A2").and_then(|i| fields.get(i)).cloned(),
+            snp: fields[snp_idx].to_owned(),
+            a1: detected
+                .get("A1")
+                .and_then(|i| fields.get(i))
+                .map(|s| s.to_string()),
+            a2: detected
+                .get("A2")
+                .and_then(|i| fields.get(i))
+                .map(|s| s.to_string()),
             effect: detected
                 .get("effect")
                 .and_then(|i| fields.get(i))
@@ -152,6 +161,11 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
         .position(|h| h == "A2")
         .context("A2 column not found in sumstats")?;
 
+    let max_idx = *[snp_idx, n_idx, z_idx, a1_idx, a2_idx]
+        .iter()
+        .max()
+        .unwrap();
+
     let mut records = Vec::new();
     for line_result in lines {
         let line = line_result?;
@@ -159,14 +173,17 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
             continue;
         }
         let fields = split_delimited(&line);
+        if fields.len() <= max_idx {
+            continue;
+        }
         let n: f64 = fields[n_idx].parse().context("invalid N")?;
         let z: f64 = fields[z_idx].parse().context("invalid Z")?;
         records.push(MungedRecord {
-            snp: fields[snp_idx].clone(),
+            snp: fields[snp_idx].to_owned(),
             n,
             z,
-            a1: fields[a1_idx].clone(),
-            a2: fields[a2_idx].clone(),
+            a1: fields[a1_idx].to_owned(),
+            a2: fields[a2_idx].to_owned(),
         });
     }
 
@@ -188,10 +205,10 @@ pub fn open_file_reader(path: &Path) -> Result<Box<dyn BufRead>> {
 }
 
 /// Split a line by tab or whitespace. Prefers tab if present.
-fn split_delimited(line: &str) -> Vec<String> {
+fn split_delimited(line: &str) -> Vec<&str> {
     if line.contains('\t') {
-        line.split('\t').map(|s| s.trim().to_string()).collect()
+        line.split('\t').map(|s| s.trim()).collect()
     } else {
-        line.split_whitespace().map(|s| s.to_string()).collect()
+        line.split_whitespace().collect()
     }
 }

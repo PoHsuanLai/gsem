@@ -1,146 +1,154 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
-/// Canonical column names and their known aliases.
-/// Ported from GenomicSEM R's `.get_renamed_colnames()` in utils.R.
-fn build_alias_map() -> HashMap<&'static str, Vec<&'static str>> {
-    let mut m = HashMap::new();
-    m.insert(
-        "SNP",
-        vec![
+/// Inverted alias map: uppercase alias → canonical name.
+/// Built once, shared across all calls to `detect_columns`.
+static ALIAS_TO_CANONICAL: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let entries: &[(&str, &[&str])] = &[
+        (
             "SNP",
-            "SNPID",
-            "RSID",
-            "RS_NUMBER",
-            "RS_NUMBERS",
-            "MARKERNAME",
-            "ID",
-            "PREDICTOR",
-            "SNP_ID",
-            "VARIANTID",
-            "VARIANT_ID",
-            "RSIDS",
-            "RS_ID",
-        ],
-    );
-    m.insert(
-        "A1",
-        vec![
+            &[
+                "SNP",
+                "SNPID",
+                "RSID",
+                "RS_NUMBER",
+                "RS_NUMBERS",
+                "MARKERNAME",
+                "ID",
+                "PREDICTOR",
+                "SNP_ID",
+                "VARIANTID",
+                "VARIANT_ID",
+                "RSIDS",
+                "RS_ID",
+            ],
+        ),
+        (
             "A1",
-            "ALLELE1",
-            "EFFECT_ALLELE",
-            "INC_ALLELE",
-            "REFERENCE_ALLELE",
-            "EA",
-            "REF",
-        ],
-    );
-    m.insert(
-        "A2",
-        vec![
+            &[
+                "A1",
+                "ALLELE1",
+                "EFFECT_ALLELE",
+                "INC_ALLELE",
+                "REFERENCE_ALLELE",
+                "EA",
+                "REF",
+            ],
+        ),
+        (
             "A2",
-            "ALLELE2",
-            "ALLELE0",
-            "OTHER_ALLELE",
-            "NON_EFFECT_ALLELE",
-            "DEC_ALLELE",
-            "OA",
-            "NEA",
-            "ALT",
-            "A0",
-        ],
-    );
-    m.insert(
-        "effect",
-        vec![
-            "OR",
-            "B",
-            "BETA",
-            "LOG_ODDS",
-            "EFFECTS",
-            "EFFECT",
-            "SIGNED_SUMSTAT",
-            "EST",
-            "BETA1",
-            "LOGOR",
-        ],
-    );
-    m.insert("INFO", vec!["INFO", "IMPINFO"]);
-    m.insert(
-        "P",
-        vec![
+            &[
+                "A2",
+                "ALLELE2",
+                "ALLELE0",
+                "OTHER_ALLELE",
+                "NON_EFFECT_ALLELE",
+                "DEC_ALLELE",
+                "OA",
+                "NEA",
+                "ALT",
+                "A0",
+            ],
+        ),
+        (
+            "effect",
+            &[
+                "OR",
+                "B",
+                "BETA",
+                "LOG_ODDS",
+                "EFFECTS",
+                "EFFECT",
+                "SIGNED_SUMSTAT",
+                "EST",
+                "BETA1",
+                "LOGOR",
+            ],
+        ),
+        ("INFO", &["INFO", "IMPINFO"]),
+        (
             "P",
-            "PVALUE",
-            "PVAL",
-            "P_VALUE",
-            "P-VALUE",
-            "P.VALUE",
-            "P_VAL",
-            "GC_PVALUE",
-            "WALD_P",
-        ],
-    );
-    m.insert(
-        "N",
-        vec![
+            &[
+                "P",
+                "PVALUE",
+                "PVAL",
+                "P_VALUE",
+                "P-VALUE",
+                "P.VALUE",
+                "P_VAL",
+                "GC_PVALUE",
+                "WALD_P",
+            ],
+        ),
+        (
             "N",
-            "WEIGHT",
-            "NCOMPLETESAMPLES",
-            "TOTALSAMPLESIZE",
-            "TOTALN",
-            "TOTAL_N",
-            "N_COMPLETE_SAMPLES",
-            "SAMPLESIZE",
-            "NEFF",
-            "N_EFF",
-            "N_EFFECTIVE",
-            "SUMNEFF",
-        ],
-    );
-    m.insert(
-        "MAF",
-        vec![
+            &[
+                "N",
+                "WEIGHT",
+                "NCOMPLETESAMPLES",
+                "TOTALSAMPLESIZE",
+                "TOTALN",
+                "TOTAL_N",
+                "N_COMPLETE_SAMPLES",
+                "SAMPLESIZE",
+                "NEFF",
+                "N_EFF",
+                "N_EFFECTIVE",
+                "SUMNEFF",
+            ],
+        ),
+        (
             "MAF",
-            "CEUAF",
-            "FREQ1",
-            "EAF",
-            "FREQ1.HAPMAP",
-            "FREQALLELE1HAPMAPCEU",
-            "FREQ.ALLELE1.HAPMAPCEU",
-            "EFFECT_ALLELE_FREQ",
-            "FREQ.A1",
-            "A1FREQ",
-            "ALLELEFREQ",
-            "EFFECT_ALLELE_FREQUENCY",
-        ],
-    );
-    m.insert(
-        "Z",
-        vec![
+            &[
+                "MAF",
+                "CEUAF",
+                "FREQ1",
+                "EAF",
+                "FREQ1.HAPMAP",
+                "FREQALLELE1HAPMAPCEU",
+                "FREQ.ALLELE1.HAPMAPCEU",
+                "EFFECT_ALLELE_FREQ",
+                "FREQ.A1",
+                "A1FREQ",
+                "ALLELEFREQ",
+                "EFFECT_ALLELE_FREQUENCY",
+            ],
+        ),
+        (
             "Z",
-            "ZSCORE",
-            "Z-SCORE",
-            "ZSTATISTIC",
-            "ZSTAT",
-            "Z-STATISTIC",
-        ],
-    );
-    m.insert(
-        "SE",
-        vec![
-            "STDERR",
+            &[
+                "Z",
+                "ZSCORE",
+                "Z-SCORE",
+                "ZSTATISTIC",
+                "ZSTAT",
+                "Z-STATISTIC",
+            ],
+        ),
+        (
             "SE",
-            "STDERRLOGOR",
-            "SEBETA",
-            "STANDARDERROR",
-            "STANDARD_ERROR",
-        ],
-    );
-    m.insert("DIRECTION", vec!["DIRECTION", "DIREC", "DIRE", "SIGN"]);
-    // Special N columns that need doubling
-    m.insert("NEFFDIV2", vec!["NEFFDIV2"]);
-    m.insert("NEFF_HALF", vec!["NEFF_HALF"]);
-    m
-}
+            &[
+                "STDERR",
+                "SE",
+                "STDERRLOGOR",
+                "SEBETA",
+                "STANDARDERROR",
+                "STANDARD_ERROR",
+            ],
+        ),
+        ("DIRECTION", &["DIRECTION", "DIREC", "DIRE", "SIGN"]),
+        ("NEFFDIV2", &["NEFFDIV2"]),
+        ("NEFF_HALF", &["NEFF_HALF"]),
+    ];
+
+    let mut map = HashMap::new();
+    for &(canonical, aliases) in entries {
+        for &alias in aliases {
+            map.insert(alias, canonical);
+        }
+    }
+    map
+});
 
 /// Result of column detection: maps canonical names to column indices.
 #[derive(Debug, Clone)]
@@ -168,18 +176,12 @@ impl DetectedColumns {
 /// Case-insensitive matching against known aliases. Returns a mapping
 /// of canonical names to column indices.
 pub fn detect_columns(headers: &[String]) -> DetectedColumns {
-    let alias_map = build_alias_map();
     let mut columns = HashMap::new();
 
-    // Uppercase all headers for case-insensitive matching
-    let upper_headers: Vec<String> = headers.iter().map(|h| h.to_uppercase()).collect();
-
-    for (canonical, aliases) in &alias_map {
-        for (idx, header) in upper_headers.iter().enumerate() {
-            if aliases.contains(&header.as_str()) {
-                columns.insert(canonical.to_string(), idx);
-                break;
-            }
+    for (idx, header) in headers.iter().enumerate() {
+        let upper = header.to_uppercase();
+        if let Some(&canonical) = ALIAS_TO_CANONICAL.get(upper.as_str()) {
+            columns.entry(canonical.to_string()).or_insert(idx);
         }
     }
 

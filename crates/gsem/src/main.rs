@@ -430,7 +430,7 @@ fn run_gwas(
         anyhow::bail!("must provide --model or --model-file");
     };
 
-    let gc_mode = gsem::gwas::gc_correction::GcMode::from_str(gc);
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap();
     let k = ldsc_result.s.nrows();
 
     // Read merged sumstats
@@ -439,9 +439,7 @@ fn run_gwas(
         .with_context(|| format!("failed to read {}", sumstats.display()))?;
 
     let n_snps = merged.snps.len();
-    eprintln!(
-        "GWAS: {n_snps} SNPs, {k} traits, estimation={estimation}, gc={gc}"
-    );
+    eprintln!("GWAS: {n_snps} SNPs, {k} traits, estimation={estimation}, gc={gc}");
 
     if merged.trait_names.len() != k {
         anyhow::bail!(
@@ -509,8 +507,7 @@ fn run_gwas(
         }
     }
 
-    std::fs::write(out, &output)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     let n_converged = results.iter().filter(|r| r.converged).count();
     eprintln!(

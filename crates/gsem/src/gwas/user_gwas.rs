@@ -134,11 +134,8 @@ fn process_single_snp(
     smooth::smooth_if_needed(&mut v_full);
 
     // Build model
-    let obs_names: Vec<String> = {
-        let mut names = vec!["SNP".to_string()];
-        names.extend((0..k).map(|i| format!("V{}", i + 1)));
-        names
-    };
+    let mut obs_names = vec!["SNP".to_string()];
+    obs_names.extend((0..k).map(|i| format!("V{}", i + 1)));
 
     let mut model = Model::from_partable(pt, &obs_names);
 
@@ -147,7 +144,7 @@ fn process_single_snp(
     let v_diag: Vec<f64> = (0..kstar_full).map(|i| v_full[(i, i)]).collect();
 
     // Fit model
-    let fit = if config.estimation.to_uppercase() == "ML" {
+    let fit = if config.estimation.eq_ignore_ascii_case("ML") {
         estimator::fit_ml(&mut model, &s_full, config.max_iter)
     } else {
         estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter)

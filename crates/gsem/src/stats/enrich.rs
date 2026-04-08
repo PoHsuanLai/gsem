@@ -28,7 +28,6 @@ pub struct EnrichResult {
 pub fn enrichment_test(
     s_baseline: &Mat<f64>,
     s_annot: &[Mat<f64>],
-    v_baseline: &Mat<f64>,
     v_annot: &[Mat<f64>],
     annotation_names: &[String],
     m_annot: &[f64],
@@ -39,9 +38,6 @@ pub fn enrichment_test(
 
     // Baseline estimates: average h2 across traits from diagonal of S
     let h2_total: f64 = (0..k).map(|i| s_baseline[(i, i)]).sum::<f64>() / k as f64;
-
-    // Baseline SE from V (used for reference, kept for potential future use)
-    let _baseline_se = compute_diag_se(s_baseline, v_baseline, k);
 
     let mut enrichment = Vec::with_capacity(n_annot);
     let mut se = Vec::with_capacity(n_annot);
@@ -65,7 +61,7 @@ pub fn enrichment_test(
 
         // SE via delta method:
         // enrichment_se = (SE_annot / |est_baseline|) / prop_snps
-        let annot_se = compute_diag_se(&s_annot[a], &v_annot[a], k);
+        let annot_se = compute_diag_se(&v_annot[a], k);
         let se_val = if h2_total.abs() > 1e-30 && prop_snps > 0.0 {
             (annot_se / h2_total.abs()) / prop_snps
         } else {
@@ -98,34 +94,23 @@ pub fn enrichment_test(
     }
 }
 
-/// Compute the SE of the mean diagonal element of S, using V.
+/// Compute SE of the mean diagonal element using V.
 ///
-/// For each diagonal element S[i,i], its vech index is computed,
-/// and SE = sqrt(V[idx,idx]). Then the SE of the mean is:
-/// SE_mean = sqrt(sum(SE_i^2)) / k (assuming independence for simplicity).
-fn compute_diag_se(_s: &Mat<f64>, v: &Mat<f64>, k: usize) -> f64 {
-    let mut var_sum = 0.0;
-    for i in 0..k {
-        let vech_idx = vech_diag_index(i, k);
-        if vech_idx < v.nrows() {
-            var_sum += v[(vech_idx, vech_idx)];
-        }
-    }
+/// SE_mean = sqrt(sum(V[idx,idx])) / k where idx is the vech index for each diagonal.
+fn compute_diag_se(v: &Mat<f64>, k: usize) -> f64 {
+    let var_sum: f64 = (0..k)
+        .map(|i| vech_diag_index(i, k))
+        .filter(|&idx| idx < v.nrows())
+        .map(|idx| v[(idx, idx)])
+        .sum();
     (var_sum / (k as f64).powi(2)).sqrt()
 }
 
 /// Get the vech index for the diagonal element (i, i) in a k×k matrix.
 ///
-/// In column-major lower triangle ordering: index of (i, i) = sum_{j=0}^{i-1}(k-j) + 0
+/// Closed-form: sum_{c=0}^{i-1}(k - c) = i*k - i*(i-1)/2
 fn vech_diag_index(i: usize, k: usize) -> usize {
-    // Column-major vech: for column j, rows j..k
-    // Index of (i, j) where j <= i is: sum_{c=0}^{j-1}(k - c) + (i - j)
-    // For diagonal (i, i): sum_{c=0}^{i-1}(k - c) + 0
-    let mut idx = 0;
-    for c in 0..i {
-        idx += k - c;
-    }
-    idx
+    i * k - i * i.saturating_sub(1) / 2
 }
 
 #[cfg(test)]
@@ -136,21 +121,12 @@ mod tests {
     fn test_enrichment_basic() {
         let s_baseline = faer::mat![[0.3, 0.1], [0.1, 0.4]];
         let s_annot = vec![faer::mat![[0.15, 0.05], [0.05, 0.2]]];
-        let v_baseline = Mat::from_fn(3, 3, |i, j| if i == j { 0.01 } else { 0.0 });
         let v_annot = vec![Mat::from_fn(3, 3, |i, j| if i == j { 0.02 } else { 0.0 })];
         let names = vec!["Annot1".to_string()];
         let m_annot = vec![100000.0];
         let m_total = 1000000.0;
 
-        let result = enrichment_test(
-            &s_baseline,
-            &s_annot,
-            &v_baseline,
-            &v_annot,
-            &names,
-            &m_annot,
-            m_total,
-        );
+        let result = enrichment_test(&s_baseline, &s_annot, &v_annot, &names, &m_annot, m_total);
         assert_eq!(result.annotations.len(), 1);
         assert!(result.enrichment[0] > 0.0);
         assert!(result.se[0] > 0.0, "SE should be positive, not placeholder");

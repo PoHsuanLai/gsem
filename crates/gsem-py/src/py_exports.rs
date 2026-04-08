@@ -1,8 +1,8 @@
 //! PyO3-exported classes and functions for Python.
 
-use pyo3::prelude::*;
 use numpy::ndarray::Array2;
-use numpy::{PyArray2, IntoPyArray};
+use numpy::{IntoPyArray, PyArray2};
+use pyo3::prelude::*;
 
 use crate::conversions;
 
@@ -27,24 +27,24 @@ impl PyLdscResult {
     /// Genetic covariance matrix S as NumPy array.
     #[getter]
     fn s<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let arr = Array2::from_shape_vec(self.s_shape, self.s_data.clone())
-            .expect("S shape mismatch");
+        let arr =
+            Array2::from_shape_vec(self.s_shape, self.s_data.clone()).expect("S shape mismatch");
         arr.into_pyarray(py)
     }
 
     /// Sampling covariance matrix V as NumPy array.
     #[getter]
     fn v<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let arr = Array2::from_shape_vec(self.v_shape, self.v_data.clone())
-            .expect("V shape mismatch");
+        let arr =
+            Array2::from_shape_vec(self.v_shape, self.v_data.clone()).expect("V shape mismatch");
         arr.into_pyarray(py)
     }
 
     /// Intercept matrix I as NumPy array.
     #[getter]
     fn i_mat<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let arr = Array2::from_shape_vec(self.i_shape, self.i_data.clone())
-            .expect("I shape mismatch");
+        let arr =
+            Array2::from_shape_vec(self.i_shape, self.i_data.clone()).expect("I shape mismatch");
         arr.into_pyarray(py)
     }
 
@@ -171,11 +171,7 @@ fn ldsc(
 ///     Dict with "converged", "objective", "parameters" keys
 #[pyfunction]
 #[pyo3(signature = (covstruc_json, model, estimation="DWLS"))]
-fn usermodel(
-    covstruc_json: &str,
-    model: &str,
-    estimation: &str,
-) -> PyResult<String> {
+fn usermodel(covstruc_json: &str, model: &str, estimation: &str) -> PyResult<String> {
     let ldsc_result = conversions::python_dict_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
 
@@ -245,13 +241,8 @@ fn munge(
         let name = trait_names.get(i).map(|s| s.as_str()).unwrap_or("trait");
         let out_path = std::path::Path::new(out_dir).join(format!("{name}.sumstats.gz"));
 
-        gsem::munge::munge_and_write(
-            std::path::Path::new(file),
-            &reference,
-            &config,
-            &out_path,
-        )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+        gsem::munge::munge_and_write(std::path::Path::new(file), &reference, &config, &out_path)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
         output_paths.push(out_path.to_string_lossy().to_string());
     }

@@ -1,3 +1,16 @@
+//! Minimal structural equation modeling engine.
+//!
+//! Standalone crate for fitting SEMs from covariance matrices, designed
+//! as a pure-Rust replacement for the subset of lavaan used by GenomicSEM.
+//!
+//! # Key components
+//!
+//! - [`syntax`] -- Lavaan-compatible model parser (`=~`, `~~`, `~`, `:=`)
+//! - [`model`] -- LISREL all-y parameterization (Lambda, Psi, Theta, Beta)
+//! - [`estimator`] -- DWLS and ML fitting via L-BFGS optimizer
+//! - [`sandwich`] -- Corrected standard errors
+//! - [`fit_indices`] -- Chi-square, CFI, AIC, SRMR
+
 pub mod delta;
 pub mod error;
 pub mod estimator;
