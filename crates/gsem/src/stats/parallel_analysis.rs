@@ -2,6 +2,7 @@ use faer::{Mat, Side};
 use gsem_matrix::vech;
 use rand::Rng;
 use rand_distr::StandardNormal;
+use rayon::prelude::*;
 
 /// Result of parallel analysis.
 #[derive(Debug, Clone)]
@@ -39,30 +40,33 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     // Cholesky of V for multivariate normal sampling: L such that V = L L'
     let chol_l = compute_cholesky_l(v, kstar);
 
-    // Simulate null eigenvalue distributions
+    // Simulate null eigenvalue distributions (parallelized — each iteration is independent)
+    let all_eigs: Vec<Vec<f64>> = (0..n_sim)
+        .into_par_iter()
+        .map(|_| {
+            let mut rng = rand::rng();
+            let mut z = vec![0.0; kstar];
+            let mut sample = vec![0.0; kstar];
+
+            // Generate z ~ N(0, I)
+            for zi in z.iter_mut() {
+                *zi = rng.sample(StandardNormal);
+            }
+
+            // sample = null_vec + L * z (multivariate normal)
+            for i in 0..kstar {
+                let lz: f64 = (0..kstar).map(|j| chol_l[(i, j)] * z[j]).sum();
+                sample[i] = null_vec[i] + lz;
+            }
+
+            let sim_mat = vech::vech_reverse(&sample, k);
+            eigenvalues_sorted(&sim_mat)
+        })
+        .collect();
+
+    // Transpose: from n_sim × k to k × n_sim
     let mut sim_eigenvalues: Vec<Vec<f64>> = vec![Vec::with_capacity(n_sim); k];
-    let mut rng = rand::rng();
-
-    // Pre-allocate buffers reused each iteration
-    let mut z = vec![0.0; kstar];
-    let mut sample = vec![0.0; kstar];
-
-    for _ in 0..n_sim {
-        // Generate z ~ N(0, I) of length kstar
-        for zi in z.iter_mut() {
-            *zi = rng.sample(StandardNormal);
-        }
-
-        // sample = null_vec + L * z (multivariate normal)
-        for i in 0..kstar {
-            let lz: f64 = (0..kstar).map(|j| chol_l[(i, j)] * z[j]).sum();
-            sample[i] = null_vec[i] + lz;
-        }
-
-        // Reconstruct matrix from vech and symmetrize
-        let sim_mat = vech::vech_reverse(&sample, k);
-
-        let eigs = eigenvalues_sorted(&sim_mat);
+    for eigs in &all_eigs {
         for (f, &eig) in eigs.iter().enumerate() {
             sim_eigenvalues[f].push(eig);
         }
