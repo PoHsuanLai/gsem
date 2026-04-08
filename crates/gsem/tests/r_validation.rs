@@ -203,7 +203,6 @@ fn test_s_full_matches_r() {
 fn test_v_full_matches_r() {
     let fix = load_fixture("v_full");
     let v_ld = json_to_mat(&fix["v_ld"]);
-    let _v_snp = json_to_mat(&fix["v_snp"]);
     let var_snp_se2 = fix["var_snp_se2"].as_f64().unwrap();
     let k = fix["k"].as_u64().unwrap() as usize;
     let expected = json_to_mat(&fix["expected"]);
