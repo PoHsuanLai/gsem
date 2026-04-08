@@ -400,7 +400,7 @@ fn run_sem(
 
 fn run_gwas(
     covstruc: &PathBuf,
-    _sumstats: &PathBuf,
+    sumstats: &PathBuf,
     model: Option<String>,
     model_file: Option<PathBuf>,
     estimation: &str,
@@ -419,7 +419,7 @@ fn run_gwas(
     // Read LDSC result
     let json = std::fs::read_to_string(covstruc)
         .with_context(|| format!("failed to read {}", covstruc.display()))?;
-    let _ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
+    let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
     // Get model string
     let model_str = if let Some(m) = model {
@@ -430,24 +430,93 @@ fn run_gwas(
         anyhow::bail!("must provide --model or --model-file");
     };
 
-    let _gc_mode = gsem::gwas::gc_correction::GcMode::from_str(gc);
+    let gc_mode = gsem::gwas::gc_correction::GcMode::from_str(gc);
+    let k = ldsc_result.s.nrows();
+
+    // Read merged sumstats
+    eprintln!("Reading merged sumstats: {}", sumstats.display());
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(sumstats)
+        .with_context(|| format!("failed to read {}", sumstats.display()))?;
+
+    let n_snps = merged.snps.len();
     eprintln!(
-        "GWAS: estimation={estimation}, gc={gc:?}, model length={} chars",
-        model_str.len()
-    );
-    eprintln!("Note: full GWAS requires merged sumstats with SNP-level betas/SEs.");
-    eprintln!(
-        "Use the library API (gsem::gwas::user_gwas::run_user_gwas) for programmatic access."
+        "GWAS: {n_snps} SNPs, {k} traits, estimation={estimation}, gc={gc}"
     );
 
-    // Placeholder output
-    std::fs::write(
-        out,
-        "# GWAS results (run with library API for full output)\n",
-    )
-    .with_context(|| format!("failed to write {}", out.display()))?;
+    if merged.trait_names.len() != k {
+        anyhow::bail!(
+            "trait count mismatch: LDSC has {k} traits, sumstats has {} (beta.* columns)",
+            merged.trait_names.len()
+        );
+    }
 
-    eprintln!("Output: {}", out.display());
+    // Extract per-SNP arrays for user_gwas
+    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = merged
+        .snps
+        .iter()
+        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+        .collect();
+
+    // Clamp intercept diagonals to >= 1 (matching R)
+    let mut i_ld = ldsc_result.i_mat.to_owned();
+    for i in 0..k {
+        if i_ld[(i, i)] < 1.0 {
+            i_ld[(i, i)] = 1.0;
+        }
+    }
+
+    let config = gsem::gwas::user_gwas::UserGwasConfig {
+        model: model_str,
+        estimation: estimation.to_string(),
+        gc: gc_mode,
+        max_iter: 500,
+        std_lv: false,
+        snp_se: None,
+    };
+
+    eprintln!("Running GWAS across {n_snps} SNPs...");
+    let results = gsem::gwas::user_gwas::run_user_gwas(
+        &config,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        &i_ld,
+        &beta_snp,
+        &se_snp,
+        &var_snp,
+    );
+
+    // Write TSV output
+    let mut output = String::from("SNP\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
+    for snp_result in &results {
+        let snp_name = &merged.snps[snp_result.snp_idx].snp;
+        for param in &snp_result.params {
+            output.push_str(&format!(
+                "{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\t{:.4}\t{}\t{}\n",
+                snp_name,
+                param.lhs,
+                param.op,
+                param.rhs,
+                param.est,
+                param.se,
+                param.z_stat,
+                param.p_value,
+                snp_result.chisq,
+                snp_result.chisq_df,
+                snp_result.converged,
+            ));
+        }
+    }
+
+    std::fs::write(out, &output)
+        .with_context(|| format!("failed to write {}", out.display()))?;
+
+    let n_converged = results.iter().filter(|r| r.converged).count();
+    eprintln!(
+        "GWAS complete: {n_snps} SNPs, {n_converged} converged. Results: {}",
+        out.display()
+    );
     Ok(())
 }
 

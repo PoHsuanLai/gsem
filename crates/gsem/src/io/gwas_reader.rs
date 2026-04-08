@@ -174,7 +174,7 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
 }
 
 /// Open a file for reading, with automatic gzip detection based on .gz extension.
-fn open_file_reader(path: &Path) -> Result<Box<dyn BufRead>> {
+pub fn open_file_reader(path: &Path) -> Result<Box<dyn BufRead>> {
     let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let is_gz = path
         .extension()
