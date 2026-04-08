@@ -8,8 +8,8 @@ use crate::LdscResult;
 ///   conversion_factor = (K^2 * (1-K)^2) / (P * (1-P) * dnorm(qnorm(1-K))^2)
 /// where K = population prevalence, P = sample prevalence.
 ///
-/// S_liab[j,k] = S[j,k] * sqrt(cf_j) * sqrt(cf_k)
-/// V_liab = V * outer(scale_ratios, scale_ratios)
+/// `S_liab[j,k] = S[j,k] * sqrt(cf_j) * sqrt(cf_k)`
+/// `V_liab = V * outer(scale_ratios, scale_ratios)`
 pub fn apply_liability_scale(
     result: &mut LdscResult,
     sample_prev: &[Option<f64>],

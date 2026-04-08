@@ -1,7 +1,7 @@
 /// Compute LDSC regression weights for the heritability path (j==k).
 ///
 /// From ldsc.R:
-/// - tot_agg = M * (mean(chi2) - 1) / mean(L2 * N), clamped to [0, 1]
+/// - `tot_agg = M * (mean(chi2) - 1) / mean(L2 * N)`, clamped to 0..1
 /// - c = tot_agg * N / M
 /// - het_w = 1 / (2 * (1 + c * ld)^2)
 /// - oc_w = 1 / max(w_ld, 1)

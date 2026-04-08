@@ -42,7 +42,7 @@ pub fn smooth_if_needed(mat: &mut Mat<f64>) -> bool {
 }
 
 /// Convert a covariance matrix to a correlation matrix.
-/// cor[i,j] = cov[i,j] / sqrt(cov[i,i] * cov[j,j])
+/// `cor[i,j] = cov[i,j] / sqrt(cov[i,i] * cov[j,j])`
 pub fn cov_to_cor(cov: &Mat<f64>) -> Mat<f64> {
     let n = cov.nrows();
     assert_eq!(n, cov.ncols());

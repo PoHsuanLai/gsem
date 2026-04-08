@@ -7,9 +7,9 @@ use super::gc_correction::{self, GcMode};
 /// Port of `.get_S_Full()` from GenomicSEM's utils.R.
 ///
 /// Structure:
-///   S_Full[0,0] = var_snp
-///   S_Full[0, 1..=k] = var_snp * beta_snp (SNP-phenotype covariances)
-///   S_Full[1..=k, 1..=k] = S_LD
+///   `S_Full[0,0]` = var_snp
+///   `S_Full[0, 1..=k]` = var_snp * beta_snp (SNP-phenotype covariances)
+///   `S_Full[1..=k, 1..=k]` = S_LD
 pub fn build_s_full(s_ld: &Mat<f64>, beta_snp: &[f64], var_snp: f64, k: usize) -> Mat<f64> {
     let n = k + 1;
     let mut s_full = Mat::zeros(n, n);
@@ -39,9 +39,9 @@ pub fn build_s_full(s_ld: &Mat<f64>, beta_snp: &[f64], var_snp: f64, k: usize) -
 /// Port of `.get_V_full()` from GenomicSEM's utils.R.
 ///
 /// Structure:
-///   V_Full[0,0] = var_snp_se2
-///   V_Full[1..=k, 1..=k] = V_SNP (from GC correction)
-///   V_Full[(k+1).., (k+1)..] = V_LD
+///   `V_Full[0,0]` = var_snp_se2
+///   `V_Full[1..=k, 1..=k]` = V_SNP (from GC correction)
+///   `V_Full[(k+1).., (k+1)..]` = V_LD
 pub fn build_v_full(
     v_ld: &Mat<f64>,
     se_snp: &[f64],

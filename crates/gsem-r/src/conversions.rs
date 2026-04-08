@@ -1,10 +1,10 @@
 //! Conversion utilities between R data structures and Rust types.
 //!
 //! These functions handle the translation layer:
-//! - R matrix (column-major numeric) <-> faer::Mat<f64>
-//! - R list with $S, $V, $I, $N, $m <-> gsem_ldsc::LdscResult
-//! - Rust SemResult -> R list with $results and $modelfit
-//! - Rust Vec<SnpResult> -> R data.frame
+//! - R matrix (column-major numeric) <-> `faer::Mat<f64>`
+//! - R list with $S, $V, $I, $N, $m <-> `gsem_ldsc::LdscResult`
+//! - Rust `SemResult` -> R list with $results and $modelfit
+//! - Rust `Vec<SnpResult>` -> R data.frame
 //!
 //! When extendr is enabled, these use extendr_api types (Robj, List, RMatrix).
 //! For now, they work with the JSON serialization layer.
@@ -13,7 +13,7 @@ use faer::Mat;
 use gsem_ldsc::LdscResult;
 use gsem_sem::SemResult;
 
-/// Convert a faer Mat to a row-major Vec<Vec<f64>> (for R matrix construction).
+/// Convert a faer Mat to a row-major `Vec<Vec<f64>>` (for R matrix construction).
 pub fn mat_to_r_matrix(mat: &Mat<f64>) -> Vec<Vec<f64>> {
     (0..mat.nrows())
         .map(|i| (0..mat.ncols()).map(|j| mat[(i, j)]).collect())

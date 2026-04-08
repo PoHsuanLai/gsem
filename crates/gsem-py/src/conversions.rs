@@ -1,7 +1,7 @@
 //! Conversion utilities between Python/NumPy and Rust types.
 //!
 //! When PyO3+numpy are enabled, these convert:
-//! - faer::Mat<f64> <-> numpy.ndarray
+//! - `faer::Mat<f64>` <-> numpy.ndarray
 //! - LdscResult <-> Python LdscResult class with NumPy arrays
 //! - SemResult -> pandas DataFrame
 //!

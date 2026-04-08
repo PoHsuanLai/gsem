@@ -96,7 +96,7 @@ pub fn enrichment_test(
 
 /// Compute SE of the mean diagonal element using V.
 ///
-/// SE_mean = sqrt(sum(V[idx,idx])) / k where idx is the vech index for each diagonal.
+/// `SE_mean = sqrt(sum(V[idx,idx])) / k` where idx is the vech index for each diagonal.
 fn compute_diag_se(v: &Mat<f64>, k: usize) -> f64 {
     let var_sum: f64 = (0..k)
         .map(|i| vech_diag_index(i, k))

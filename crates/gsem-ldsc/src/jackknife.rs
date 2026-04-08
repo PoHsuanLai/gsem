@@ -14,10 +14,10 @@ pub struct JackknifeResult {
 /// Perform delete-one-block jackknife on a regression result.
 ///
 /// For each block b:
-///   xtx_loo = xtx_total - xtx_block[b]
-///   xty_loo = xty_total - xty_block[b]
-///   coef_loo = solve(xtx_loo, xty_loo)
-///   pseudo[b] = n_blocks * coef_total - (n_blocks-1) * coef_loo
+///   `xtx_loo = xtx_total - xtx_block[b]`
+///   `xty_loo = xty_total - xty_block[b]`
+///   `coef_loo = solve(xtx_loo, xty_loo)`
+///   `pseudo[b] = n_blocks * coef_total - (n_blocks-1) * coef_loo`
 ///
 /// SE = sqrt(var(pseudo) / n_blocks)
 pub fn jackknife(result: &RegressionResult) -> JackknifeResult {
@@ -76,7 +76,7 @@ pub fn jackknife(result: &RegressionResult) -> JackknifeResult {
 
 /// Construct the V matrix (sampling covariance of vech(S)) from jackknife pseudo-values.
 ///
-/// V[i,j] = cov(pseudo_i, pseudo_j) / n_blocks
+/// `V[i,j] = cov(pseudo_i, pseudo_j) / n_blocks`
 pub fn construct_v_matrix(all_pseudos: &[Vec<f64>], n_blocks: usize) -> Mat<f64> {
     let kstar = all_pseudos.len();
     let nb = n_blocks as f64;
