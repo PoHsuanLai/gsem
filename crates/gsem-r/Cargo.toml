@@ -1,0 +1,16 @@
+[package]
+name = "gsem-r"
+description = "R bindings for GenomicSEM-rs via extendr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+gsem = { workspace = true }
+gsem-matrix = { workspace = true }
+gsem-ldsc = { workspace = true }
+gsem-sem = { workspace = true }
+# extendr-api = { workspace = true }  # Uncomment when R bindings are implemented

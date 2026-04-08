@@ -1,0 +1,58 @@
+[workspace]
+members = [
+    "crates/gsem-matrix",
+    "crates/gsem-ldsc",
+    "crates/gsem-sem",
+    "crates/gsem",
+    "crates/gsem-r",
+    "crates/gsem-py",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+repository = "https://github.com/user/genomicsem-rs"
+
+[workspace.dependencies]
+# Core math
+faer = "0.22"
+statrs = "0.18"
+
+# Parallelism
+rayon = "1.10"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# I/O
+csv = "1.3"
+flate2 = "1.1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+
+# FFI bindings
+extendr-api = "0.7"
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+
+# Testing
+approx = "0.5"
+
+# Internal crates
+gsem-matrix = { path = "crates/gsem-matrix" }
+gsem-ldsc = { path = "crates/gsem-ldsc" }
+gsem-sem = { path = "crates/gsem-sem" }
+gsem = { path = "crates/gsem" }

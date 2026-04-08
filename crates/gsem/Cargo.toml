@@ -1,0 +1,31 @@
+[package]
+name = "gsem"
+description = "GenomicSEM-rs: Genomic Structural Equation Modeling from GWAS summary statistics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "genomicsem"
+path = "src/main.rs"
+
+[dependencies]
+gsem-matrix = { workspace = true }
+gsem-ldsc = { workspace = true }
+gsem-sem = { workspace = true }
+faer = { workspace = true }
+statrs = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+csv = { workspace = true }
+flate2 = { workspace = true }
+clap = { workspace = true }
+indicatif = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }

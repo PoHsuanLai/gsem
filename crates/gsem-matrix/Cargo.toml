@@ -1,0 +1,14 @@
+[package]
+name = "gsem-matrix"
+description = "Matrix utilities for GenomicSEM: nearest positive-definite, half-vectorization, PSD smoothing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+faer = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }

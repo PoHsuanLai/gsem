@@ -1,0 +1,17 @@
+[package]
+name = "gsem-py"
+description = "Python bindings for GenomicSEM-rs via PyO3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gsem = { workspace = true }
+gsem-matrix = { workspace = true }
+gsem-ldsc = { workspace = true }
+gsem-sem = { workspace = true }
+# pyo3 = { workspace = true }    # Uncomment when Python bindings are implemented
+# numpy = { workspace = true }   # Uncomment when Python bindings are implemented
