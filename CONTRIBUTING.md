@@ -1,10 +1,10 @@
-# Contributing to GenomicSEM-rs
+# Contributing to gsem
 
 ## Getting Started
 
 ```sh
-git clone https://github.com/user/genomicsem-rs.git
-cd genomicsem-rs
+git clone https://github.com/PoHsuanLai/gsem.git
+cd gsem
 cargo build
 cargo test --workspace
 ```
@@ -14,7 +14,7 @@ cargo test --workspace
 1. Create a branch from `main`
 2. Make changes
 3. Run `cargo fmt --all` and `cargo clippy --workspace`
-4. Run `cargo test --workspace` (all 78+ tests must pass)
+4. Run `cargo test --workspace` (all tests must pass)
 5. Open a pull request
 
 ## Project Structure

@@ -1,6 +1,6 @@
-# GenomicSEM-rs
+# gsem
 
-[![CI](https://github.com/user/genomicsem-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/user/genomicsem-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml/badge.svg)](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Rust](https://img.shields.io/badge/rust-2024_edition-orange.svg)](https://www.rust-lang.org)
 
@@ -11,12 +11,12 @@ A Rust rewrite of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) for mul
 - **Performance**: Per-SNP GWAS loop parallelized with rayon (vs R's foreach/doParallel)
 - **No system deps**: Pure-Rust linear algebra via [faer](https://github.com/sarah-quinones/faer-rs) (no LAPACK/cmake)
 - **Portable**: Single static binary, plus R and Python bindings
-- **Correctness**: 78 unit tests, algorithms validated against R GenomicSEM output
+- **Correctness**: 91 unit tests, algorithms validated against R GenomicSEM output
 
 ## Architecture
 
 ```
-genomicsem-rs/
+gsem/
   crates/
     gsem-matrix/   Matrix utilities: nearPD, vech, PSD smoothing
     gsem-ldsc/     LD Score Regression with block jackknife
@@ -26,7 +26,7 @@ genomicsem-rs/
     gsem-py/       Python bindings via PyO3
 ```
 
-Each core crate (`gsem-matrix`, `gsem-ldsc`, `gsem-sem`) is independently useful outside of GenomicSEM.
+Each core crate (`gsem-matrix`, `gsem-ldsc`, `gsem-sem`) is independently useful outside of gsem.
 
 ## Installation
 
@@ -40,8 +40,8 @@ cargo install --path crates/gsem
 
 ```toml
 [dependencies]
-gsem-ldsc = { git = "https://github.com/user/genomicsem-rs" }
-gsem-sem  = { git = "https://github.com/user/genomicsem-rs" }
+gsem-ldsc = { git = "https://github.com/PoHsuanLai/gsem" }
+gsem-sem  = { git = "https://github.com/PoHsuanLai/gsem" }
 ```
 
 ### Python
@@ -178,8 +178,8 @@ Standard LDSC format: `{chr}.l2.ldscore.gz` files + `{chr}.l2.M_5_50` files in a
 
 ## Differences from R GenomicSEM
 
-| Aspect | R GenomicSEM | genomicsem-rs |
-|--------|-------------|---------------|
+| Aspect | R GenomicSEM | gsem |
+|--------|-------------|------|
 | SEM engine | lavaan | Built-in L-BFGS |
 | Linear algebra | R's LAPACK bindings | faer |
 | GWAS parallelism | foreach + doParallel | rayon |
@@ -194,6 +194,9 @@ cargo build --release
 
 # Test
 cargo test --workspace
+
+# Lint
+cargo clippy --workspace
 
 # Run with logging
 RUST_LOG=info genomicsem ldsc --traits ...

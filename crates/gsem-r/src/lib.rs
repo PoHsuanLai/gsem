@@ -1,4 +1,4 @@
-//! R bindings for GenomicSEM-rs via extendr.
+//! R bindings for gsem via extendr.
 //!
 //! Build with `--features extendr` when R toolchain is available.
 //! Without the feature, only the conversion layer is available.

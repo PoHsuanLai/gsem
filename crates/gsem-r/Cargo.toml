@@ -1,6 +1,6 @@
 [package]
 name = "gsem-r"
-description = "R bindings for GenomicSEM-rs via extendr"
+description = "R bindings for gsem via extendr"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "gsem-py"
-description = "Python bindings for GenomicSEM-rs via PyO3"
+description = "Python bindings for gsem via PyO3"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

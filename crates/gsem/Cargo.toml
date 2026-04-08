@@ -1,6 +1,6 @@
 [package]
 name = "gsem"
-description = "GenomicSEM-rs: Genomic Structural Equation Modeling from GWAS summary statistics"
+description = "Genomic Structural Equation Modeling from GWAS summary statistics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

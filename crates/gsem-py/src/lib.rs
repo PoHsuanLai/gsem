@@ -1,4 +1,4 @@
-//! Python bindings for GenomicSEM-rs via PyO3.
+//! Python bindings for gsem via PyO3.
 //!
 //! Build with `--features pyo3` and maturin:
 //! ```sh

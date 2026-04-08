@@ -1,4 +1,4 @@
-//! GenomicSEM-rs: multivariate genomic structural equation modeling.
+//! gsem: multivariate genomic structural equation modeling.
 //!
 //! This is the main library crate providing the full GenomicSEM pipeline:
 //! - [`munge`] -- QC and prepare raw GWAS summary statistics
