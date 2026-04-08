@@ -11,9 +11,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 use faer::Mat;
 use gsem_matrix::vech;
+use serde::{Deserialize, Serialize};
 
 /// Result of multivariate LD Score Regression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LdscResult {
     /// Genetic covariance matrix (k×k)
     pub s: Mat<f64>,
@@ -267,4 +268,16 @@ fn merge_data(
         n_snps,
         _n_traits: k,
     })
+}
+
+impl LdscResult {
+    /// Serialize to JSON string.
+    pub fn to_json_string(&self) -> Result<String> {
+        Ok(serde_json::to_string_pretty(self)?)
+    }
+
+    /// Deserialize from JSON string.
+    pub fn from_json_string(s: &str) -> Result<Self> {
+        Ok(serde_json::from_str(s)?)
+    }
 }

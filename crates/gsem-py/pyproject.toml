@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.0"]
+build-backend = "maturin"
+
+[project]
+name = "genomicsem"
+version = "0.1.0"
+description = "Genomic Structural Equation Modeling from GWAS summary statistics"
+requires-python = ">=3.9"
+license = "GPL-3.0"
+dependencies = ["numpy>=1.20", "pandas>=1.3"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

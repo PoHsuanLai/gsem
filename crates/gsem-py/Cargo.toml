@@ -6,12 +6,15 @@ edition.workspace = true
 license.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 gsem = { workspace = true }
 gsem-matrix = { workspace = true }
 gsem-ldsc = { workspace = true }
 gsem-sem = { workspace = true }
-# pyo3 = { workspace = true }    # Uncomment when Python bindings are implemented
-# numpy = { workspace = true }   # Uncomment when Python bindings are implemented
+faer = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+# pyo3 = { workspace = true }    # Enable when building Python wheel
+# numpy = { workspace = true }   # Enable when building Python wheel

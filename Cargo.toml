@@ -17,7 +17,7 @@ repository = "https://github.com/user/genomicsem-rs"
 
 [workspace.dependencies]
 # Core math
-faer = "0.24"
+faer = { version = "0.22", features = ["serde"] }
 statrs = "0.18"
 
 # Parallelism
@@ -47,6 +47,10 @@ indicatif = "0.18"
 extendr-api = "0.7"
 pyo3 = { version = "0.23", features = ["extension-module"] }
 numpy = "0.23"
+
+# Random
+rand = "0.9"
+rand_distr = "0.5"
 
 # Testing
 approx = "0.5"

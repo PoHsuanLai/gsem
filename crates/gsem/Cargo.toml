@@ -26,6 +26,8 @@ csv = { workspace = true }
 flate2 = { workspace = true }
 clap = { workspace = true }
 indicatif = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }

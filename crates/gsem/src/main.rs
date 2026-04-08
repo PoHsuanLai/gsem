@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use gsem::munge;
+use gsem::io::gwas_reader;
 
 #[derive(Parser)]
 #[command(name = "genomicsem", about = "Genomic Structural Equation Modeling")]
@@ -155,21 +156,33 @@ fn main() -> Result<()> {
         } => {
             run_munge(&files, &hm3, trait_names.as_deref(), info_filter, maf_filter, n, &out)
         }
-        Commands::Ldsc { .. } => {
-            eprintln!("LDSC command: use the gsem-ldsc library programmatically for now.");
-            eprintln!("Full CLI integration coming soon.");
-            Ok(())
-        }
-        Commands::Sem { .. } => {
-            eprintln!("SEM command: use the gsem-sem library programmatically for now.");
-            eprintln!("Full CLI integration coming soon.");
-            Ok(())
-        }
-        Commands::Gwas { .. } => {
-            eprintln!("GWAS command: use the gsem library programmatically for now.");
-            eprintln!("Full CLI integration coming soon.");
-            Ok(())
-        }
+        Commands::Ldsc {
+            traits,
+            sample_prev,
+            pop_prev,
+            ld,
+            wld,
+            trait_names,
+            n_blocks,
+            out,
+        } => run_ldsc(&traits, sample_prev, pop_prev, &ld, wld, trait_names, n_blocks, &out),
+        Commands::Sem {
+            covstruc,
+            model,
+            model_file,
+            estimation,
+            out,
+        } => run_sem(&covstruc, model, model_file, &estimation, &out),
+        Commands::Gwas {
+            covstruc,
+            sumstats,
+            model,
+            model_file,
+            estimation,
+            gc,
+            threads,
+            out,
+        } => run_gwas(&covstruc, &sumstats, model, model_file, &estimation, &gc, threads, &out),
     }
 }
 
@@ -209,4 +222,212 @@ fn run_munge(
 
     eprintln!("Done.");
     Ok(())
+}
+
+fn run_ldsc(
+    traits: &[PathBuf],
+    sample_prev: Option<String>,
+    pop_prev: Option<String>,
+    ld: &PathBuf,
+    wld: Option<PathBuf>,
+    _trait_names: Option<Vec<String>>,
+    n_blocks: usize,
+    out: &PathBuf,
+) -> Result<()> {
+    eprintln!("Reading {} trait files...", traits.len());
+
+    // Read summary stats
+    let mut trait_data = Vec::new();
+    for path in traits {
+        let records = gwas_reader::read_sumstats(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let n_snps = records.len();
+        eprintln!("  {}: {} SNPs", path.display(), n_snps);
+
+        trait_data.push(gsem_ldsc::TraitSumstats {
+            snp: records.iter().map(|r| r.snp.clone()).collect(),
+            z: records.iter().map(|r| r.z).collect(),
+            n: records.iter().map(|r| r.n).collect(),
+            a1: records.iter().map(|r| r.a1.clone()).collect(),
+            a2: records.iter().map(|r| r.a2.clone()).collect(),
+        });
+    }
+
+    // Read LD scores
+    let wld_dir = wld.as_ref().unwrap_or(ld);
+    let ld_data = gsem::io::ld_reader::read_ld_scores(ld, wld_dir, 22)
+        .context("failed to read LD scores")?;
+
+    eprintln!("Loaded {} LD score SNPs, M={}", ld_data.records.len(), ld_data.total_m);
+
+    // Parse prevalences
+    let k = traits.len();
+    let sp = parse_prevalences(&sample_prev, k);
+    let pp = parse_prevalences(&pop_prev, k);
+
+    let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
+    let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
+
+    let config = gsem_ldsc::LdscConfig {
+        n_blocks,
+        chisq_max: None,
+    };
+
+    eprintln!("Running LDSC...");
+    let result = gsem_ldsc::ldsc(
+        &trait_data,
+        &sp,
+        &pp,
+        &ld_scores,
+        &ld_data.w_ld,
+        &ld_snps,
+        ld_data.total_m,
+        &config,
+    )?;
+
+    // Write JSON output
+    let json = result.to_json_string()?;
+    std::fs::write(out, &json)
+        .with_context(|| format!("failed to write {}", out.display()))?;
+
+    eprintln!("LDSC complete. Results written to {}", out.display());
+
+    // Print S matrix
+    let k = result.s.nrows();
+    eprintln!("\nGenetic covariance matrix (S):");
+    for i in 0..k {
+        let row: Vec<String> = (0..k).map(|j| format!("{:8.4}", result.s[(i, j)])).collect();
+        eprintln!("  {}", row.join(" "));
+    }
+
+    eprintln!("\nIntercepts (I):");
+    for i in 0..k {
+        let row: Vec<String> = (0..k).map(|j| format!("{:8.4}", result.i_mat[(i, j)])).collect();
+        eprintln!("  {}", row.join(" "));
+    }
+
+    Ok(())
+}
+
+fn run_sem(
+    covstruc: &PathBuf,
+    model: Option<String>,
+    model_file: Option<PathBuf>,
+    estimation: &str,
+    out: &PathBuf,
+) -> Result<()> {
+    // Read LDSC result
+    let json = std::fs::read_to_string(covstruc)
+        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
+
+    // Get model string
+    let model_str = if let Some(m) = model {
+        m
+    } else if let Some(f) = model_file {
+        std::fs::read_to_string(&f)
+            .with_context(|| format!("failed to read {}", f.display()))?
+    } else {
+        anyhow::bail!("must provide --model or --model-file");
+    };
+
+    eprintln!("Fitting SEM model (estimation={estimation})...");
+
+    // Parse and fit
+    let pt = gsem_sem::syntax::parse_model(&model_str, false)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let k = ldsc_result.s.nrows();
+    let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+    let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+
+    let kstar = k * (k + 1) / 2;
+    let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
+
+    let fit = if estimation.to_uppercase() == "ML" {
+        gsem_sem::estimator::fit_ml(&mut model, &ldsc_result.s, 1000)
+    } else {
+        gsem_sem::estimator::fit_dwls(&mut model, &ldsc_result.s, &v_diag, 1000)
+    };
+
+    eprintln!("Converged: {}", fit.converged);
+    eprintln!("Objective: {:.6}", fit.objective);
+
+    // Write results
+    let mut output = String::from("lhs\top\trhs\test\n");
+    for (i, row) in pt.rows.iter().enumerate() {
+        if row.free > 0 {
+            let est = fit.params.get(i).copied().unwrap_or(0.0);
+            output.push_str(&format!("{}\t{}\t{}\t{:.6}\n", row.lhs, row.op, row.rhs, est));
+        }
+    }
+    std::fs::write(out, &output)
+        .with_context(|| format!("failed to write {}", out.display()))?;
+
+    eprintln!("Results written to {}", out.display());
+    Ok(())
+}
+
+fn run_gwas(
+    covstruc: &PathBuf,
+    _sumstats: &PathBuf,
+    model: Option<String>,
+    model_file: Option<PathBuf>,
+    estimation: &str,
+    gc: &str,
+    threads: Option<usize>,
+    out: &PathBuf,
+) -> Result<()> {
+    // Set thread count
+    if let Some(t) = threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(t)
+            .build_global()
+            .ok();
+    }
+
+    // Read LDSC result
+    let json = std::fs::read_to_string(covstruc)
+        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let _ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
+
+    // Get model string
+    let model_str = if let Some(m) = model {
+        m
+    } else if let Some(f) = model_file {
+        std::fs::read_to_string(&f)?
+    } else {
+        anyhow::bail!("must provide --model or --model-file");
+    };
+
+    let gc_mode = gsem::gwas::gc_correction::GcMode::from_str(gc);
+    eprintln!(
+        "GWAS: estimation={estimation}, gc={gc:?}, model length={} chars",
+        model_str.len()
+    );
+    eprintln!("Note: full GWAS requires merged sumstats with SNP-level betas/SEs.");
+    eprintln!("Use the library API (gsem::gwas::user_gwas::run_user_gwas) for programmatic access.");
+
+    // Placeholder output
+    std::fs::write(out, "# GWAS results (run with library API for full output)\n")
+        .with_context(|| format!("failed to write {}", out.display()))?;
+
+    eprintln!("Output: {}", out.display());
+    Ok(())
+}
+
+fn parse_prevalences(s: &Option<String>, k: usize) -> Vec<Option<f64>> {
+    match s {
+        Some(s) => s
+            .split(',')
+            .map(|x| {
+                let trimmed = x.trim();
+                if trimmed.eq_ignore_ascii_case("na") || trimmed.is_empty() {
+                    None
+                } else {
+                    trimmed.parse().ok()
+                }
+            })
+            .collect(),
+        None => vec![None; k],
+    }
 }

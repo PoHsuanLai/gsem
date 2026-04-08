@@ -6,11 +6,14 @@ edition.workspace = true
 license.workspace = true
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "lib"]
 
 [dependencies]
 gsem = { workspace = true }
 gsem-matrix = { workspace = true }
 gsem-ldsc = { workspace = true }
 gsem-sem = { workspace = true }
-# extendr-api = { workspace = true }  # Uncomment when R bindings are implemented
+faer = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+# extendr-api = { workspace = true }  # Enable when R toolchain available
