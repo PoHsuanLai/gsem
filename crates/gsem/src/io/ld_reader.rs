@@ -35,25 +35,18 @@ pub fn read_ld_scores(ld_dir: &Path, wld_dir: &Path, n_chr: usize) -> Result<LdS
     let mut total_m = 0.0;
 
     for chr in 1..=n_chr {
-        // Read LD scores
         let ld_path = ld_dir.join(format!("{chr}.l2.ldscore.gz"));
-        let chr_records = read_ld_score_file(&ld_path, chr as u8)?;
+        let chr_records = read_ld_score_file(&ld_path)?;
 
-        // Read weight LD scores
         let wld_path = wld_dir.join(format!("{chr}.l2.ldscore.gz"));
-        let wld_records = read_ld_score_file(&wld_path, chr as u8)?;
+        let wld_records = read_ld_score_file(&wld_path)?;
 
-        // Read M count
         let m_path = ld_dir.join(format!("{chr}.l2.M_5_50"));
         let m = read_m_file(&m_path)?;
         total_m += m;
         m_per_chr.push(m);
 
-        // Extract weight LD values (aligned by order, assuming same SNP ordering)
-        for rec in &wld_records {
-            w_ld_all.push(rec.l2);
-        }
-
+        w_ld_all.extend(wld_records.iter().map(|r| r.l2));
         records.extend(chr_records);
     }
 
@@ -66,15 +59,15 @@ pub fn read_ld_scores(ld_dir: &Path, wld_dir: &Path, n_chr: usize) -> Result<LdS
 }
 
 /// Read a single chromosome LD score file (.l2.ldscore.gz).
+///
 /// Expected columns: CHR, SNP, BP, L2
-fn read_ld_score_file(path: &Path, _expected_chr: u8) -> Result<Vec<LdScoreRecord>> {
+fn read_ld_score_file(path: &Path) -> Result<Vec<LdScoreRecord>> {
     let file =
         std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let reader = BufReader::new(GzDecoder::new(file));
     let mut records = Vec::new();
 
     let mut lines = reader.lines();
-    // Skip header
     let _header = lines.next().context("empty LD score file")??;
 
     for line_result in lines {
@@ -108,14 +101,11 @@ fn read_ld_score_file(path: &Path, _expected_chr: u8) -> Result<Vec<LdScoreRecor
 fn read_m_file(path: &Path) -> Result<f64> {
     let content =
         fs::read_to_string(path).with_context(|| format!("cannot open {}", path.display()))?;
-    let m: f64 = content
+    content
         .split_whitespace()
         .map(|s| {
             s.parse::<f64>()
                 .with_context(|| format!("invalid M value: {s}"))
         })
-        .collect::<Result<Vec<f64>>>()?
-        .iter()
-        .sum();
-    Ok(m)
+        .try_fold(0.0, |acc, r| r.map(|v| acc + v))
 }

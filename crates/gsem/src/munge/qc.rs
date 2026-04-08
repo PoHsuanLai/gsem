@@ -163,7 +163,7 @@ fn detect_or(records: &[GwasRecord]) -> bool {
     }
 
     let mut sorted = effects;
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = sorted[sorted.len() / 2];
 
     // R uses: if round(median, 0) == 1 → OR

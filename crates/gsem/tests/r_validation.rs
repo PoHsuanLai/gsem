@@ -69,7 +69,13 @@ fn assert_mat_close(a: &Mat<f64>, b: &Mat<f64>, tol: f64, msg: &str) {
 }
 
 fn assert_vec_close(a: &[f64], b: &[f64], tol: f64, msg: &str) {
-    assert_eq!(a.len(), b.len(), "{msg}: length mismatch {} vs {}", a.len(), b.len());
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{msg}: length mismatch {} vs {}",
+        a.len(),
+        b.len()
+    );
     for (i, (&av, &bv)) in a.iter().zip(b.iter()).enumerate() {
         let diff = (av - bv).abs();
         assert!(
@@ -150,8 +156,11 @@ fn test_v_snp_standard_matches_r() {
     let expected = json_to_mat(&fix["expected"]);
 
     let result = gsem::gwas::gc_correction::build_v_snp(
-        &se, &i_ld, var_snp,
-        gsem::gwas::gc_correction::GcMode::Standard, k,
+        &se,
+        &i_ld,
+        var_snp,
+        gsem::gwas::gc_correction::GcMode::Standard,
+        k,
     );
     assert_mat_close(&result, &expected, 1e-12, "V_SNP standard");
 }
@@ -163,8 +172,11 @@ fn test_v_snp_conservative_matches_r() {
     let expected = json_to_mat(&fix["expected"]);
 
     let result = gsem::gwas::gc_correction::build_v_snp(
-        &se, &i_ld, var_snp,
-        gsem::gwas::gc_correction::GcMode::Conservative, k,
+        &se,
+        &i_ld,
+        var_snp,
+        gsem::gwas::gc_correction::GcMode::Conservative,
+        k,
     );
     assert_mat_close(&result, &expected, 1e-12, "V_SNP conservative");
 }
@@ -176,8 +188,11 @@ fn test_v_snp_none_matches_r() {
     let expected = json_to_mat(&fix["expected"]);
 
     let result = gsem::gwas::gc_correction::build_v_snp(
-        &se, &i_ld, var_snp,
-        gsem::gwas::gc_correction::GcMode::None, k,
+        &se,
+        &i_ld,
+        var_snp,
+        gsem::gwas::gc_correction::GcMode::None,
+        k,
     );
     assert_mat_close(&result, &expected, 1e-12, "V_SNP none");
 }
@@ -215,8 +230,13 @@ fn test_v_full_matches_r() {
     let var_snp = v_snp_fix["var_snp"].as_f64().unwrap();
 
     let result = gsem::gwas::add_snps::build_v_full(
-        &v_ld, &se, var_snp, var_snp_se2, &i_ld,
-        gsem::gwas::gc_correction::GcMode::Standard, k,
+        &v_ld,
+        &se,
+        var_snp,
+        var_snp_se2,
+        &i_ld,
+        gsem::gwas::gc_correction::GcMode::Standard,
+        k,
     );
     assert_mat_close(&result, &expected, 1e-10, "V_Full");
 }
@@ -232,13 +252,25 @@ fn test_z_pre_matches_r() {
     let k = beta.len();
 
     let z_std = gsem::gwas::gc_correction::gc_adjusted_z(
-        &beta, &se, &i_ld, gsem::gwas::gc_correction::GcMode::Standard, k,
+        &beta,
+        &se,
+        &i_ld,
+        gsem::gwas::gc_correction::GcMode::Standard,
+        k,
     );
     let z_con = gsem::gwas::gc_correction::gc_adjusted_z(
-        &beta, &se, &i_ld, gsem::gwas::gc_correction::GcMode::Conservative, k,
+        &beta,
+        &se,
+        &i_ld,
+        gsem::gwas::gc_correction::GcMode::Conservative,
+        k,
     );
     let z_none = gsem::gwas::gc_correction::gc_adjusted_z(
-        &beta, &se, &i_ld, gsem::gwas::gc_correction::GcMode::None, k,
+        &beta,
+        &se,
+        &i_ld,
+        gsem::gwas::gc_correction::GcMode::None,
+        k,
     );
 
     let expected_std = json_to_vec(&fix["standard"]);
@@ -275,7 +307,10 @@ fn test_sem_estimates_match_r() {
     // Parse and fit the same model
     let model_str = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3";
     let pt = gsem_sem::syntax::parse_model(model_str, false).unwrap();
-    let obs_names: Vec<String> = vec!["V1", "V2", "V3"].into_iter().map(String::from).collect();
+    let obs_names: Vec<String> = vec!["V1", "V2", "V3"]
+        .into_iter()
+        .map(String::from)
+        .collect();
     let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
 
     let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000);
@@ -285,14 +320,18 @@ fn test_sem_estimates_match_r() {
     for (i, row) in pt.rows.iter().enumerate() {
         if row.free > 0 && row.op == gsem_sem::syntax::Op::Loading {
             let est = fit.params.get(i).copied().unwrap_or(0.0);
-            if let Some(r_est) = r_estimates.iter().find(|(l, o, r, _)| {
-                *l == row.lhs && *o == row.op.to_string() && *r == row.rhs
-            }) {
+            if let Some(r_est) = r_estimates
+                .iter()
+                .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
+            {
                 let diff = (est - r_est.3).abs();
                 assert!(
                     diff < 0.05,
                     "SEM loading {}.{}.{}: Rust={est:.6} R={:.6} diff={diff:.6}",
-                    row.lhs, row.op, row.rhs, r_est.3
+                    row.lhs,
+                    row.op,
+                    row.rhs,
+                    r_est.3
                 );
             }
         }
@@ -303,7 +342,11 @@ fn test_sem_estimates_match_r() {
     assert_mat_close(&implied, &s, 0.05, "SEM implied cov ≈ S");
 
     // Check objective is small (good fit)
-    assert!(fit.objective < 0.1, "SEM objective should be small: {}", fit.objective);
+    assert!(
+        fit.objective < 0.1,
+        "SEM objective should be small: {}",
+        fit.objective
+    );
 }
 
 // ── Test Case 9: V reorder ──────────────────────────────────────────────────

@@ -68,10 +68,6 @@ enum Commands {
         #[arg(long)]
         wld: Option<PathBuf>,
 
-        /// Trait names
-        #[arg(long, num_args = 1..)]
-        trait_names: Option<Vec<String>>,
-
         /// Number of jackknife blocks
         #[arg(long, default_value = "200")]
         n_blocks: usize,
@@ -168,19 +164,9 @@ fn main() -> Result<()> {
             pop_prev,
             ld,
             wld,
-            trait_names,
             n_blocks,
             out,
-        } => run_ldsc(
-            &traits,
-            sample_prev,
-            pop_prev,
-            &ld,
-            wld,
-            trait_names,
-            n_blocks,
-            &out,
-        ),
+        } => run_ldsc(&traits, sample_prev, pop_prev, &ld, wld, n_blocks, &out),
         Commands::Sem {
             covstruc,
             model,
@@ -234,7 +220,8 @@ fn run_munge(
         let trait_name = trait_names
             .and_then(|names| names.get(i))
             .map(|s| s.as_str())
-            .unwrap_or_else(|| file.file_stem().unwrap().to_str().unwrap());
+            .or_else(|| file.file_stem().and_then(|s| s.to_str()))
+            .unwrap_or("trait");
 
         let out_path = out_dir.join(format!("{trait_name}.sumstats.gz"));
         eprintln!("Munging: {} -> {}", file.display(), out_path.display());
@@ -254,7 +241,6 @@ fn run_ldsc(
     pop_prev: Option<String>,
     ld: &Path,
     wld: Option<PathBuf>,
-    _trait_names: Option<Vec<String>>,
     n_blocks: usize,
     out: &Path,
 ) -> Result<()> {
@@ -415,7 +401,7 @@ fn run_gwas(
         rayon::ThreadPoolBuilder::new()
             .num_threads(t)
             .build_global()
-            .ok();
+            .context("failed to initialize thread pool")?;
     }
 
     // Read LDSC result
@@ -427,12 +413,13 @@ fn run_gwas(
     let model_str = if let Some(m) = model {
         m
     } else if let Some(f) = model_file {
-        std::fs::read_to_string(&f)?
+        std::fs::read_to_string(&f)
+            .with_context(|| format!("failed to read model file {}", f.display()))?
     } else {
         anyhow::bail!("must provide --model or --model-file");
     };
 
-    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap();
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().expect("infallible");
     let k = ldsc_result.s.nrows();
 
     // Read merged sumstats

@@ -74,7 +74,9 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
         .iter_mut()
         .map(|eigs| {
             let idx = percentile_idx.min(eigs.len().saturating_sub(1));
-            eigs.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap());
+            eigs.select_nth_unstable_by(idx, |a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            });
             eigs[idx]
         })
         .collect();
@@ -126,7 +128,7 @@ fn eigenvalues_sorted(mat: &Mat<f64>) -> Vec<f64> {
     };
     let s = eigen.S().column_vector();
     let mut eigs: Vec<f64> = (0..mat.nrows()).map(|i| s[i]).collect();
-    eigs.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    eigs.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     eigs
 }
 

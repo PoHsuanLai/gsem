@@ -21,7 +21,7 @@ pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) ->
             user_order
                 .iter()
                 .position(|n| n == name)
-                .unwrap_or_else(|| panic!("variable {name} not found in user ordering"))
+                .expect("model variable must exist in user ordering")
         })
         .collect();
 
@@ -45,20 +45,13 @@ pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) ->
     };
 
     // Apply permutation to V
-    let mut v_reorder = Mat::zeros(kstar, kstar);
-    for i in 0..kstar {
-        for j in 0..kstar {
-            v_reorder[(i, j)] = v[(model_to_user[i], model_to_user[j])];
-        }
-    }
-
-    v_reorder
+    Mat::from_fn(kstar, kstar, |i, j| v[(model_to_user[i], model_to_user[j])])
 }
 
 /// Build a mapping: for a k×k matrix, vech position of element (i,j) where i>=j.
 /// Returns a flat array indexed by i*(i+1)/2 + j.
 fn vech_index_map(k: usize) -> Vec<usize> {
-    let mut map = vec![0usize; k * (k + 1) / 2 + k]; // extra space
+    let mut map = vec![0usize; k * (k + 1) / 2];
     let mut idx = 0;
     for j in 0..k {
         for i in j..k {

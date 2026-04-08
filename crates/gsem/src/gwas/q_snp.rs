@@ -44,8 +44,9 @@ pub fn compute_q_snp(
 
     let df = p.saturating_sub(1);
     let p_val = if df > 0 && q.is_finite() {
-        let chi2 = ChiSquared::new(df as f64).unwrap();
-        1.0 - chi2.cdf(q)
+        ChiSquared::new(df as f64)
+            .map(|chi2| 1.0 - chi2.cdf(q))
+            .unwrap_or(1.0)
     } else {
         1.0
     };
