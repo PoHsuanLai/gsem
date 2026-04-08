@@ -28,18 +28,23 @@ pub fn compute_h2_weights(chi2: &[f64], ld: &[f64], w_ld: &[f64], n_bar: f64, m:
 
     let c = tot_agg * n_bar / m;
 
-    let mut w = Vec::with_capacity(n_snps);
-    for i in 0..n_snps {
-        let het_w = 1.0 / (2.0 * (1.0 + c * ld[i]).powi(2));
-        let oc_w = 1.0 / w_ld[i].max(1.0);
-        w.push(het_w * oc_w);
-    }
+    // Compute sqrt(w) and its sum in one pass
+    let mut sqrt_w: Vec<f64> = ld
+        .iter()
+        .zip(w_ld.iter())
+        .map(|(&l, &wl)| {
+            let het_w = 1.0 / (2.0 * (1.0 + c * l).powi(2));
+            let oc_w = 1.0 / wl.max(1.0);
+            (het_w * oc_w).sqrt()
+        })
+        .collect();
 
-    // Normalize: sqrt(w) / sum(sqrt(w))
-    let sqrt_w: Vec<f64> = w.iter().map(|x| x.sqrt()).collect();
     let sum_sqrt: f64 = sqrt_w.iter().sum();
     if sum_sqrt > 0.0 {
-        sqrt_w.iter().map(|x| x / sum_sqrt).collect()
+        for x in &mut sqrt_w {
+            *x /= sum_sqrt;
+        }
+        sqrt_w
     } else {
         vec![1.0 / n_snps as f64; n_snps]
     }

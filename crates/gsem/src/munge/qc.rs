@@ -84,11 +84,11 @@ pub fn run_qc_pipeline(
         };
 
         // INFO filter
-        if let Some(info) = rec.info {
-            if info < config.info_filter {
-                n_info_filtered += 1;
-                continue;
-            }
+        if let Some(info) = rec.info
+            && info < config.info_filter
+        {
+            n_info_filtered += 1;
+            continue;
         }
 
         // MAF filter

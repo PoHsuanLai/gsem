@@ -22,9 +22,7 @@ pub fn sandwich_se(model: &mut Model, w: &Mat<f64>, v: &Mat<f64>) -> (Vec<f64>, 
     let dt_w = delta_mat.transpose() * w;
     let dt_w_d = &dt_w * &delta_mat;
 
-    let bread = match dt_w_d.partial_piv_lu().inverse() {
-        inv => inv,
-    };
+    let bread = dt_w_d.partial_piv_lu().inverse();
 
     // lettuce = W * Delta
     let lettuce = w * &delta_mat;

@@ -207,15 +207,9 @@ impl Model {
         let m = self.lat_names.len();
 
         // (I - Beta)^{-1}
-        let i_minus_beta = {
-            let mut ib = Mat::<f64>::identity(m, m);
-            for i in 0..m {
-                for j in 0..m {
-                    ib[(i, j)] -= self.beta[(i, j)];
-                }
-            }
-            ib
-        };
+        let i_minus_beta = Mat::from_fn(m, m, |i, j| {
+            (if i == j { 1.0 } else { 0.0 }) - self.beta[(i, j)]
+        });
 
         // For simple CFA (Beta=0), this is just identity, so skip inverse
         let has_beta = self.beta.col_iter().any(|c| c.iter().any(|&x| x != 0.0));

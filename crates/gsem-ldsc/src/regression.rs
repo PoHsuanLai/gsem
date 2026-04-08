@@ -63,12 +63,14 @@ pub fn block_regression(
     // Sum to get totals
     let mut xtx_total = [0.0f64; 4];
     let mut xty_total = [0.0f64; 2];
-    for b in 0..actual_blocks {
-        for i in 0..4 {
-            xtx_total[i] += xtx_blocks[b][i];
+    for block in &xtx_blocks {
+        for (total, val) in xtx_total.iter_mut().zip(block.iter()) {
+            *total += val;
         }
-        for i in 0..2 {
-            xty_total[i] += xty_blocks[b][i];
+    }
+    for block in &xty_blocks {
+        for (total, val) in xty_total.iter_mut().zip(block.iter()) {
+            *total += val;
         }
     }
 
@@ -85,7 +87,7 @@ pub fn block_regression(
 }
 
 /// Solve a 2x2 linear system: [a b; c d] * [x; y] = [e; f]
-fn solve_2x2(xtx: &[f64; 4], xty: &[f64; 2]) -> [f64; 2] {
+pub(crate) fn solve_2x2(xtx: &[f64; 4], xty: &[f64; 2]) -> [f64; 2] {
     let a = xtx[0];
     let b = xtx[1];
     let c = xtx[2];

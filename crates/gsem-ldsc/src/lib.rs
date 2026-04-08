@@ -87,6 +87,7 @@ impl Default for LdscConfig {
 /// Run multivariate LD Score Regression.
 ///
 /// This is the main entry point, equivalent to R's `ldsc()`.
+#[allow(clippy::too_many_arguments)]
 pub fn ldsc(
     traits: &[TraitSumstats],
     sample_prev: &[Option<f64>],

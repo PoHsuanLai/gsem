@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -212,12 +212,12 @@ fn main() -> Result<()> {
 
 fn run_munge(
     files: &[PathBuf],
-    hm3: &PathBuf,
+    hm3: &Path,
     trait_names: Option<&[String]>,
     info_filter: f64,
     maf_filter: f64,
     n_override: Option<f64>,
-    out_dir: &PathBuf,
+    out_dir: &Path,
 ) -> Result<()> {
     // Read reference
     eprintln!("Reading reference panel: {}", hm3.display());
@@ -247,15 +247,16 @@ fn run_munge(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_ldsc(
     traits: &[PathBuf],
     sample_prev: Option<String>,
     pop_prev: Option<String>,
-    ld: &PathBuf,
+    ld: &Path,
     wld: Option<PathBuf>,
     _trait_names: Option<Vec<String>>,
     n_blocks: usize,
-    out: &PathBuf,
+    out: &Path,
 ) -> Result<()> {
     eprintln!("Reading {} trait files...", traits.len());
 
@@ -277,7 +278,7 @@ fn run_ldsc(
     }
 
     // Read LD scores
-    let wld_dir = wld.as_ref().unwrap_or(ld);
+    let wld_dir = wld.as_deref().unwrap_or(ld);
     let ld_data =
         gsem::io::ld_reader::read_ld_scores(ld, wld_dir, 22).context("failed to read LD scores")?;
 
@@ -340,11 +341,11 @@ fn run_ldsc(
 }
 
 fn run_sem(
-    covstruc: &PathBuf,
+    covstruc: &Path,
     model: Option<String>,
     model_file: Option<PathBuf>,
     estimation: &str,
-    out: &PathBuf,
+    out: &Path,
 ) -> Result<()> {
     // Read LDSC result
     let json = std::fs::read_to_string(covstruc)
@@ -398,15 +399,16 @@ fn run_sem(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_gwas(
-    covstruc: &PathBuf,
-    sumstats: &PathBuf,
+    covstruc: &Path,
+    sumstats: &Path,
     model: Option<String>,
     model_file: Option<PathBuf>,
     estimation: &str,
     gc: &str,
     threads: Option<usize>,
-    out: &PathBuf,
+    out: &Path,
 ) -> Result<()> {
     // Set thread count
     if let Some(t) = threads {

@@ -58,55 +58,30 @@ pub fn nearest_pd(
         let r = &x - &ds;
 
         // Project onto PSD cone
-        let eigen = r
-            .self_adjoint_eigen(Side::Lower)
-            .map_err(|_| MatrixError::SingularMatrix)?;
-
-        let u = eigen.U();
-        let s_diag = eigen.S().column_vector();
-
-        // Clamp negative eigenvalues to a small positive value
-        let eps = f64::EPSILON * n as f64;
-        let max_eval = (0..n).map(|i| s_diag[i]).fold(f64::NEG_INFINITY, f64::max);
-        let eig_threshold = eps * max_eval.max(1.0);
-
-        // X_new = U * max(S, threshold) * U'
-        let mut d_clamped = Mat::zeros(n, n);
-        for i in 0..n {
-            d_clamped[(i, i)] = s_diag[i].max(eig_threshold);
-        }
-
-        x = &u * &d_clamped * u.transpose();
+        x = project_psd(&r)?;
 
         // Update Dykstra correction
         ds = &x - &r;
 
         // Ensure symmetry
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let avg = (x[(i, j)] + x[(j, i)]) / 2.0;
-                x[(i, j)] = avg;
-                x[(j, i)] = avg;
-            }
-        }
+        enforce_symmetry(&mut x);
 
         // Project onto original diagonal constraint
         if keep_diag {
-            for i in 0..n {
-                x[(i, i)] = orig_diag[i];
+            for (i, &d) in orig_diag.iter().enumerate() {
+                x[(i, i)] = d;
             }
         }
 
         // Check convergence: relative change in Frobenius norm
-        let mut norm_diff = 0.0;
-        let mut norm_old = 0.0;
-        for i in 0..n {
-            for j in 0..n {
-                let d = x[(i, j)] - x_old[(i, j)];
-                norm_diff += d * d;
-                norm_old += x_old[(i, j)] * x_old[(i, j)];
-            }
-        }
+        let (norm_diff, norm_old) = x
+            .col_iter()
+            .zip(x_old.col_iter())
+            .flat_map(|(xc, oc)| xc.iter().zip(oc.iter()))
+            .fold((0.0, 0.0), |(nd, no), (&xv, &ov)| {
+                let d = xv - ov;
+                (nd + d * d, no + ov * ov)
+            });
 
         if norm_old > 0.0 && (norm_diff / norm_old).sqrt() < tol {
             break;
@@ -116,40 +91,54 @@ pub fn nearest_pd(
     }
 
     // Final PSD enforcement: one more eigenvalue clamp without Dykstra
-    let eigen = x
+    let mut result = project_psd(&x)?;
+    enforce_symmetry(&mut result);
+
+    // Restore diagonal if needed
+    if keep_diag {
+        for (i, &d) in orig_diag.iter().enumerate() {
+            result[(i, i)] = d;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Project a symmetric matrix onto the PSD cone by clamping eigenvalues.
+fn project_psd(mat: &Mat<f64>) -> Result<Mat<f64>, MatrixError> {
+    let n = mat.nrows();
+    let eigen = mat
         .self_adjoint_eigen(Side::Lower)
         .map_err(|_| MatrixError::SingularMatrix)?;
 
     let u = eigen.U();
     let s_diag = eigen.S().column_vector();
+
     let eps = f64::EPSILON * n as f64;
     let max_eval = (0..n).map(|i| s_diag[i]).fold(f64::NEG_INFINITY, f64::max);
-    let eig_threshold = eps * max_eval.max(1.0);
+    let threshold = eps * max_eval.max(1.0);
 
-    let mut d_clamped = Mat::zeros(n, n);
-    for i in 0..n {
-        d_clamped[(i, i)] = s_diag[i].max(eig_threshold);
-    }
+    let d_clamped = Mat::from_fn(n, n, |i, j| {
+        if i == j {
+            s_diag[i].max(threshold)
+        } else {
+            0.0
+        }
+    });
 
-    let mut result = &u * &d_clamped * u.transpose();
+    Ok(u * &d_clamped * u.transpose())
+}
 
-    // Ensure symmetry
+/// Enforce symmetry by averaging upper and lower triangles.
+fn enforce_symmetry(mat: &mut Mat<f64>) {
+    let n = mat.nrows();
     for i in 0..n {
         for j in (i + 1)..n {
-            let avg = (result[(i, j)] + result[(j, i)]) / 2.0;
-            result[(i, j)] = avg;
-            result[(j, i)] = avg;
+            let avg = (mat[(i, j)] + mat[(j, i)]) / 2.0;
+            mat[(i, j)] = avg;
+            mat[(j, i)] = avg;
         }
     }
-
-    // Restore diagonal if needed
-    if keep_diag {
-        for i in 0..n {
-            result[(i, i)] = orig_diag[i];
-        }
-    }
-
-    Ok(result)
 }
 
 /// Convenience wrapper with default parameters matching R's nearPD behavior.

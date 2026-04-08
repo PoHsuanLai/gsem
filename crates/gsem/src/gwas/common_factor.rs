@@ -10,6 +10,7 @@ use super::user_gwas::{self, SnpResult, UserGwasConfig};
 ///   F1 ~ SNP
 ///   F1 ~~ 1*F1
 ///   SNP ~~ SNP
+#[allow(clippy::too_many_arguments)]
 pub fn run_common_factor_gwas(
     trait_names: &[String],
     s_ld: &Mat<f64>,

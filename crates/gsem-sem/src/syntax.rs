@@ -67,7 +67,7 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
 
     // Split on newlines and semicolons
     let lines: Vec<&str> = model
-        .split(|c| c == '\n' || c == ';')
+        .split(['\n', ';'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty() && !s.starts_with('#'))
         .collect();

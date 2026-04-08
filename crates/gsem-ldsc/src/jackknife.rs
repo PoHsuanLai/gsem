@@ -24,46 +24,51 @@ pub fn jackknife(result: &RegressionResult) -> JackknifeResult {
     let n_blocks = result.xtx_blocks.len();
     let nb = n_blocks as f64;
 
-    let mut pseudo_values = vec![[0.0f64; 2]; n_blocks];
+    let pseudo_values: Vec<[f64; 2]> = result
+        .xtx_blocks
+        .iter()
+        .zip(result.xty_blocks.iter())
+        .map(|(xtx_block, xty_block)| {
+            // Leave-one-out
+            let mut xtx_loo = result.xtx_total;
+            let mut xty_loo = result.xty_total;
+            for (loo, blk) in xtx_loo.iter_mut().zip(xtx_block.iter()) {
+                *loo -= blk;
+            }
+            for (loo, blk) in xty_loo.iter_mut().zip(xty_block.iter()) {
+                *loo -= blk;
+            }
 
-    for b in 0..n_blocks {
-        // Leave-one-out XtX and Xty
-        let mut xtx_loo = result.xtx_total;
-        let mut xty_loo = result.xty_total;
-        for i in 0..4 {
-            xtx_loo[i] -= result.xtx_blocks[b][i];
-        }
-        for i in 0..2 {
-            xty_loo[i] -= result.xty_blocks[b][i];
-        }
+            let coef_loo = crate::regression::solve_2x2(&xtx_loo, &xty_loo);
+            [
+                nb * result.coef[0] - (nb - 1.0) * coef_loo[0],
+                nb * result.coef[1] - (nb - 1.0) * coef_loo[1],
+            ]
+        })
+        .collect();
 
-        // Solve leave-one-out regression
-        let coef_loo = solve_2x2(&xtx_loo, &xty_loo);
+    // Compute mean and variance of pseudo-values
+    let mean: [f64; 2] = [
+        pseudo_values.iter().map(|pv| pv[0]).sum::<f64>() / nb,
+        pseudo_values.iter().map(|pv| pv[1]).sum::<f64>() / nb,
+    ];
 
-        // Pseudo-values: n_blocks * coef_total - (n_blocks-1) * coef_loo
-        for i in 0..2 {
-            pseudo_values[b][i] = nb * result.coef[i] - (nb - 1.0) * coef_loo[i];
-        }
-    }
+    let denom = nb * (nb - 1.0);
+    let se = [
+        (pseudo_values
+            .iter()
+            .map(|pv| (pv[0] - mean[0]).powi(2))
+            .sum::<f64>()
+            / denom)
+            .sqrt(),
+        (pseudo_values
+            .iter()
+            .map(|pv| (pv[1] - mean[1]).powi(2))
+            .sum::<f64>()
+            / denom)
+            .sqrt(),
+    ];
 
-    // Compute variance of pseudo-values
-    let mut mean = [0.0f64; 2];
-    for pv in &pseudo_values {
-        mean[0] += pv[0];
-        mean[1] += pv[1];
-    }
-    mean[0] /= nb;
-    mean[1] /= nb;
-
-    let mut var = [0.0f64; 2];
-    for pv in &pseudo_values {
-        var[0] += (pv[0] - mean[0]).powi(2);
-        var[1] += (pv[1] - mean[1]).powi(2);
-    }
-    var[0] /= nb * (nb - 1.0);
-    var[1] /= nb * (nb - 1.0);
-
-    let se = [var[0].sqrt(), var[1].sqrt()];
     let pseudo_slope: Vec<f64> = pseudo_values.iter().map(|pv| pv[0]).collect();
 
     JackknifeResult { se, pseudo_slope }
@@ -83,36 +88,21 @@ pub fn construct_v_matrix(all_pseudos: &[Vec<f64>], n_blocks: usize) -> Mat<f64>
         .collect();
 
     // Compute covariance matrix
+    let denom = nb * (nb - 1.0);
     let mut v = Mat::zeros(kstar, kstar);
     for i in 0..kstar {
         for j in i..kstar {
-            let mut cov = 0.0;
-            let n = all_pseudos[i].len().min(all_pseudos[j].len());
-            for b in 0..n {
-                cov += (all_pseudos[i][b] - means[i]) * (all_pseudos[j][b] - means[j]);
-            }
-            cov /= nb * (nb - 1.0);
+            let cov: f64 = all_pseudos[i]
+                .iter()
+                .zip(all_pseudos[j].iter())
+                .map(|(&a, &b)| (a - means[i]) * (b - means[j]))
+                .sum::<f64>()
+                / denom;
             v[(i, j)] = cov;
             v[(j, i)] = cov;
         }
     }
-
     v
-}
-
-/// Solve a 2x2 linear system (duplicated from regression for independence).
-fn solve_2x2(xtx: &[f64; 4], xty: &[f64; 2]) -> [f64; 2] {
-    let a = xtx[0];
-    let b = xtx[1];
-    let c = xtx[2];
-    let d = xtx[3];
-    let det = a * d - b * c;
-    if det.abs() < 1e-30 {
-        return [0.0, 0.0];
-    }
-    let x = (d * xty[0] - b * xty[1]) / det;
-    let y = (a * xty[1] - c * xty[0]) / det;
-    [x, y]
 }
 
 #[cfg(test)]

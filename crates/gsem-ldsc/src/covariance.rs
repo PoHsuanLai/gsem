@@ -24,6 +24,7 @@ pub struct GcovResult {
 /// Regresses Z1*Z2 product on LD scores:
 ///   Z1*Z2 = gcov_coef * LD + intercept
 ///   gcov = gcov_coef * M / sqrt(N1 * N2)
+#[allow(clippy::too_many_arguments)]
 pub fn estimate_gcov(
     z1: &[f64],
     z2: &[f64],

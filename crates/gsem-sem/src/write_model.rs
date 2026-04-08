@@ -33,11 +33,9 @@ pub fn write_model(
         }
 
         // First indicator gets NA* prefix (free loading), factor variance fixed to 1
-        let mut terms: Vec<String> = Vec::new();
-        terms.push(format!("NA*{}", indicators[0]));
-        for ind in &indicators[1..] {
-            terms.push(ind.clone());
-        }
+        let terms: Vec<String> = std::iter::once(format!("NA*{}", indicators[0]))
+            .chain(indicators[1..].iter().cloned())
+            .collect();
 
         lines.push(format!("{} =~ {}", factor_name, terms.join(" + ")));
         lines.push(format!("{} ~~ 1*{}", factor_name, factor_name));
@@ -53,11 +51,9 @@ pub fn write_model(
         }
 
         if !all_indicators.is_empty() {
-            let mut terms: Vec<String> = Vec::new();
-            terms.push(format!("NA*{}", all_indicators[0]));
-            for ind in &all_indicators[1..] {
-                terms.push(ind.clone());
-            }
+            let terms: Vec<String> = std::iter::once(format!("NA*{}", all_indicators[0]))
+                .chain(all_indicators[1..].iter().cloned())
+                .collect();
             lines.push(format!("Common_F =~ {}", terms.join(" + ")));
             lines.push("Common_F ~~ 1*Common_F".to_string());
 

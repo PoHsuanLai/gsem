@@ -36,24 +36,26 @@ pub fn apply_liability_scale(
         })
         .collect();
 
+    // Pre-compute sqrt of conversion factors
+    let cf_sqrt: Vec<f64> = cf.iter().map(|c| c.sqrt()).collect();
+
     // Scale S matrix
     for j in 0..k {
         for jj in 0..k {
-            result.s[(j, jj)] *= cf[j].sqrt() * cf[jj].sqrt();
+            result.s[(j, jj)] *= cf_sqrt[j] * cf_sqrt[jj];
         }
     }
 
-    // Compute scale ratios for V matrix
-    // scale_ratio[vech_idx] = sqrt(cf_j) * sqrt(cf_jj)
-    let kstar = result.v.nrows();
-    let mut scale_ratios = Vec::with_capacity(kstar);
+    // Compute scale ratios for V matrix (vech ordering)
+    let mut scale_ratios = Vec::with_capacity(k * (k + 1) / 2);
     for j in 0..k {
         for jj in j..k {
-            scale_ratios.push(cf[j].sqrt() * cf[jj].sqrt());
+            scale_ratios.push(cf_sqrt[j] * cf_sqrt[jj]);
         }
     }
 
     // Scale V matrix: V_liab[i,j] = V[i,j] * scale_ratios[i] * scale_ratios[j]
+    let kstar = result.v.nrows();
     for i in 0..kstar {
         for j in 0..kstar {
             result.v[(i, j)] *= scale_ratios[i] * scale_ratios[j];

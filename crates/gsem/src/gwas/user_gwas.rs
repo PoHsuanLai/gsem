@@ -110,6 +110,7 @@ pub fn run_user_gwas(
 }
 
 /// Process a single SNP.
+#[allow(clippy::too_many_arguments)]
 fn process_single_snp(
     snp_idx: usize,
     pt: &ParTable,
