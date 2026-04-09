@@ -134,20 +134,18 @@ pub fn s_ldsc(
                     &chi2_for_weights,
                     &total_ld,
                     &merged.w_ld,
-                    mean_n,
+                    &merged.n[j],
                     m_total,
                 )
             } else {
                 let chi2_k: Vec<f64> = merged.z[jj].iter().map(|z| z * z).collect();
-                let mean_n_j = merged.n[j].iter().sum::<f64>() / n_snps as f64;
-                let mean_n_k = merged.n[jj].iter().sum::<f64>() / n_snps as f64;
                 weights::compute_gcov_weights(
                     &chi2_for_weights,
                     &chi2_k,
                     &total_ld,
                     &merged.w_ld,
-                    mean_n_j,
-                    mean_n_k,
+                    &merged.n[j],
+                    &merged.n[jj],
                     m_total,
                 )
             };

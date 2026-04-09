@@ -43,8 +43,8 @@ pub fn estimate_h2(
     // Mean sample size
     let mean_n = n.iter().sum::<f64>() / n_snps as f64;
 
-    // Compute weights
-    let weights = weights::compute_h2_weights(&chi2, ld, w_ld, mean_n, m);
+    // Compute weights (per-SNP N for heteroscedasticity correction)
+    let weights = weights::compute_h2_weights(&chi2, ld, w_ld, n, m);
 
     // Run block regression
     let reg_result = regression::block_regression(ld, &chi2, &weights, n_blocks);

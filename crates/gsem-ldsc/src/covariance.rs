@@ -50,8 +50,8 @@ pub fn estimate_gcov(
     let chi2_1: Vec<f64> = z1.iter().map(|z| z * z).collect();
     let chi2_2: Vec<f64> = z2.iter().map(|z| z * z).collect();
 
-    // Average weights from both traits
-    let weights = weights::compute_gcov_weights(&chi2_1, &chi2_2, ld, w_ld, mean_n1, mean_n2, m);
+    // Average weights from both traits (per-SNP N for heteroscedasticity correction)
+    let weights = weights::compute_gcov_weights(&chi2_1, &chi2_2, ld, w_ld, n1, n2, m);
 
     // Run block regression
     let reg_result = regression::block_regression(ld, &zz, &weights, n_blocks);

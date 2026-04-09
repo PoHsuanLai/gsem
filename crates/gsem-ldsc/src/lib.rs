@@ -78,13 +78,17 @@ pub struct TraitSumstats {
     pub a2: Vec<String>,
 }
 
-/// Merged data across all traits and LD scores, ready for LDSC regression.
+/// Merged data for a single trait pair, aligned by SNP.
 #[derive(Debug, Clone)]
-struct MergedData {
-    /// Z-scores per trait, aligned by SNP (n_traits × n_snps)
-    z: Vec<Vec<f64>>,
-    /// Sample sizes per trait (n_traits × n_snps)
-    n: Vec<Vec<f64>>,
+struct PairMergedData {
+    /// Z-scores for trait j (n_snps)
+    z_j: Vec<f64>,
+    /// Z-scores for trait k (n_snps, same as z_j for diagonal)
+    z_k: Vec<f64>,
+    /// Sample sizes for trait j (n_snps)
+    n_j: Vec<f64>,
+    /// Sample sizes for trait k (n_snps)
+    n_k: Vec<f64>,
     /// LD scores per SNP
     ld: Vec<f64>,
     /// Weight LD scores per SNP
@@ -93,8 +97,6 @@ struct MergedData {
     m: f64,
     /// Number of SNPs after merging
     n_snps: usize,
-    /// Number of traits
-    _n_traits: usize,
 }
 
 /// Result from a single trait-pair regression (used internally for parallel collection).
@@ -126,6 +128,7 @@ impl Default for LdscConfig {
 /// Run multivariate LD Score Regression.
 ///
 /// This is the main entry point, equivalent to R's `ldsc()`.
+/// Merges SNPs per trait-pair (not globally) to match R's behavior.
 #[allow(clippy::too_many_arguments)]
 pub fn ldsc(
     traits: &[TraitSumstats],
@@ -143,26 +146,44 @@ pub fn ldsc(
         anyhow::bail!("no traits provided");
     }
 
-    // Merge traits with LD scores on SNP ID
-    let merged = merge_data(traits, ld_scores, w_ld_scores, ld_snps, m_total, config)?;
-    let n_snps = merged.n_snps;
-    let n_blocks = config.n_blocks.min(n_snps);
+    // Build LD score lookup: SNP -> (index, l2, w_ld)
+    let ld_map: HashMap<&str, (usize, f64, f64)> = ld_snps
+        .iter()
+        .enumerate()
+        .map(|(i, snp)| (snp.as_str(), (i, ld_scores[i], w_ld_scores[i])))
+        .collect();
 
-    log::info!("LDSC: {k} traits, {n_snps} SNPs after merge, {n_blocks} jackknife blocks");
+    // Build trait SNP lookups: SNP -> index
+    let trait_maps: Vec<HashMap<&str, usize>> = traits
+        .iter()
+        .map(|t| {
+            t.snp
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.as_str(), i))
+                .collect()
+        })
+        .collect();
 
     let kstar = vech::vech_size(k);
 
     // Build (j, jj) pairs in vech order for parallel processing
     let pairs: Vec<(usize, usize)> = (0..k).flat_map(|j| (j..k).map(move |jj| (j, jj))).collect();
 
-    // Run all trait pair regressions in parallel
+    // Run all trait pair regressions in parallel, each with its own per-pair merge
     let pair_results: Vec<Result<PairResult>> = pairs
         .par_iter()
         .map(|&(j, jj)| {
+            // Merge data for this specific pair
+            let merged = merge_pair(
+                traits, &ld_map, &trait_maps, j, jj, m_total, config,
+            )?;
+            let n_blocks = config.n_blocks.min(merged.n_snps);
+
             let pair_result = if j == jj {
                 let result = heritability::estimate_h2(
-                    &merged.z[j],
-                    &merged.n[j],
+                    &merged.z_j,
+                    &merged.n_j,
                     &merged.ld,
                     &merged.w_ld,
                     merged.m,
@@ -178,10 +199,10 @@ pub fn ldsc(
                 })
             } else {
                 let result = covariance::estimate_gcov(
-                    &merged.z[j],
-                    &merged.z[jj],
-                    &merged.n[j],
-                    &merged.n[jj],
+                    &merged.z_j,
+                    &merged.z_k,
+                    &merged.n_j,
+                    &merged.n_k,
                     &merged.ld,
                     &merged.w_ld,
                     merged.m,
@@ -223,7 +244,8 @@ pub fn ldsc(
 
     // Construct V matrix from jackknife pseudo-values.
     // n_vec contains per-element mean N (N_bar for diag, sqrt(N1*N2) for off-diag).
-    let v = jackknife::construct_v_matrix(&all_pseudos, n_blocks, &n_vec, merged.m);
+    let n_blocks = config.n_blocks;
+    let v = jackknife::construct_v_matrix(&all_pseudos, n_blocks, &n_vec, m_total);
 
     // Apply liability scale conversion if prevalences provided
     let mut result = LdscResult {
@@ -231,7 +253,7 @@ pub fn ldsc(
         v,
         i_mat,
         n_vec,
-        m: merged.m,
+        m: m_total,
     };
 
     liability::apply_liability_scale(&mut result, sample_prev, pop_prev);
@@ -239,76 +261,51 @@ pub fn ldsc(
     Ok(result)
 }
 
-/// Merge trait summary statistics with LD scores on SNP ID.
-fn merge_data(
+/// Merge two traits with LD scores on SNP ID (per-pair, matching R's behavior).
+///
+/// R merges per trait-pair, so the ANX-PTSD pair may have more SNPs than
+/// a global merge across all traits. This is important for accuracy.
+fn merge_pair(
     traits: &[TraitSumstats],
-    ld_scores: &[f64],
-    w_ld_scores: &[f64],
-    ld_snps: &[String],
+    ld_map: &HashMap<&str, (usize, f64, f64)>,
+    trait_maps: &[HashMap<&str, usize>],
+    j: usize,
+    jj: usize,
     m_total: f64,
     config: &LdscConfig,
-) -> Result<MergedData> {
-    let k = traits.len();
+) -> Result<PairMergedData> {
+    // Find SNPs present in both traits (j, jj) AND in LD scores.
+    // Use trait j's SNP order as the iteration base (matches R which uses y1).
+    let mut z_j = Vec::new();
+    let mut z_k = Vec::new();
+    let mut n_j = Vec::new();
+    let mut n_k = Vec::new();
+    let mut ld = Vec::new();
+    let mut w_ld = Vec::new();
 
-    // Build LD score lookup: SNP -> (index, l2, w_ld)
-    let mut ld_map: HashMap<&str, (usize, f64, f64)> = HashMap::with_capacity(ld_snps.len());
-    for (i, snp) in ld_snps.iter().enumerate() {
-        ld_map.insert(snp.as_str(), (i, ld_scores[i], w_ld_scores[i]));
-    }
-
-    // Build trait SNP lookups: SNP -> index
-    let trait_maps: Vec<HashMap<&str, usize>> = traits
-        .iter()
-        .map(|t| {
-            t.snp
-                .iter()
-                .enumerate()
-                .map(|(i, s)| (s.as_str(), i))
-                .collect()
-        })
-        .collect();
-
-    // Find SNPs present in ALL traits AND in LD scores
-    let mut common_snps: Vec<&str> = Vec::new();
-    for snp in &traits[0].snp {
+    for snp in &traits[j].snp {
         let snp_str = snp.as_str();
-        if ld_map.contains_key(snp_str) && trait_maps.iter().all(|m| m.contains_key(snp_str)) {
-            common_snps.push(snp_str);
-        }
-    }
 
-    if common_snps.is_empty() {
-        anyhow::bail!("no common SNPs across traits and LD scores");
-    }
+        // Must be in LD scores
+        let Some(&(_, l2, wl)) = ld_map.get(snp_str) else {
+            continue;
+        };
 
-    // Extract aligned data
-    let mut z = vec![Vec::with_capacity(common_snps.len()); k];
-    let mut n = vec![Vec::with_capacity(common_snps.len()); k];
-    let mut ld = Vec::with_capacity(common_snps.len());
-    let mut w_ld = Vec::with_capacity(common_snps.len());
+        // Must be in trait j (always true since we iterate trait j's SNPs)
+        let idx_j = trait_maps[j][snp_str];
 
-    for &snp in &common_snps {
-        let (_, l2, wl) = ld_map[snp];
+        // Must be in trait jj
+        let Some(&idx_jj) = trait_maps[jj].get(snp_str) else {
+            continue;
+        };
 
-        // Apply chi-square max filter
-        let max_chi = traits
-            .iter()
-            .enumerate()
-            .map(|(t, _)| {
-                let idx = trait_maps[t][snp];
-                traits[t].z[idx].powi(2)
-            })
-            .fold(0.0f64, f64::max);
+        // Chi-square max filter (max across the two traits in this pair)
+        let chi_j = traits[j].z[idx_j].powi(2);
+        let chi_k = traits[jj].z[idx_jj].powi(2);
+        let max_chi = chi_j.max(chi_k);
 
         let chisq_max = config.chisq_max.unwrap_or_else(|| {
-            let max_n: f64 = traits
-                .iter()
-                .enumerate()
-                .map(|(t, _)| {
-                    let idx = trait_maps[t][snp];
-                    traits[t].n[idx]
-                })
-                .fold(0.0f64, f64::max);
+            let max_n = traits[j].n[idx_j].max(traits[jj].n[idx_jj]);
             (0.001 * max_n).max(80.0)
         });
 
@@ -316,31 +313,32 @@ fn merge_data(
             continue;
         }
 
-        for t in 0..k {
-            let idx = trait_maps[t][snp];
-            z[t].push(traits[t].z[idx]);
-            n[t].push(traits[t].n[idx]);
-        }
+        z_j.push(traits[j].z[idx_j]);
+        z_k.push(traits[jj].z[idx_jj]);
+        n_j.push(traits[j].n[idx_j]);
+        n_k.push(traits[jj].n[idx_jj]);
         ld.push(l2);
         w_ld.push(wl);
     }
 
     let n_snps = ld.len();
+    if n_snps == 0 {
+        anyhow::bail!("no common SNPs for trait pair ({j}, {jj})");
+    }
+
     log::info!(
-        "Merged: {} common SNPs (from {} in trait 0, {} in LD scores)",
-        n_snps,
-        traits[0].snp.len(),
-        ld_snps.len()
+        "Pair ({j},{jj}): {n_snps} SNPs after merge and chi2 filter"
     );
 
-    Ok(MergedData {
-        z,
-        n,
+    Ok(PairMergedData {
+        z_j,
+        z_k,
+        n_j,
+        n_k,
         ld,
         w_ld,
         m: m_total,
         n_snps,
-        _n_traits: k,
     })
 }
 

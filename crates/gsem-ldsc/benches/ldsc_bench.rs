@@ -5,6 +5,7 @@ fn bench_weights(c: &mut Criterion) {
     let chi2: Vec<f64> = (0..n).map(|i| 1.0 + 0.5 * (i as f64 / n as f64)).collect();
     let ld: Vec<f64> = (0..n).map(|i| 5.0 + 20.0 * (i as f64 / n as f64)).collect();
     let w_ld = ld.clone();
+    let n_vec = vec![50000.0; n];
 
     c.bench_function("h2_weights_10k", |b| {
         b.iter(|| {
@@ -12,7 +13,7 @@ fn bench_weights(c: &mut Criterion) {
                 black_box(&chi2),
                 black_box(&ld),
                 black_box(&w_ld),
-                50000.0,
+                black_box(&n_vec),
                 1_000_000.0,
             )
         })
