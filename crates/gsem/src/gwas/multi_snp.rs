@@ -137,7 +137,7 @@ pub fn run_multi_snp(
                     .get(snp_i)
                     .and_then(|s| s.get(t))
                     .copied()
-                    .unwrap_or(0.01);
+                    .unwrap_or(f64::NAN);
                 v_full[(idx, idx)] = (se_val * var_snp_i).powi(2);
             }
         }
@@ -198,13 +198,13 @@ pub fn run_multi_snp(
         .filter(|(_, row)| row.free > 0)
         .enumerate()
         .map(|(free_idx, (_, row))| {
-            let est = fit.params.get(free_idx).copied().unwrap_or(0.0);
-            let se_val = se_vec.get(free_idx).copied().unwrap_or(0.0);
-            let z = if se_val > 0.0 { est / se_val } else { 0.0 };
+            let est = fit.params.get(free_idx).copied().unwrap_or(f64::NAN);
+            let se_val = se_vec.get(free_idx).copied().unwrap_or(f64::NAN);
+            let z = est / se_val;
             let p = if z.is_finite() {
                 2.0 * statrs::distribution::Normal::standard().cdf(-z.abs())
             } else {
-                1.0
+                f64::NAN
             };
             super::user_gwas::SnpParamResult {
                 lhs: row.lhs.clone(),

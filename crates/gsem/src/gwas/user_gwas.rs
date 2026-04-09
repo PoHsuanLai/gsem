@@ -271,12 +271,12 @@ fn process_single_snp(
         .enumerate()
         .filter(|(_, (row, _))| row.free > 0)
         .map(|(i, (row, &est))| {
-            let se_val = se.get(i).copied().unwrap_or(0.0);
-            let z = if se_val > 0.0 { est / se_val } else { 0.0 };
+            let se_val = se.get(i).copied().unwrap_or(f64::NAN);
+            let z = est / se_val;
             let p = if z.is_finite() {
                 2.0 * statrs::distribution::Normal::standard().cdf(-z.abs())
             } else {
-                1.0
+                f64::NAN
             };
             SnpParamResult {
                 lhs: row.lhs.clone(),

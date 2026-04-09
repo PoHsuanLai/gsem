@@ -91,7 +91,8 @@ pub(crate) fn solve_2x2(xtx: &[f64; 4], xty: &[f64; 2]) -> [f64; 2] {
     let d = xtx[3];
     let det = a * d - b * c;
     if det.abs() < 1e-30 {
-        return [0.0, 0.0];
+        log::warn!("LDSC regression matrix is singular (det={det:.2e}); results will be NaN");
+        return [f64::NAN, f64::NAN];
     }
     let x = (d * xty[0] - b * xty[1]) / det;
     let y = (a * xty[1] - c * xty[0]) / det;
