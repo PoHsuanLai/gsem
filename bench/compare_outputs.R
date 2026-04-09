@@ -169,49 +169,262 @@ check("write.model: syntax", function() {
 })
 
 # ==========================================================================
-# 6. sumstats (merge)
+# 6. sumstats (merge) — uses RAW GWAS files (not munged)
 # ==========================================================================
-# NOTE: munged .sumstats.gz files have Z/N columns, not effect/SE.
-# Both R and Rust correctly error on these — sumstats() requires raw GWAS files.
-# This test verifies that Rust errors the same way R does (no hidden fallbacks).
 cat("\n--- sumstats ---\n")
 check("sumstats: merge", function() {
-  # R version: errors because munged files lack SE column
-  r_err <- tryCatch(
-    { GenomicSEM::sumstats(
-        files = munged_traits, ref = hm3, trait.names = trait_names,
-        se.logit = c(FALSE, FALSE, FALSE), OLS = c(FALSE, FALSE, FALSE),
-        linprob = c(FALSE, FALSE, FALSE), info.filter = 0.6, maf.filter = 0.01
-      ); NULL },
-    error = function(e) e$message
+  dir.create("out_compare", showWarnings = FALSE)
+  rust_ss_path <- "out_compare/rust_merged.tsv"
+
+  # R version
+  r_ss <- tryCatch(
+    GenomicSEM::sumstats(
+      files = raw_traits,
+      ref = hm3,
+      trait.names = trait_names,
+      se.logit = c(FALSE, FALSE, FALSE),
+      OLS = c(FALSE, FALSE, FALSE),
+      linprob = c(FALSE, FALSE, FALSE),
+      info.filter = 0.6,
+      maf.filter = 0.01
+    ),
+    error = function(e) { cat("  R error:", e$message, "\n"); NULL }
   )
 
-  # Rust version: should also error (no effect/SE columns in munged files)
-  rust_err <- tryCatch(
-    { gsemr::sumstats(
-        files = munged_traits, ref = hm3, trait.names = trait_names,
-        info.filter = 0.6, maf.filter = 0.01, out = "out_compare/rust_merged.tsv"
-      ); NULL },
-    error = function(e) e$message
+  # Rust version
+  gsemr::sumstats(
+    files = raw_traits,
+    ref = hm3,
+    trait.names = trait_names,
+    info.filter = 0.6,
+    maf.filter = 0.01,
+    out = rust_ss_path
   )
 
-  if (!is.null(r_err) && is.null(rust_err)) {
-    stop("R errors on munged files but Rust does not — Rust should not silently fall back")
+  if (!file.exists(rust_ss_path)) stop("Rust sumstats produced no output")
+  rust_data <- read.delim(rust_ss_path)
+  if (nrow(rust_data) < 100) stop(sprintf("Rust merged only %d SNPs", nrow(rust_data)))
+
+  if (!is.null(r_ss)) {
+    r_data <- if (is.data.frame(r_ss)) r_ss else read.delim(r_ss)
+    r_n <- nrow(r_data)
+    rust_n <- nrow(rust_data)
+    ratio <- min(r_n, rust_n) / max(r_n, rust_n)
+    if (ratio < 0.80) stop(sprintf("SNP count: R=%d Rust=%d (ratio=%.2f)", r_n, rust_n, ratio))
   }
-  if (is.null(r_err) && !is.null(rust_err)) {
-    stop("R succeeds but Rust errors")
-  }
-  # Both error — consistent behavior (munged files lack effect/SE columns)
 })
 
 # ==========================================================================
 # 7. commonfactorGWAS (quick test on subset)
 # ==========================================================================
-# SKIP: requires sumstats output from raw GWAS files (with effect/SE/MAF).
-# The bench data only has munged .sumstats.gz files, which lack these columns.
 cat("\n--- commonfactorGWAS ---\n")
 check("commonfactorGWAS: runs", function() {
-  cat("  SKIP: bench data has munged files only (no effect/SE/MAF for sumstats)\n")
+  merged_path <- "out_compare/rust_merged.tsv"
+  if (!file.exists(merged_path)) {
+    gsemr::sumstats(files = raw_traits, ref = hm3, trait.names = trait_names, out = merged_path)
+  }
+  # Use a small subset (500 SNPs) — full GWAS on 1M+ SNPs is too slow for CI
+  subset_path <- "out_compare/rust_merged_subset.tsv"
+  full <- read.delim(merged_path, nrows = 500)
+  write.table(full, subset_path, sep = "\t", row.names = FALSE, quote = FALSE)
+  result <- gsemr::commonfactorGWAS(rust_cov, SNPs = subset_path)
+  if (is.null(result) || nrow(result) == 0) stop("No results")
+  n_finite <- sum(is.finite(result$est))
+  if (n_finite < 100) stop(sprintf("Only %d finite estimates", n_finite))
+})
+
+# ==========================================================================
+# 8. userGWAS (quick test on subset)
+# ==========================================================================
+cat("\n--- userGWAS ---\n")
+check("userGWAS: runs", function() {
+  merged_path <- "out_compare/rust_merged.tsv"
+  if (!file.exists(merged_path)) {
+    dir.create("out_compare", showWarnings = FALSE)
+    gsemr::sumstats(files = raw_traits, ref = hm3, trait.names = trait_names, out = merged_path)
+  }
+  subset_path <- "out_compare/rust_merged_subset.tsv"
+  if (!file.exists(subset_path)) {
+    full <- read.delim(merged_path, nrows = 500)
+    write.table(full, subset_path, sep = "\t", row.names = FALSE, quote = FALSE)
+  }
+  user_model <- paste0(
+    "F1 =~ NA*", trait_names[1], " + ", trait_names[2], " + ", trait_names[3], "\n",
+    "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
+  )
+  result <- gsemr::userGWAS(rust_cov, SNPs = subset_path, model = user_model)
+  if (is.null(result) || nrow(result) == 0) stop("No results")
+  # userGWAS returns nested JSON; extract SNP effect from params
+  n_converged <- sum(result$converged, na.rm = TRUE)
+  if (n_converged < 100) stop(sprintf("Only %d converged", n_converged))
+})
+
+# ==========================================================================
+# 9. munge
+# ==========================================================================
+cat("\n--- munge ---\n")
+check("munge: produces output", function() {
+  # Munge just the first trait as a quick test (writes to current dir)
+  out <- gsemr::munge(
+    files = raw_traits[1],
+    hm3 = hm3,
+    trait.names = "ANX_test",
+    N = n_overrides[1],
+    info.filter = 0.9,
+    maf.filter = 0.01
+  )
+  out_file <- "ANX_test.sumstats.gz"
+  if (!file.exists(out_file)) stop("Munge produced no output file")
+  # Check it has SNP, N, Z, A1 columns
+  data <- read.table(gzfile(out_file), header = TRUE, nrows = 5)
+  required <- c("SNP", "N", "Z", "A1")
+  for (col in required) {
+    if (!(col %in% colnames(data))) stop(sprintf("Missing column: %s", col))
+  }
+  file.remove(out_file)
+})
+
+# ==========================================================================
+# 10. paLDSC (parallel analysis)
+# ==========================================================================
+cat("\n--- paLDSC ---\n")
+check("paLDSC: eigenvalues", function() {
+  result <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 3, save.pdf = FALSE)
+  if (is.null(result)) stop("paLDSC returned NULL")
+  if (is.null(result$observed)) stop("No observed eigenvalues")
+  if (length(result$observed) != 3) stop(sprintf("Expected 3 eigenvalues, got %d", length(result$observed)))
+  if (!all(is.finite(result$observed))) stop("Non-finite eigenvalues")
+  if (is.null(result$n_factors) || result$n_factors < 1) stop("n_factors should be >= 1")
+})
+
+# ==========================================================================
+# 11. summaryGLS
+# ==========================================================================
+cat("\n--- summaryGLS ---\n")
+check("summaryGLS: regression", function() {
+  # Simple GLS regression on vech(S)
+  k <- nrow(rust_cov$S)
+  kstar <- k * (k + 1) / 2
+  y <- rust_cov$S[lower.tri(rust_cov$S, diag = TRUE)]
+  X <- matrix(1:kstar, ncol = 1)
+  result <- gsemr::summaryGLS(Y = y, V_Y = rust_cov$V, PREDICTORS = X, INTERCEPT = TRUE)
+  if (is.null(result)) stop("summaryGLS returned NULL")
+  if (nrow(result) == 0) stop("Empty results")
+  if (!all(c("beta", "se", "z", "p") %in% colnames(result))) stop("Missing columns")
+  if (!all(is.finite(result$beta))) stop("Non-finite betas")
+})
+
+# ==========================================================================
+# 12. simLDSC
+# ==========================================================================
+cat("\n--- simLDSC ---\n")
+check("simLDSC: generates data", function() {
+  # Simulate from the estimated covariance
+  sim_result <- gsemr::simLDSC(
+    covmat = rust_cov$S,
+    N = c(5000, 5000, 5000),
+    seed = 42,
+    ld = "data/eur_w_ld_chr/"
+  )
+  if (is.null(sim_result)) stop("simLDSC returned NULL")
+  # Should return a matrix: SNPs x traits or traits x SNPs
+  if (!is.matrix(sim_result) && !is.data.frame(sim_result)) stop("Expected matrix output")
+  dm <- dim(sim_result)
+  if (max(dm) < 100) stop(sprintf("Too few elements: %dx%d", dm[1], dm[2]))
+})
+
+# ==========================================================================
+# 13. HDL (requires HDL panels — skip if not available)
+# ==========================================================================
+cat("\n--- HDL ---\n")
+hdl_panels <- "data/UKB_imputed_SVD_eigen99_extraction"
+if (dir.exists(hdl_panels)) {
+  check("hdl: estimates", function() {
+    result <- gsemr::hdl(munged_traits, sample_prev, pop_prev,
+                         trait.names = trait_names, LD.path = hdl_panels)
+    if (is.null(result$S)) stop("No S matrix")
+    if (nrow(result$S) != 3) stop("Wrong S dimension")
+  })
+} else {
+  skip("hdl: estimates", "HDL panels not available")
+}
+
+# ==========================================================================
+# 14. s_ldsc (stratified LDSC — requires annotation files, skip if unavailable)
+# ==========================================================================
+cat("\n--- s_ldsc ---\n")
+frq_dir <- "data/1000G_Phase3_frq/"
+annot_ld <- "data/baseline_v1.1/"
+if (dir.exists(frq_dir) && dir.exists(annot_ld)) {
+  check("s_ldsc: runs", function() {
+    result <- gsemr::s_ldsc(munged_traits, sample_prev, pop_prev,
+                            ld = annot_ld, wld = ld, frq = frq_dir,
+                            trait.names = trait_names, n.blocks = 200L)
+    if (is.null(result)) stop("s_ldsc returned NULL")
+  })
+} else {
+  skip("s_ldsc: runs", "stratified LDSC data not available")
+}
+
+# ==========================================================================
+# 15. enrich (requires stratified LDSC output — skip if s_ldsc unavailable)
+# ==========================================================================
+cat("\n--- enrich ---\n")
+skip("enrich: runs", "requires stratified LDSC output")
+
+# ==========================================================================
+# 16. multiSNP
+# ==========================================================================
+cat("\n--- multiSNP ---\n")
+check("multiSNP: runs", function() {
+  merged_path <- "out_compare/rust_merged.tsv"
+  if (!file.exists(merged_path)) {
+    dir.create("out_compare", showWarnings = FALSE)
+    gsemr::sumstats(files = raw_traits, ref = hm3, trait.names = trait_names, out = merged_path)
+  }
+  # Read a small set of SNPs and build the expected data frame format
+  snp_data <- read.delim(merged_path, nrows = 5)
+  beta_cols <- grep("^beta\\.", colnames(snp_data))
+  se_cols <- grep("^se\\.", colnames(snp_data))
+  snp_df <- data.frame(
+    beta = I(as.matrix(snp_data[, beta_cols])),
+    se = I(as.matrix(snp_data[, se_cols])),
+    var = 2 * snp_data$MAF * (1 - snp_data$MAF)
+  )
+  ld_mat <- diag(nrow(snp_data))
+  result <- gsemr::multiSNP(
+    covstruc = rust_cov,
+    SNPs = snp_df,
+    LD = ld_mat,
+    SNPlist = snp_data$SNP
+  )
+  if (is.null(result)) stop("multiSNP returned NULL")
+  if (is.null(result$results)) stop("No results data frame")
+})
+
+# ==========================================================================
+# 17. multiGene (same interface as multiSNP)
+# ==========================================================================
+cat("\n--- multiGene ---\n")
+check("multiGene: runs", function() {
+  merged_path <- "out_compare/rust_merged.tsv"
+  snp_data <- read.delim(merged_path, nrows = 3)
+  beta_cols <- grep("^beta\\.", colnames(snp_data))
+  se_cols <- grep("^se\\.", colnames(snp_data))
+  gene_df <- data.frame(
+    beta = I(as.matrix(snp_data[, beta_cols])),
+    se = I(as.matrix(snp_data[, se_cols])),
+    var = 2 * snp_data$MAF * (1 - snp_data$MAF)
+  )
+  ld_mat <- diag(nrow(snp_data))
+  result <- gsemr::multiGene(
+    covstruc = rust_cov,
+    Genes = gene_df,
+    LD = ld_mat,
+    Genelist = snp_data$SNP
+  )
+  if (is.null(result)) stop("multiGene returned NULL")
+  if (is.null(result$results)) stop("No results data frame")
 })
 
 # ==========================================================================

@@ -47,5 +47,38 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
     as.character(covstruc_json), as.character(SNPs), as.character(GC),
     as.character(estimation), snp_se_val, as.logical(smooth_check),
     as.logical(TWAS))
-  jsonlite::fromJSON(json)
+  raw <- jsonlite::fromJSON(json)
+
+  # Extract the SNP effect row (F1 ~ SNP) from each SNP's params,
+  # matching R GenomicSEM's commonfactorGWAS output format.
+  n <- nrow(raw)
+  out <- data.frame(
+    SNP = raw$SNP,
+    lhs = character(n), op = character(n), rhs = character(n),
+    est = numeric(n), se = numeric(n),
+    chisq = raw$chisq, df = raw$df,
+    converged = raw$converged,
+    stringsAsFactors = FALSE
+  )
+
+  for (i in seq_len(n)) {
+    p <- raw$params[[i]]
+    # Find the SNP regression row: op == "~" and rhs == "SNP"
+    snp_row <- which(p$op == "~" & p$rhs == "SNP")
+    if (length(snp_row) > 0) {
+      snp_row <- snp_row[1]
+      out$lhs[i] <- p$lhs[snp_row]
+      out$op[i]  <- p$op[snp_row]
+      out$rhs[i] <- p$rhs[snp_row]
+      out$est[i] <- p$est[snp_row]
+      out$se[i]  <- p$se[snp_row]
+    } else {
+      out$est[i] <- NA
+      out$se[i]  <- NA
+    }
+  }
+
+  out$z <- ifelse(out$se > 0, out$est / out$se, NA)
+  out$p <- ifelse(is.finite(out$z), 2 * pnorm(abs(out$z), lower.tail = FALSE), NA)
+  out
 }

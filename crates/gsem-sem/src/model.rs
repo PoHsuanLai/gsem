@@ -49,12 +49,36 @@ pub struct ParamLocation {
 impl Model {
     /// Build a Model from a parsed parameter table.
     pub fn from_partable(pt: &ParTable, obs_order: &[String]) -> Self {
-        let lat_names = pt.latent_vars();
+        let mut lat_names = pt.latent_vars();
         let obs_names: Vec<String> = if obs_order.is_empty() {
             pt.observed_vars()
         } else {
             obs_order.to_vec()
         };
+
+        // Detect observed variables used as regression predictors (e.g., F1 ~ SNP).
+        // These need phantom latents so we can represent the path in the Beta matrix.
+        // Phantom latent gets: Lambda[obs, phantom] = 1 (fixed), Theta[obs,obs] = 0 (fixed).
+        let mut phantom_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for row in &pt.rows {
+            if row.op == Op::Regression {
+                let rhs_is_lat = lat_names.iter().any(|n| n == &row.rhs);
+                let rhs_is_obs = obs_names.iter().any(|n| n == &row.rhs);
+                if !rhs_is_lat && rhs_is_obs && !phantom_map.contains_key(&row.rhs) {
+                    let phantom_idx = lat_names.len();
+                    phantom_map.insert(row.rhs.clone(), phantom_idx);
+                    lat_names.push(row.rhs.clone());
+                }
+                // Also check lhs
+                let lhs_is_lat = lat_names.iter().any(|n| n == &row.lhs);
+                let lhs_is_obs = obs_names.iter().any(|n| n == &row.lhs);
+                if !lhs_is_lat && lhs_is_obs && !phantom_map.contains_key(&row.lhs) {
+                    let phantom_idx = lat_names.len();
+                    phantom_map.insert(row.lhs.clone(), phantom_idx);
+                    lat_names.push(row.lhs.clone());
+                }
+            }
+        }
 
         let p = obs_names.len();
         let m = lat_names.len();
@@ -65,6 +89,13 @@ impl Model {
         let mut beta = Mat::zeros(m, m);
         let mut free_params = Vec::new();
         let mut lower_bounds = Vec::new();
+
+        // Set up phantom latents: Lambda[obs, phantom] = 1.0 (fixed)
+        for (obs_name, &phantom_lat_idx) in &phantom_map {
+            if let Some(obs_idx) = obs_names.iter().position(|n| n == obs_name) {
+                lambda[(obs_idx, phantom_lat_idx)] = 1.0;
+            }
+        }
 
         for row in &pt.rows {
             match row.op {
@@ -93,7 +124,7 @@ impl Model {
                     let rhs_obs = obs_names.iter().position(|n| n == &row.rhs);
 
                     if let (Some(li), Some(ri)) = (lhs_lat, rhs_lat) {
-                        // Latent covariance/variance
+                        // Latent covariance/variance (includes phantom latents)
                         if row.free > 0 {
                             free_params.push(ParamLocation {
                                 matrix: MatrixId::Psi,
@@ -133,10 +164,11 @@ impl Model {
                     }
                 }
                 Op::Regression => {
-                    let lhs_lat = lat_names.iter().position(|n| n == &row.lhs);
-                    let rhs_lat = lat_names.iter().position(|n| n == &row.rhs);
+                    // Resolve both sides: use phantom latent index if the variable is observed
+                    let lhs_idx = lat_names.iter().position(|n| n == &row.lhs);
+                    let rhs_idx = lat_names.iter().position(|n| n == &row.rhs);
 
-                    if let (Some(li), Some(ri)) = (lhs_lat, rhs_lat) {
+                    if let (Some(li), Some(ri)) = (lhs_idx, rhs_idx) {
                         if row.free > 0 {
                             free_params.push(ParamLocation {
                                 matrix: MatrixId::Beta,

@@ -1233,14 +1233,16 @@ fn multi_snp_rust(
         .iter()
         .map(|p| {
             format!(
-                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{},\"se\":{},\"z\":{},\"p\":{}}}",
+                p.lhs, p.op, p.rhs,
+                conversions::json_f64(p.est), conversions::json_f64(p.se),
+                conversions::json_f64_4(p.z_stat), conversions::json_f64_e(p.p_value)
             )
         })
         .collect();
     format!(
-        "{{\"converged\":{},\"chisq\":{:.4},\"df\":{},\"params\":[{}]}}",
-        result.converged, result.chisq, result.chisq_df, params.join(",")
+        "{{\"converged\":{},\"chisq\":{},\"df\":{},\"params\":[{}]}}",
+        result.converged, conversions::json_f64_4(result.chisq), result.chisq_df, params.join(",")
     )
 }
 

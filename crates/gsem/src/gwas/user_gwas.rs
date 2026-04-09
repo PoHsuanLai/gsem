@@ -128,7 +128,29 @@ pub fn run_user_gwas(
         // Build a baseline model using only the trait-trait portion of the model
         // (parameters that don't involve the SNP label)
         let snp_label = config.variant_label.as_str();
-        let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+        // Extract observed variable names from the model syntax (not generic V1,V2,...)
+        let obs_names: Vec<String> = {
+            let latents: std::collections::HashSet<String> = pt.rows.iter()
+                .filter(|r| r.op == Op::Loading)
+                .map(|r| r.lhs.clone())
+                .collect();
+            let mut names = Vec::new();
+            for row in &pt.rows {
+                if row.op == Op::Loading {
+                    let name = &row.rhs;
+                    if !latents.contains(name) && name != snp_label && !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+            if names.len() != k {
+                log::error!(
+                    "fix_measurement: model has {} observed variables but S matrix is {}x{} — cannot fix baseline",
+                    names.len(), k, k
+                );
+            }
+            names
+        };
         // Extract only non-SNP rows from the partable
         let baseline_rows: Vec<_> = pt
             .rows
@@ -251,9 +273,29 @@ fn process_single_snp(
         );
     }
 
-    // Build model
-    let mut obs_names = vec![config.variant_label.as_str().to_string()];
-    obs_names.extend((0..k).map(|i| format!("V{}", i + 1)));
+    // Build model: extract observed variable names from the model syntax
+    let snp_label = config.variant_label.as_str();
+    let mut obs_names = vec![snp_label.to_string()];
+    {
+        let latents: std::collections::HashSet<&str> = pt.rows.iter()
+            .filter(|r| r.op == Op::Loading)
+            .map(|r| r.lhs.as_str())
+            .collect();
+        for row in &pt.rows {
+            if row.op == Op::Loading {
+                let name = row.rhs.as_str();
+                if !latents.contains(name) && name != snp_label && !obs_names.contains(&name.to_string()) {
+                    obs_names.push(name.to_string());
+                }
+            }
+        }
+        if obs_names.len() != k + 1 {
+            log::error!(
+                "SNP {}: model has {} observed variables but expected {} (k+1) — variable name mismatch",
+                snp_idx, obs_names.len(), k + 1
+            );
+        }
+    }
 
     let mut model = Model::from_partable(pt, &obs_names);
 
@@ -280,14 +322,13 @@ fn process_single_snp(
 
     let (se, _ohtt) = sandwich::sandwich_se(&mut model, &w_diag, &v_full);
 
-    // Build parameter results
-    let params: Vec<SnpParamResult> = pt
-        .rows
+    // Build parameter results: only for free parameters
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    let params: Vec<SnpParamResult> = free_rows
         .iter()
-        .zip(fit.params.iter().chain(std::iter::repeat(&0.0)))
         .enumerate()
-        .filter(|(_, (row, _))| row.free > 0)
-        .map(|(i, (row, &est))| {
+        .map(|(i, row)| {
+            let est = fit.params.get(i).copied().unwrap_or(0.0);
             let se_val = se.get(i).copied().unwrap_or(f64::NAN);
             let z = est / se_val;
             let p = if z.is_finite() {

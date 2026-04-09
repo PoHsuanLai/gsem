@@ -73,6 +73,31 @@ pub fn json_to_mat(json: &str) -> Option<Mat<f64>> {
     Some(Mat::from_fn(nrows, ncols, |i, j| rows[i][j]))
 }
 
+/// Format a float for JSON: NaN/Inf → null.
+pub fn json_f64(v: f64) -> String {
+    if v.is_finite() {
+        format!("{:.6}", v)
+    } else {
+        "null".to_string()
+    }
+}
+
+pub fn json_f64_4(v: f64) -> String {
+    if v.is_finite() {
+        format!("{:.4}", v)
+    } else {
+        "null".to_string()
+    }
+}
+
+pub fn json_f64_e(v: f64) -> String {
+    if v.is_finite() {
+        format!("{:.6e}", v)
+    } else {
+        "null".to_string()
+    }
+}
+
 pub fn snp_results_to_json(results: &[SnpResult], snps: &[MergedSnp]) -> String {
     let entries: Vec<String> = results
         .iter()
@@ -83,24 +108,24 @@ pub fn snp_results_to_json(results: &[SnpResult], snps: &[MergedSnp]) -> String 
                 .iter()
                 .map(|p| {
                     format!(
-                        "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                        p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+                        "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{},\"se\":{},\"z\":{},\"p\":{}}}",
+                        p.lhs, p.op, p.rhs, json_f64(p.est), json_f64(p.se), json_f64_4(p.z_stat), json_f64_e(p.p_value)
                     )
                 })
                 .collect();
             let mut extra = String::new();
             if let Some(q) = r.q_snp {
-                extra.push_str(&format!(",\"Q_chisq\":{:.4}", q));
+                extra.push_str(&format!(",\"Q_chisq\":{}", json_f64_4(q)));
             }
             if let Some(df) = r.q_snp_df {
                 extra.push_str(&format!(",\"Q_df\":{}", df));
             }
             if let Some(p) = r.q_snp_p {
-                extra.push_str(&format!(",\"Q_pval\":{:.6e}", p));
+                extra.push_str(&format!(",\"Q_pval\":{}", json_f64_e(p)));
             }
             format!(
-                "{{\"SNP\":\"{}\",\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]{}}}",
-                snp_name, r.chisq, r.chisq_df, r.converged, params.join(","), extra
+                "{{\"SNP\":\"{}\",\"chisq\":{},\"df\":{},\"converged\":{},\"params\":[{}]{}}}",
+                snp_name, json_f64_4(r.chisq), r.chisq_df, r.converged, params.join(","), extra
             )
         })
         .collect();
@@ -119,20 +144,20 @@ pub fn twas_results_to_json(results: &[SnpResult], genes: &[TwasGene]) -> String
                 .iter()
                 .map(|p| {
                     format!(
-                        "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                        p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+                        "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{},\"se\":{},\"z\":{},\"p\":{}}}",
+                        p.lhs, p.op, p.rhs, json_f64(p.est), json_f64(p.se), json_f64_4(p.z_stat), json_f64_e(p.p_value)
                     )
                 })
                 .collect();
             let mut extra = String::new();
             if let Some(q) = r.q_snp {
-                extra.push_str(&format!(",\"Q_chisq\":{:.4}", q));
+                extra.push_str(&format!(",\"Q_chisq\":{}", json_f64_4(q)));
             }
             if let Some(df) = r.q_snp_df {
                 extra.push_str(&format!(",\"Q_df\":{}", df));
             }
             if let Some(p) = r.q_snp_p {
-                extra.push_str(&format!(",\"Q_pval\":{:.6e}", p));
+                extra.push_str(&format!(",\"Q_pval\":{}", json_f64_e(p)));
             }
             format!(
                 "{{\"Gene\":\"{}\",\"Panel\":\"{}\",\"HSQ\":{:.6},\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]{}}}",
