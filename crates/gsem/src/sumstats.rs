@@ -93,8 +93,7 @@ pub fn merge_sumstats(
     // Read and QC each GWAS file
     let mut trait_records: Vec<HashMap<String, QcRecord>> = Vec::with_capacity(k);
     for (i, file) in files.iter().enumerate() {
-        let n_override = config.n_overrides.get(i).copied().flatten();
-        let records = read_and_qc_gwas(file, &ref_snps, config, n_override, i)?;
+        let records = read_and_qc_gwas(file, &ref_snps, config, i)?;
         log::info!("  {}: {} SNPs after QC", trait_names[i], records.len());
         trait_records.push(records);
     }
@@ -174,7 +173,6 @@ fn read_and_qc_gwas(
     path: &Path,
     ref_snps: &HashMap<String, RefSnpInfo>,
     config: &SumstatsConfig,
-    n_override: Option<f64>,
     trait_idx: usize,
 ) -> Result<HashMap<String, QcRecord>> {
     // Build column overrides if beta column name is specified for this trait
@@ -196,36 +194,8 @@ fn read_and_qc_gwas(
             continue;
         }
 
-        // Must have effect and SE
+        // Must have effect and SE (match R GenomicSEM: skip SNPs without these)
         let (Some(effect), Some(se)) = (rec.effect, rec.se) else {
-            // Try to derive from Z and N if available
-            if let (Some(z), Some(n_val)) = (rec.z, rec.n.or(n_override)) {
-                if n_val > 0.0 {
-                    let beta = z / n_val.sqrt();
-                    let se_val = 1.0 / n_val.sqrt();
-                    let a1 = rec.a1.as_deref().unwrap_or("").to_uppercase();
-                    let a2 = rec.a2.as_deref().unwrap_or("").to_uppercase();
-                    // Accept even without A2 (common for .sumstats.gz from simLDSC)
-                    if !a1.is_empty() {
-                        if a2.is_empty()
-                            || (valid_allele_pair(&a1, &a2, config.keep_indel)
-                                && (config.keep_ambig || !is_ambiguous_snp(&a1, &a2)))
-                        {
-                            records.insert(
-                                rec.snp,
-                                QcRecord {
-                                    a1,
-                                    a2,
-                                    beta,
-                                    se: se_val,
-                                    maf: rec.maf,
-                                },
-                            );
-                        }
-                    }
-                }
-                continue;
-            }
             continue;
         };
 
