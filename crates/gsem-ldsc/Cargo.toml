@@ -21,3 +21,8 @@ flate2 = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "ldsc_bench"
+harness = false

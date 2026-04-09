@@ -4,3 +4,4 @@ out_rust/
 results.md
 *.tar.bz2
 *.bz2
+*.log

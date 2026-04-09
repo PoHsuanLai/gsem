@@ -52,8 +52,9 @@ numpy = "0.23"
 rand = "0.9"
 rand_distr = "0.5"
 
-# Testing
+# Testing & Benchmarking
 approx = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Internal crates
 gsem-matrix = { path = "crates/gsem-matrix" }

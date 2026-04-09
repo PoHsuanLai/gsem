@@ -13,3 +13,8 @@ log = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "matrix_bench"
+harness = false

@@ -16,3 +16,8 @@ log = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "sem_bench"
+harness = false
