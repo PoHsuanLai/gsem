@@ -794,6 +794,235 @@ fn s_ldsc_rust(
     }
 }
 
+/// Enrichment analysis using stratified LDSC results.
+#[extendr]
+fn enrich_rust(
+    s_baseline_json: &str,
+    s_annot_json: &str,
+    v_annot_json: &str,
+    annotation_names: Vec<String>,
+    m_annot: Vec<f64>,
+    m_total: f64,
+) -> String {
+    let s_baseline = match conversions::json_to_mat(s_baseline_json) {
+        Some(m) => m,
+        None => return "{\"error\": \"failed to parse S_baseline JSON\"}".to_string(),
+    };
+
+    // Parse arrays of matrices from JSON: [[mat1_rows], [mat2_rows], ...]
+    let s_annot_outer: Vec<Vec<Vec<f64>>> = match serde_json::from_str(s_annot_json) {
+        Ok(v) => v,
+        Err(e) => return format!("{{\"error\": \"failed to parse S_annot JSON: {e}\"}}"),
+    };
+    let s_annot: Vec<faer::Mat<f64>> = s_annot_outer
+        .iter()
+        .map(|rows| {
+            let nr = rows.len();
+            let nc = if nr > 0 { rows[0].len() } else { 0 };
+            faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
+        })
+        .collect();
+
+    let v_annot_outer: Vec<Vec<Vec<f64>>> = match serde_json::from_str(v_annot_json) {
+        Ok(v) => v,
+        Err(e) => return format!("{{\"error\": \"failed to parse V_annot JSON: {e}\"}}"),
+    };
+    let v_annot: Vec<faer::Mat<f64>> = v_annot_outer
+        .iter()
+        .map(|rows| {
+            let nr = rows.len();
+            let nc = if nr > 0 { rows[0].len() } else { 0 };
+            faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
+        })
+        .collect();
+
+    let result = gsem::stats::enrich::enrichment_test(
+        &s_baseline,
+        &s_annot,
+        &v_annot,
+        &annotation_names,
+        &m_annot,
+        m_total,
+    );
+
+    let entries: Vec<String> = result
+        .annotations
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            format!(
+                "{{\"annotation\":\"{}\",\"enrichment\":{:.6},\"se\":{:.6},\"p\":{:.6e}}}",
+                name, result.enrichment[i], result.se[i], result.p[i]
+            )
+        })
+        .collect();
+    format!("[{}]", entries.join(","))
+}
+
+/// Simulate GWAS summary statistics.
+#[extendr]
+fn sim_ldsc_rust(
+    s_json: &str,
+    n_per_trait: Vec<f64>,
+    ld_scores: Vec<f64>,
+    m: f64,
+) -> String {
+    let s_mat = match conversions::json_to_mat(s_json) {
+        Some(m) => m,
+        None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
+    };
+
+    let result = gsem::stats::simulation::simulate_sumstats(&s_mat, &n_per_trait, &ld_scores, m);
+
+    // result is Vec<Vec<f64>> (k traits x n_snps)
+    let trait_json: Vec<String> = result
+        .iter()
+        .map(|trait_z| {
+            let vals: Vec<String> = trait_z.iter().map(|v| format!("{v:.6}")).collect();
+            format!("[{}]", vals.join(","))
+        })
+        .collect();
+    format!("[{}]", trait_json.join(","))
+}
+
+/// Run multi-SNP analysis.
+#[extendr]
+fn multi_snp_rust(
+    covstruc_json: &str,
+    model: &str,
+    estimation: &str,
+    beta_json: &str,
+    se_json: &str,
+    var_snp: Vec<f64>,
+    ld_matrix_json: &str,
+    snp_names: Vec<String>,
+) -> String {
+    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
+        Some(r) => r,
+        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    };
+
+    let beta: Vec<Vec<f64>> = match serde_json::from_str(beta_json) {
+        Ok(v) => v,
+        Err(e) => return format!("{{\"error\": \"failed to parse beta JSON: {e}\"}}"),
+    };
+    let se: Vec<Vec<f64>> = match serde_json::from_str(se_json) {
+        Ok(v) => v,
+        Err(e) => return format!("{{\"error\": \"failed to parse se JSON: {e}\"}}"),
+    };
+    let ld_matrix = match conversions::json_to_mat(ld_matrix_json) {
+        Some(m) => m,
+        None => return "{\"error\": \"failed to parse LD matrix JSON\"}".to_string(),
+    };
+
+    let config = gsem::gwas::multi_snp::MultiSnpConfig {
+        model: model.to_string(),
+        estimation: estimation.to_string(),
+        max_iter: 1000,
+    };
+
+    let result = gsem::gwas::multi_snp::run_multi_snp(
+        &config,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        &beta,
+        &se,
+        &var_snp,
+        &ld_matrix,
+        &snp_names,
+    );
+
+    let params: Vec<String> = result
+        .params
+        .iter()
+        .map(|p| {
+            format!(
+                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+            )
+        })
+        .collect();
+    format!(
+        "{{\"converged\":{},\"chisq\":{:.4},\"df\":{},\"params\":[{}]}}",
+        result.converged, result.chisq, result.chisq_df, params.join(",")
+    )
+}
+
+/// Run multi-gene analysis (reuses multi-SNP engine).
+#[extendr]
+fn multi_gene_rust(
+    covstruc_json: &str,
+    model: &str,
+    estimation: &str,
+    beta_json: &str,
+    se_json: &str,
+    var_gene: Vec<f64>,
+    ld_matrix_json: &str,
+    gene_names: Vec<String>,
+) -> String {
+    // multiGene is the same as multiSNP but with gene-level data
+    multi_snp_rust(
+        covstruc_json,
+        model,
+        estimation,
+        beta_json,
+        se_json,
+        var_gene,
+        ld_matrix_json,
+        gene_names,
+    )
+}
+
+/// Run Generalized Least Squares regression.
+#[extendr]
+fn summary_gls_rust(
+    x_json: &str,
+    y: Vec<f64>,
+    v_json: &str,
+    intercept: bool,
+) -> String {
+    let mut x_mat = match conversions::json_to_mat(x_json) {
+        Some(m) => m,
+        None => return "{\"error\": \"failed to parse X matrix JSON\"}".to_string(),
+    };
+    let v_mat = match conversions::json_to_mat(v_json) {
+        Some(m) => m,
+        None => return "{\"error\": \"failed to parse V matrix JSON\"}".to_string(),
+    };
+
+    // Add intercept column if requested
+    if intercept {
+        let n = x_mat.nrows();
+        let p = x_mat.ncols();
+        let mut x_new = faer::Mat::zeros(n, p + 1);
+        for i in 0..n {
+            x_new[(i, 0)] = 1.0;
+            for j in 0..p {
+                x_new[(i, j + 1)] = x_mat[(i, j)];
+            }
+        }
+        x_mat = x_new;
+    }
+
+    match gsem::stats::gls::summary_gls(&x_mat, &y, &v_mat) {
+        Some(result) => {
+            let entries: Vec<String> = result
+                .beta
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    format!(
+                        "{{\"beta\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                        b, result.se[i], result.z[i], result.p[i]
+                    )
+                })
+                .collect();
+            format!("[{}]", entries.join(","))
+        }
+        None => "{\"error\": \"GLS failed (singular matrix?)\"}".to_string(),
+    }
+}
+
 extendr_module! {
     mod gsemr;
     fn ldsc_rust;
@@ -808,4 +1037,9 @@ extendr_module! {
     fn rgmodel_rust;
     fn hdl_rust;
     fn s_ldsc_rust;
+    fn enrich_rust;
+    fn sim_ldsc_rust;
+    fn multi_snp_rust;
+    fn multi_gene_rust;
+    fn summary_gls_rust;
 }

@@ -595,6 +595,207 @@ fn snp_results_to_json(
     format!("[{}]", entries.join(","))
 }
 
+/// Enrichment analysis using stratified LDSC results.
+#[pyfunction]
+#[pyo3(signature = (s_baseline, s_annot, v_annot, annotation_names, m_annot, m_total))]
+fn enrich(
+    s_baseline: Vec<Vec<f64>>,
+    s_annot: Vec<Vec<Vec<f64>>>,
+    v_annot: Vec<Vec<Vec<f64>>>,
+    annotation_names: Vec<String>,
+    m_annot: Vec<f64>,
+    m_total: f64,
+) -> PyResult<String> {
+    let nr = s_baseline.len();
+    let nc = if nr > 0 { s_baseline[0].len() } else { 0 };
+    let s_base_mat = faer::Mat::from_fn(nr, nc, |i, j| s_baseline[i][j]);
+
+    let s_annot_mats: Vec<faer::Mat<f64>> = s_annot
+        .iter()
+        .map(|rows| {
+            let r = rows.len();
+            let c = if r > 0 { rows[0].len() } else { 0 };
+            faer::Mat::from_fn(r, c, |i, j| rows[i][j])
+        })
+        .collect();
+
+    let v_annot_mats: Vec<faer::Mat<f64>> = v_annot
+        .iter()
+        .map(|rows| {
+            let r = rows.len();
+            let c = if r > 0 { rows[0].len() } else { 0 };
+            faer::Mat::from_fn(r, c, |i, j| rows[i][j])
+        })
+        .collect();
+
+    let result = gsem::stats::enrich::enrichment_test(
+        &s_base_mat,
+        &s_annot_mats,
+        &v_annot_mats,
+        &annotation_names,
+        &m_annot,
+        m_total,
+    );
+
+    let entries: Vec<String> = result
+        .annotations
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            format!(
+                "{{\"annotation\":\"{}\",\"enrichment\":{:.6},\"se\":{:.6},\"p\":{:.6e}}}",
+                name, result.enrichment[i], result.se[i], result.p[i]
+            )
+        })
+        .collect();
+    Ok(format!("[{}]", entries.join(",")))
+}
+
+/// Simulate GWAS summary statistics.
+#[pyfunction]
+#[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m))]
+fn sim_ldsc(
+    s_matrix: Vec<Vec<f64>>,
+    n_per_trait: Vec<f64>,
+    ld_scores: Vec<f64>,
+    m: f64,
+) -> PyResult<Vec<Vec<f64>>> {
+    let nr = s_matrix.len();
+    let nc = if nr > 0 { s_matrix[0].len() } else { 0 };
+    let s_mat = faer::Mat::from_fn(nr, nc, |i, j| s_matrix[i][j]);
+
+    Ok(gsem::stats::simulation::simulate_sumstats(
+        &s_mat,
+        &n_per_trait,
+        &ld_scores,
+        m,
+    ))
+}
+
+/// Run multi-SNP analysis.
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, model, beta, se, var_snp, ld_matrix, snp_names, estimation="DWLS", max_iter=1000))]
+fn multi_snp(
+    covstruc_json: &str,
+    model: &str,
+    beta: Vec<Vec<f64>>,
+    se: Vec<Vec<f64>>,
+    var_snp: Vec<f64>,
+    ld_matrix: Vec<Vec<f64>>,
+    snp_names: Vec<String>,
+    estimation: &str,
+    max_iter: usize,
+) -> PyResult<String> {
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+
+    let nr = ld_matrix.len();
+    let nc = if nr > 0 { ld_matrix[0].len() } else { 0 };
+    let ld_mat = faer::Mat::from_fn(nr, nc, |i, j| ld_matrix[i][j]);
+
+    let config = gsem::gwas::multi_snp::MultiSnpConfig {
+        model: model.to_string(),
+        estimation: estimation.to_string(),
+        max_iter,
+    };
+
+    let result = gsem::gwas::multi_snp::run_multi_snp(
+        &config,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        &beta,
+        &se,
+        &var_snp,
+        &ld_mat,
+        &snp_names,
+    );
+
+    let params: Vec<String> = result
+        .params
+        .iter()
+        .map(|p| {
+            format!(
+                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+            )
+        })
+        .collect();
+    Ok(format!(
+        "{{\"converged\":{},\"chisq\":{:.4},\"df\":{},\"params\":[{}]}}",
+        result.converged, result.chisq, result.chisq_df, params.join(",")
+    ))
+}
+
+/// Run multi-gene analysis (reuses multi-SNP engine).
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, model, beta, se, var_gene, ld_matrix, gene_names, estimation="DWLS", max_iter=1000))]
+fn multi_gene(
+    covstruc_json: &str,
+    model: &str,
+    beta: Vec<Vec<f64>>,
+    se: Vec<Vec<f64>>,
+    var_gene: Vec<f64>,
+    ld_matrix: Vec<Vec<f64>>,
+    gene_names: Vec<String>,
+    estimation: &str,
+    max_iter: usize,
+) -> PyResult<String> {
+    multi_snp(
+        covstruc_json, model, beta, se, var_gene, ld_matrix, gene_names, estimation, max_iter,
+    )
+}
+
+/// Run Generalized Least Squares regression.
+#[pyfunction]
+#[pyo3(signature = (x, y, v, intercept=true))]
+fn summary_gls(
+    x: Vec<Vec<f64>>,
+    y: Vec<f64>,
+    v: Vec<Vec<f64>>,
+    intercept: bool,
+) -> PyResult<String> {
+    let nr = x.len();
+    let nc = if nr > 0 { x[0].len() } else { 0 };
+    let mut x_mat = faer::Mat::from_fn(nr, nc, |i, j| x[i][j]);
+
+    let v_nr = v.len();
+    let v_nc = if v_nr > 0 { v[0].len() } else { 0 };
+    let v_mat = faer::Mat::from_fn(v_nr, v_nc, |i, j| v[i][j]);
+
+    if intercept {
+        let n = x_mat.nrows();
+        let p = x_mat.ncols();
+        let mut x_new = faer::Mat::zeros(n, p + 1);
+        for i in 0..n {
+            x_new[(i, 0)] = 1.0;
+            for j in 0..p {
+                x_new[(i, j + 1)] = x_mat[(i, j)];
+            }
+        }
+        x_mat = x_new;
+    }
+
+    match gsem::stats::gls::summary_gls(&x_mat, &y, &v_mat) {
+        Some(result) => {
+            let entries: Vec<String> = result
+                .beta
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    format!(
+                        "{{\"beta\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                        b, result.se[i], result.z[i], result.p[i]
+                    )
+                })
+                .collect();
+            Ok(format!("[{}]", entries.join(",")))
+        }
+        None => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "GLS failed (singular matrix?)",
+        )),
+    }
+}
+
 /// Python module definition.
 #[pymodule]
 fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -611,5 +812,10 @@ fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rgmodel, m)?)?;
     m.add_function(wrap_pyfunction!(hdl, m)?)?;
     m.add_function(wrap_pyfunction!(s_ldsc, m)?)?;
+    m.add_function(wrap_pyfunction!(enrich, m)?)?;
+    m.add_function(wrap_pyfunction!(sim_ldsc, m)?)?;
+    m.add_function(wrap_pyfunction!(multi_snp, m)?)?;
+    m.add_function(wrap_pyfunction!(multi_gene, m)?)?;
+    m.add_function(wrap_pyfunction!(summary_gls, m)?)?;
     Ok(())
 }
