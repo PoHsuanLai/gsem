@@ -16,6 +16,10 @@ use flate2::read::GzDecoder;
 pub struct AnnotLdScores {
     /// SNP identifiers in order.
     pub snps: Vec<String>,
+    /// Chromosome per SNP.
+    pub chr: Vec<u32>,
+    /// Base-pair position per SNP.
+    pub bp: Vec<u64>,
     /// Annotation-specific LD scores (n_snps x n_annot).
     pub annot_ld: Mat<f64>,
     /// Weight LD scores per SNP.
@@ -37,6 +41,8 @@ pub fn read_annot_ld_scores(
     chromosomes: &[usize],
 ) -> Result<AnnotLdScores> {
     let mut all_snps = Vec::new();
+    let mut all_chr = Vec::new();
+    let mut all_bp = Vec::new();
     let mut all_annot_rows: Vec<Vec<f64>> = Vec::new();
     let mut all_w_ld = Vec::new();
     let mut annotation_names: Option<Vec<String>> = None;
@@ -45,7 +51,7 @@ pub fn read_annot_ld_scores(
     for &chr in chromosomes {
         // Read annotation LD scores
         let ld_path = ld_dir.join(format!("{chr}.l2.ldscore.gz"));
-        let (snps, annot_data, names) = read_annot_ld_file(&ld_path)?;
+        let (snps, chr_vals, bp_vals, annot_data, names) = read_annot_ld_file(&ld_path)?;
 
         if let Some(ref existing) = annotation_names {
             if *existing != names {
@@ -69,6 +75,8 @@ pub fn read_annot_ld_scores(
             let w = w_map.get(snp.as_str()).copied().unwrap_or(1.0);
             all_w_ld.push(w);
             all_snps.push(snp.clone());
+            all_chr.push(chr_vals[i]);
+            all_bp.push(bp_vals[i]);
             all_annot_rows.push(annot_data[i].clone());
         }
 
@@ -97,6 +105,8 @@ pub fn read_annot_ld_scores(
 
     Ok(AnnotLdScores {
         snps: all_snps,
+        chr: all_chr,
+        bp: all_bp,
         annot_ld,
         w_ld: all_w_ld,
         annotation_names: names,
@@ -105,7 +115,8 @@ pub fn read_annot_ld_scores(
 }
 
 /// Parsed annotation LD score file data.
-type AnnotLdFileData = (Vec<String>, Vec<Vec<f64>>, Vec<String>);
+// (snp_names, chr, bp, annotation_data[n_snps][n_annot], annotation_names)
+type AnnotLdFileData = (Vec<String>, Vec<u32>, Vec<u64>, Vec<Vec<f64>>, Vec<String>);
 
 /// Read a single annotation LD score file.
 /// Returns (snp_names, annotation_data[n_snps][n_annot], annotation_names).
@@ -122,11 +133,13 @@ fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
         header.split_whitespace().collect()
     };
 
-    // Find SNP column
+    // Find SNP, CHR, BP columns
     let snp_idx = fields
         .iter()
         .position(|&h| h == "SNP")
         .context("SNP column not found")?;
+    let chr_idx = fields.iter().position(|&h| h == "CHR");
+    let bp_idx = fields.iter().position(|&h| h == "BP");
 
     // Annotation columns: everything except CHR, SNP, BP, CM, MAF
     let skip_cols: std::collections::HashSet<&str> =
@@ -142,6 +155,8 @@ fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
     let n_annot = annot_indices.len();
 
     let mut snps = Vec::new();
+    let mut chrs = Vec::new();
+    let mut bps = Vec::new();
     let mut data: Vec<Vec<f64>> = Vec::new();
 
     for line_result in lines {
@@ -160,6 +175,8 @@ fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
         }
 
         snps.push(flds[snp_idx].to_string());
+        chrs.push(chr_idx.and_then(|i| flds.get(i)?.parse::<u32>().ok()).unwrap_or(0));
+        bps.push(bp_idx.and_then(|i| flds.get(i)?.parse::<u64>().ok()).unwrap_or(0));
         let mut row = Vec::with_capacity(n_annot);
         for &(col_idx, _) in &annot_indices {
             let val: f64 = flds
@@ -171,7 +188,7 @@ fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
         data.push(row);
     }
 
-    Ok((snps, data, annotation_names))
+    Ok((snps, chrs, bps, data, annotation_names))
 }
 
 /// Read a weight LD score file (just SNP and L2 columns).
