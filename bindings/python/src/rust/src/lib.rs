@@ -540,25 +540,21 @@ fn user_gwas(
 /// Parallel analysis to determine number of factors.
 /// Accepts S and V as JSON strings (2D arrays).
 #[pyfunction]
-#[pyo3(signature = (s_json, v_json, r=500, p=None, save_pdf=false, diag=false, fa=false, fm=None, nfactors=None))]
-#[allow(unused_variables)]
+#[pyo3(signature = (s_json, v_json, r=500, p=None, diag=false))]
 fn parallel_analysis(
     s_json: &str,
     v_json: &str,
     r: usize,
-    p: Option<usize>,              // ignored
-    save_pdf: bool,                // ignored
-    diag: bool,                    // ignored
-    fa: bool,                      // ignored
-    fm: Option<String>,            // ignored
-    nfactors: Option<usize>,       // ignored
+    p: Option<f64>,
+    diag: bool,
 ) -> PyResult<String> {
     let s_mat = json_to_mat(s_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid s_json: {e}")))?;
     let v_mat = json_to_mat(v_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
 
-    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, 0.95, false);
+    let percentile = p.unwrap_or(0.95);
+    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, percentile, diag);
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(
@@ -983,23 +979,44 @@ fn enrich(
 
 /// Simulate GWAS summary statistics.
 #[pyfunction]
-#[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m))]
+#[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m, intercepts=None, r_pheno=None, n_overlap=0.0))]
 fn sim_ldsc(
     s_matrix: Vec<Vec<f64>>,
     n_per_trait: Vec<f64>,
     ld_scores: Vec<f64>,
     m: f64,
+    intercepts: Option<Vec<Vec<f64>>>,
+    r_pheno: Option<Vec<Vec<f64>>>,
+    n_overlap: f64,
 ) -> PyResult<Vec<Vec<f64>>> {
     let nr = s_matrix.len();
     let nc = if nr > 0 { s_matrix[0].len() } else { 0 };
     let s_mat = faer::Mat::from_fn(nr, nc, |i, j| s_matrix[i][j]);
+
+    let int_mat = intercepts.map(|rows| {
+        let nr = rows.len();
+        let nc = if nr > 0 { rows[0].len() } else { 0 };
+        faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
+    });
+
+    let r_pheno_mat = r_pheno.map(|rows| {
+        let nr = rows.len();
+        let nc = if nr > 0 { rows[0].len() } else { 0 };
+        faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
+    });
+
+    let config = gsem::stats::simulation::SimConfig {
+        intercepts: int_mat,
+        r_pheno: r_pheno_mat,
+        n_overlap,
+    };
 
     Ok(gsem::stats::simulation::simulate_sumstats(
         &s_mat,
         &n_per_trait,
         &ld_scores,
         m,
-        &gsem::stats::simulation::SimConfig::default(),
+        &config,
     ))
 }
 
