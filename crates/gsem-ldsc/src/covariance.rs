@@ -36,7 +36,7 @@ pub fn estimate_gcov(
     n_blocks: usize,
 ) -> Result<GcovResult> {
     let n_snps = z1.len();
-    assert_eq!(n_snps, z2.len());
+    debug_assert_eq!(n_snps, z2.len());
 
     // Compute Z1*Z2 product (cross-trait chi statistic)
     let zz: Vec<f64> = z1.iter().zip(z2.iter()).map(|(a, b)| a * b).collect();

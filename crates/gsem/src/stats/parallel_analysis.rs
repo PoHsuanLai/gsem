@@ -45,7 +45,7 @@ pub fn parallel_analysis(
 
     // Null model: identity correlation matrix (no off-diagonal correlations)
     let s_null = Mat::<f64>::identity(k, k);
-    let null_vec = vech::vech(&s_null);
+    let null_vec = vech::vech(&s_null).expect("identity matrix vech should not fail");
 
     // When diag_only=true, use only diagonal of V (ignore sampling covariance between elements)
     let v_sim = if diag_only {
@@ -84,7 +84,7 @@ pub fn parallel_analysis(
                 sample[i] = null_vec[i] + lz;
             }
 
-            let sim_mat = vech::vech_reverse(&sample, k);
+            let sim_mat = vech::vech_reverse(&sample, k).expect("vech_reverse should not fail for valid kstar");
             let eigs = eigenvalues_sorted(&sim_mat);
             pb.inc(1);
             eigs

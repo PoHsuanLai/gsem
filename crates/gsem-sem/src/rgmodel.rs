@@ -106,8 +106,8 @@ fn run_rgmodel_inner(
     // Step 1: Standardize S → S_Stand = cov2cor(S)
     let s_stand = cov_to_cor(s);
     // Step 2: Rescale V
-    let s_vec = vech::vech(s);
-    let s_stand_vec = vech::vech(&s_stand);
+    let s_vec = vech::vech(s)?;
+    let s_stand_vec = vech::vech(&s_stand)?;
 
     let scale_o: Vec<f64> = s_stand_vec
         .iter()
@@ -171,7 +171,7 @@ fn run_rgmodel_inner(
 
     // The simplest correct approach: compute V_R as the sampling covariance of vech(R)
     // using delta method on the standardization transformation, same as before but on S_Stand
-    let v_r = compute_v_r(&r, &v_stand_fixed, k);
+    let v_r = compute_v_r(&r, &v_stand_fixed, k)?;
 
     Ok(RgModelResult { r, v_r, sem_result })
 }
@@ -215,7 +215,9 @@ fn fit_user_model_on_stand(
             let se = se_vec.get(free_idx).copied().unwrap_or(0.0);
             let z = if se > 0.0 { est / se } else { 0.0 };
             let p = if z.abs() > 0.0 {
-                2.0 * (1.0 - ChiSquared::new(1.0).unwrap().cdf(z * z))
+                ChiSquared::new(1.0)
+                    .map(|chi2| 2.0 * (1.0 - chi2.cdf(z * z)))
+                    .unwrap_or(1.0)
             } else {
                 1.0
             };
@@ -236,9 +238,9 @@ fn fit_user_model_on_stand(
 }
 
 /// Compute sampling covariance of the correlation matrix via delta method.
-fn compute_v_r(r: &Mat<f64>, v_stand: &Mat<f64>, k: usize) -> Mat<f64> {
+fn compute_v_r(r: &Mat<f64>, v_stand: &Mat<f64>, k: usize) -> Result<Mat<f64>> {
     let kstar = k * (k + 1) / 2;
-    let r_vec = vech::vech(r);
+    let r_vec = vech::vech(r)?;
     let eps = 1e-7;
 
     // Jacobian: perturb each element of vech(Sigma_stand), compute change in vech(R)
@@ -248,14 +250,14 @@ fn compute_v_r(r: &Mat<f64>, v_stand: &Mat<f64>, k: usize) -> Mat<f64> {
     for col in 0..kstar {
         let mut perturbed = sigma_vec.clone();
         perturbed[col] += eps;
-        let sigma_plus = vech::vech_reverse(&perturbed, k);
+        let sigma_plus = vech::vech_reverse(&perturbed, k)?;
         let sds_plus: Vec<f64> = (0..k)
             .map(|i| sigma_plus[(i, i)].sqrt().max(1e-10))
             .collect();
         let r_plus = Mat::from_fn(k, k, |i, j| {
             sigma_plus[(i, j)] / (sds_plus[i] * sds_plus[j])
         });
-        let r_plus_vec = vech::vech(&r_plus);
+        let r_plus_vec = vech::vech(&r_plus)?;
 
         for row in 0..kstar {
             jacobian[(row, col)] = (r_plus_vec[row] - r_vec[row]) / eps;
@@ -264,7 +266,7 @@ fn compute_v_r(r: &Mat<f64>, v_stand: &Mat<f64>, k: usize) -> Mat<f64> {
 
     // V_R = J * V_stand * J'
     let jv = &jacobian * v_stand;
-    &jv * jacobian.transpose()
+    Ok(&jv * jacobian.transpose())
 }
 
 #[cfg(test)]

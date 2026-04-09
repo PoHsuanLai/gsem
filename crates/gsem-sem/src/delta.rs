@@ -1,4 +1,5 @@
 use faer::Mat;
+use gsem_matrix::error::MatrixError;
 use gsem_matrix::vech;
 
 use crate::model::Model;
@@ -7,7 +8,7 @@ use crate::model::Model;
 ///
 /// Uses central finite differences with step size eps.
 /// Output: kstar × n_free matrix.
-pub fn compute_delta(model: &mut Model, eps: f64) -> Mat<f64> {
+pub fn compute_delta(model: &mut Model, eps: f64) -> Result<Mat<f64>, MatrixError> {
     let params = model.get_param_vec();
     let n_free = params.len();
     let p = model.obs_names.len();
@@ -22,10 +23,10 @@ pub fn compute_delta(model: &mut Model, eps: f64) -> Mat<f64> {
         p_minus[j] -= eps;
 
         model.set_param_vec(&p_plus);
-        let sigma_plus = vech::vech(&model.implied_cov());
+        let sigma_plus = vech::vech(&model.implied_cov())?;
 
         model.set_param_vec(&p_minus);
-        let sigma_minus = vech::vech(&model.implied_cov());
+        let sigma_minus = vech::vech(&model.implied_cov())?;
 
         for i in 0..kstar {
             delta[(i, j)] = (sigma_plus[i] - sigma_minus[i]) / (2.0 * eps);
@@ -34,5 +35,5 @@ pub fn compute_delta(model: &mut Model, eps: f64) -> Mat<f64> {
 
     // Restore original parameters
     model.set_param_vec(&params);
-    delta
+    Ok(delta)
 }

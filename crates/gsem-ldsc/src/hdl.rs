@@ -75,6 +75,18 @@ pub struct HdlTraitData {
     pub a2: Vec<String>,
 }
 
+impl From<crate::TraitSumstats> for HdlTraitData {
+    fn from(t: crate::TraitSumstats) -> Self {
+        Self {
+            snp: t.snp,
+            z: t.z,
+            n: t.n,
+            a1: t.a1,
+            a2: t.a2,
+        }
+    }
+}
+
 /// Run HDL analysis.
 ///
 /// Port of R GenomicSEM's `hdl()`.
@@ -215,7 +227,11 @@ fn estimate_h2_piece(trait_data: &HdlTraitData, piece: &LdPiece, n_ref: f64) -> 
     let int_init = (int_ols * mean_n).clamp(0.5, 2.0);
 
     // Optimize likelihood
-    optimize_h2_likelihood(&bhat, &piece.ld_scores, mean_n, m, n_ref, h2_init, int_init)
+    lbfgs_minimize_2d(
+        |p| h2_neg_loglik(&bhat, &piece.ld_scores, p[0], p[1], mean_n, m, n_ref),
+        [(0.0001, 0.9999), (0.1, 10.0)],
+        [h2_init, int_init],
+    )
 }
 
 /// Estimate genetic covariance for a single LD piece.
@@ -321,39 +337,19 @@ fn simple_regression(y: &[f64], x: &[f64]) -> (f64, f64) {
     (slope, intercept)
 }
 
-/// Optimize h2 likelihood for a single piece using L-BFGS.
-fn optimize_h2_likelihood(
-    bhat: &[f64],
-    ld_scores: &[f64],
-    n: f64,
-    m: f64,
-    n_ref: f64,
-    h2_init: f64,
-    int_init: f64,
-) -> (f64, f64) {
-    let bounds = [(0.0001, 0.9999), (0.1, 10.0)];
-    lbfgs_optimize_h2(bhat, ld_scores, n, m, n_ref, h2_init, int_init, bounds)
-}
-
-/// L-BFGS optimization for h2 likelihood (2 parameters: h2, intercept).
-#[allow(clippy::too_many_arguments)]
-fn lbfgs_optimize_h2(
-    bhat: &[f64],
-    ld_scores: &[f64],
-    n: f64,
-    m: f64,
-    n_ref: f64,
-    h2_init: f64,
-    int_init: f64,
+/// Generic L-BFGS optimizer for 2-parameter problems.
+///
+/// Minimizes `obj_fn` over 2D parameter space with box constraints.
+fn lbfgs_minimize_2d(
+    obj_fn: impl Fn(&[f64; 2]) -> f64,
     bounds: [(f64, f64); 2],
+    init: [f64; 2],
 ) -> (f64, f64) {
-    let mut params = [h2_init, int_init];
+    let mut params = init;
     let eps = 1e-7;
     let memory_size = 5;
     let max_iter = 100;
     let c1 = 1e-4;
-
-    let obj_fn = |p: &[f64; 2]| -> f64 { h2_neg_loglik(bhat, ld_scores, p[0], p[1], n, m, n_ref) };
 
     let grad_fn = |p: &[f64; 2]| -> [f64; 2] {
         let f0 = obj_fn(p);
@@ -508,95 +504,11 @@ fn optimize_gcov_likelihood(
     gcov_init: f64,
     int_init: f64,
 ) -> (f64, f64) {
-    let bounds = [(-0.9999, 0.9999), (-5.0, 5.0)];
-    let mut params = [gcov_init, int_init];
-    let eps = 1e-7;
-    let memory_size = 5;
-    let max_iter = 100;
-    let c1 = 1e-4;
-
-    let obj_fn = |p: &[f64; 2]| -> f64 {
-        gcov_neg_loglik(
-            bhat_j, bhat_d, ld_scores, p[0], p[1], n_j, n_d, n0, m, n_ref, h2_j, h2_d,
-        )
-    };
-
-    let grad_fn = |p: &[f64; 2]| -> [f64; 2] {
-        let f0 = obj_fn(p);
-        let mut g = [0.0; 2];
-        for i in 0..2 {
-            let mut p_plus = *p;
-            p_plus[i] += eps;
-            p_plus[i] = p_plus[i].clamp(bounds[i].0, bounds[i].1);
-            g[i] = (obj_fn(&p_plus) - f0) / eps;
-        }
-        g
-    };
-
-    let mut s_hist: VecDeque<[f64; 2]> = VecDeque::with_capacity(memory_size);
-    let mut y_hist: VecDeque<[f64; 2]> = VecDeque::with_capacity(memory_size);
-    let mut rho_hist: VecDeque<f64> = VecDeque::with_capacity(memory_size);
-
-    let mut obj = obj_fn(&params);
-    let mut grad = grad_fn(&params);
-
-    for _ in 0..max_iter {
-        let grad_norm = (grad[0] * grad[0] + grad[1] * grad[1]).sqrt();
-        if grad_norm < 1e-6 {
-            break;
-        }
-
-        let direction = lbfgs_direction_2d(&grad, &s_hist, &y_hist, &rho_hist);
-
-        let dg: f64 = direction[0] * grad[0] + direction[1] * grad[1];
-        let direction = if dg >= 0.0 {
-            [-grad[0], -grad[1]]
-        } else {
-            direction
-        };
-
-        let mut step = 1.0;
-        let mut new_params = params;
-        let mut found = false;
-
-        for _ in 0..20 {
-            new_params[0] = (params[0] + step * direction[0]).clamp(bounds[0].0, bounds[0].1);
-            new_params[1] = (params[1] + step * direction[1]).clamp(bounds[1].0, bounds[1].1);
-            let new_obj = obj_fn(&new_params);
-            if new_obj.is_finite() && new_obj <= obj + c1 * step * dg.min(0.0) {
-                found = true;
-                obj = new_obj;
-                break;
-            }
-            step *= 0.5;
-        }
-
-        if !found {
-            break;
-        }
-
-        let new_grad = grad_fn(&new_params);
-
-        let s_k = [new_params[0] - params[0], new_params[1] - params[1]];
-        let y_k = [new_grad[0] - grad[0], new_grad[1] - grad[1]];
-        let sy = s_k[0] * y_k[0] + s_k[1] * y_k[1];
-
-        if sy > 1e-10 {
-            if s_hist.len() >= memory_size {
-                s_hist.pop_front();
-                y_hist.pop_front();
-                rho_hist.pop_front();
-            }
-            s_hist.push_back(s_k);
-            y_hist.push_back(y_k);
-            rho_hist.push_back(1.0 / sy);
-        }
-
-        params = new_params;
-        grad = new_grad;
-    }
-
-    (params[0], params[1])
+    lbfgs_minimize_2d(
+        |p| gcov_neg_loglik(bhat_j, bhat_d, ld_scores, p[0], p[1], n_j, n_d, n0, m, n_ref, h2_j, h2_d),
+        [(-0.9999, 0.9999), (-5.0, 5.0)],
+        [gcov_init, int_init],
+    )
 }
 
 /// Negative log-likelihood for genetic covariance estimation.

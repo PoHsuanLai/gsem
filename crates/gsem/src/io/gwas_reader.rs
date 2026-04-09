@@ -200,6 +200,33 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
     Ok(records)
 }
 
+/// Convert munged records into an LDSC TraitSumstats struct.
+pub fn records_to_trait_sumstats(records: Vec<MungedRecord>) -> gsem_ldsc::TraitSumstats {
+    let (snp, z, n, a1, a2) = records.into_iter().fold(
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+        |(mut snps, mut zs, mut ns, mut a1s, mut a2s), r| {
+            snps.push(r.snp);
+            zs.push(r.z);
+            ns.push(r.n);
+            a1s.push(r.a1);
+            a2s.push(r.a2);
+            (snps, zs, ns, a1s, a2s)
+        },
+    );
+    gsem_ldsc::TraitSumstats { snp, z, n, a1, a2 }
+}
+
+/// Read multiple munged sumstats files and return LDSC trait data.
+pub fn load_trait_data(paths: &[impl AsRef<Path>]) -> Result<Vec<gsem_ldsc::TraitSumstats>> {
+    paths
+        .iter()
+        .map(|p| {
+            let records = read_sumstats(p.as_ref())?;
+            Ok(records_to_trait_sumstats(records))
+        })
+        .collect()
+}
+
 /// Open a file for reading, with automatic gzip detection based on .gz extension.
 pub fn open_file_reader(path: &Path) -> Result<Box<dyn BufRead>> {
     let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;

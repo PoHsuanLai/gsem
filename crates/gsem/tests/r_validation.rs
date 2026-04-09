@@ -106,10 +106,10 @@ fn test_vech_3x3_matches_r() {
     let expected_vech = json_to_vec(&fix["vech"]);
     let expected_rev = json_to_mat(&fix["reverse"]);
 
-    let v = gsem_matrix::vech::vech(&input);
+    let v = gsem_matrix::vech::vech(&input).unwrap();
     assert_vec_close(&v, &expected_vech, 1e-15, "vech 3x3");
 
-    let rev = gsem_matrix::vech::vech_reverse(&v, 3);
+    let rev = gsem_matrix::vech::vech_reverse(&v, 3).unwrap();
     assert_mat_close(&rev, &expected_rev, 1e-15, "vech_reverse 3x3");
 }
 
@@ -120,10 +120,10 @@ fn test_vech_4x4_matches_r() {
     let expected_vech = json_to_vec(&fix["vech"]);
     let expected_rev = json_to_mat(&fix["reverse"]);
 
-    let v = gsem_matrix::vech::vech(&input);
+    let v = gsem_matrix::vech::vech(&input).unwrap();
     assert_vec_close(&v, &expected_vech, 1e-15, "vech 4x4");
 
-    let rev = gsem_matrix::vech::vech_reverse(&v, 4);
+    let rev = gsem_matrix::vech::vech_reverse(&v, 4).unwrap();
     assert_mat_close(&rev, &expected_rev, 1e-15, "vech_reverse 4x4");
 }
 
@@ -369,7 +369,7 @@ fn test_v_reorder_matches_r() {
         .collect();
     let expected = json_to_mat(&fix["v_reordered"]);
 
-    let result = gsem_sem::reorder::reorder_v(&v, &user_order, &model_order);
+    let result = gsem_sem::reorder::reorder_v(&v, &user_order, &model_order).unwrap();
     assert_mat_close(&result, &expected, 1e-12, "V reorder");
 }
 

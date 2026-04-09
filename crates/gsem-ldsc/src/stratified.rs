@@ -122,6 +122,19 @@ pub fn s_ldsc(
     let kstar = k * (k + 1) / 2;
     let mut i_mat = Mat::zeros(k, k);
 
+    // Pre-compute per-trait chi-squared (z^2) and mean N
+    let chi2_per_trait: Vec<Vec<f64>> = (0..k)
+        .map(|j| merged.z[j].iter().map(|z| z * z).collect())
+        .collect();
+    let mean_n_per_trait: Vec<f64> = (0..k)
+        .map(|j| merged.n[j].iter().sum::<f64>() / n_snps as f64)
+        .collect();
+
+    // Pre-compute total LD score per SNP (sum across annotations)
+    let total_ld: Vec<f64> = (0..n_snps)
+        .map(|i| (0..n_annot).map(|a| merged.annot_ld[(i, a)]).sum())
+        .collect();
+
     // Per-annotation S matrices
     let mut s_annot: Vec<Mat<f64>> = (0..n_annot).map(|_| Mat::zeros(k, k)).collect();
 
@@ -134,45 +147,30 @@ pub fn s_ldsc(
     for j in 0..k {
         for jj in j..k {
             let (outcome, mean_n) = if j == jj {
-                // Heritability: chi-squared = z^2
-                let chi2: Vec<f64> = merged.z[j].iter().map(|z| z * z).collect();
-                let mean_n = merged.n[j].iter().sum::<f64>() / n_snps as f64;
-                (chi2, mean_n)
+                (chi2_per_trait[j].clone(), mean_n_per_trait[j])
             } else {
-                // Covariance: Z_j * Z_k
                 let zz: Vec<f64> = merged.z[j]
                     .iter()
                     .zip(merged.z[jj].iter())
                     .map(|(a, b)| a * b)
                     .collect();
-                let mean_n_j = merged.n[j].iter().sum::<f64>() / n_snps as f64;
-                let mean_n_k = merged.n[jj].iter().sum::<f64>() / n_snps as f64;
-                (zz, (mean_n_j * mean_n_k).sqrt())
+                (zz, (mean_n_per_trait[j] * mean_n_per_trait[jj]).sqrt())
             };
 
             n_vec[vech_idx] = mean_n;
 
-            // Compute weights using total LD score (sum across annotations)
-            let total_ld: Vec<f64> = (0..n_snps)
-                .map(|i| (0..n_annot).map(|a| merged.annot_ld[(i, a)]).sum())
-                .collect();
-
-            // For weight computation, use trait j's chi-squared
-            let chi2_for_weights: Vec<f64> = merged.z[j].iter().map(|z| z * z).collect();
-
             let w = if j == jj {
                 weights::compute_h2_weights(
-                    &chi2_for_weights,
+                    &chi2_per_trait[j],
                     &total_ld,
                     &merged.w_ld,
                     &merged.n[j],
                     m_total,
                 )
             } else {
-                let chi2_k: Vec<f64> = merged.z[jj].iter().map(|z| z * z).collect();
                 weights::compute_gcov_weights(
-                    &chi2_for_weights,
-                    &chi2_k,
+                    &chi2_per_trait[j],
+                    &chi2_per_trait[jj],
                     &total_ld,
                     &merged.w_ld,
                     &merged.n[j],

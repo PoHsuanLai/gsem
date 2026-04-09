@@ -28,8 +28,8 @@ pub fn block_regression(
     n_blocks: usize,
 ) -> RegressionResult {
     let n = ld.len();
-    assert_eq!(n, y.len());
-    assert_eq!(n, weights.len());
+    debug_assert_eq!(n, y.len());
+    debug_assert_eq!(n, weights.len());
 
     // Compute block boundaries
     let block_bounds = compute_block_bounds(n, n_blocks);

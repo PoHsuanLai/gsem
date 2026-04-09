@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use faer::Mat;
 
 use gsem::io::gwas_reader;
@@ -18,476 +18,317 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// QC and munge raw GWAS summary statistics
-    Munge {
-        /// Input GWAS summary statistics files
-        #[arg(short, long, num_args = 1..)]
-        files: Vec<PathBuf>,
-
-        /// HapMap3 reference SNP list
-        #[arg(long)]
-        hm3: PathBuf,
-
-        /// Trait names
-        #[arg(long, num_args = 1..)]
-        trait_names: Option<Vec<String>>,
-
-        /// INFO score filter threshold
-        #[arg(long, default_value = "0.9")]
-        info_filter: f64,
-
-        /// MAF filter threshold
-        #[arg(long, default_value = "0.01")]
-        maf_filter: f64,
-
-        /// Override sample size
-        #[arg(short, long)]
-        n: Option<f64>,
-
-        /// Column name overrides (KEY=VALUE pairs, e.g., SNP=RSID,P=PVAL)
-        #[arg(long)]
-        column_names: Option<String>,
-
-        /// Output directory
-        #[arg(short, long, default_value = ".")]
-        out: PathBuf,
-    },
-
+    Munge(MungeArgs),
     /// Run multivariate LD Score Regression
-    Ldsc {
-        /// Munged summary statistics files
-        #[arg(short, long, num_args = 1..)]
-        traits: Vec<PathBuf>,
-
-        /// Sample prevalences (comma-separated, NA for continuous)
-        #[arg(long)]
-        sample_prev: Option<String>,
-
-        /// Population prevalences (comma-separated, NA for continuous)
-        #[arg(long)]
-        pop_prev: Option<String>,
-
-        /// LD score directory
-        #[arg(long)]
-        ld: PathBuf,
-
-        /// Weight LD score directory
-        #[arg(long)]
-        wld: Option<PathBuf>,
-
-        /// Number of jackknife blocks
-        #[arg(long, default_value = "200")]
-        n_blocks: usize,
-
-        /// Maximum chi-square for SNP filtering (default: auto = 0.001*max_N or 80)
-        #[arg(long)]
-        chisq_max: Option<f64>,
-
-        /// Number of chromosomes (default: 22)
-        #[arg(long, default_value = "22")]
-        chr: usize,
-
-        /// Chromosome selection: "all", "odd", "even", or comma-separated list (e.g., "1,3,5")
-        #[arg(long, default_value = "all")]
-        select: String,
-
-        /// Return standardized genetic correlation matrix
-        #[arg(long)]
-        stand: bool,
-
-        /// Output file (JSON)
-        #[arg(short, long, default_value = "ldsc_result.json")]
-        out: PathBuf,
-    },
-
+    Ldsc(LdscArgs),
     /// Fit structural equation model
     #[command(name = "usermodel")]
-    Sem {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Model specification (lavaan syntax)
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Model specification file
-        #[arg(long)]
-        model_file: Option<PathBuf>,
-
-        /// Estimation method (DWLS or ML)
-        #[arg(long, default_value = "DWLS")]
-        estimation: String,
-
-        /// Standardize latent variables (fix first loading to free, set variance to 1)
-        #[arg(long)]
-        std_lv: bool,
-
-        /// Auto-add lower bounds on residual variances and retry if model fails to converge
-        #[arg(long)]
-        fix_resid: bool,
-
-        /// Compute Q_Factor heterogeneity test for cross-factor indicator pairs
-        #[arg(long)]
-        q_factor: bool,
-
-        /// Output file
-        #[arg(short, long, default_value = "sem_result.tsv")]
-        out: PathBuf,
-    },
-
+    Sem(SemArgs),
     /// Merge GWAS summary statistics for multivariate GWAS
-    Sumstats {
-        /// Input GWAS summary statistics files
-        #[arg(short, long, num_args = 1..)]
-        files: Vec<PathBuf>,
-
-        /// Reference panel file (e.g., w_hm3.snplist or reference.1000G.maf.0.005.txt)
-        #[arg(long, name = "ref")]
-        ref_file: PathBuf,
-
-        /// Trait names
-        #[arg(long, num_args = 1..)]
-        trait_names: Option<Vec<String>>,
-
-        /// INFO score filter threshold
-        #[arg(long, default_value = "0.6")]
-        info_filter: f64,
-
-        /// MAF filter threshold
-        #[arg(long, default_value = "0.01")]
-        maf_filter: f64,
-
-        /// Keep indels (multi-character alleles)
-        #[arg(long)]
-        keep_indel: bool,
-
-        /// Output file
-        #[arg(short, long, default_value = "merged_sumstats.tsv")]
-        out: PathBuf,
-    },
-
+    Sumstats(SumstatsArgs),
     /// Fit common factor model (auto-generated 1-factor CFA)
-    CommonFactor {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Estimation method (DWLS or ML)
-        #[arg(long, default_value = "DWLS")]
-        estimation: String,
-
-        /// Output file
-        #[arg(short, long, default_value = "commonfactor_result.tsv")]
-        out: PathBuf,
-    },
-
+    CommonFactor(CommonFactorArgs),
     /// Run multivariate GWAS
     #[command(name = "userGWAS")]
-    Gwas {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Merged summary statistics file
-        #[arg(long)]
-        sumstats: PathBuf,
-
-        /// Model specification
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Model specification file
-        #[arg(long)]
-        model_file: Option<PathBuf>,
-
-        /// Estimation method
-        #[arg(long, default_value = "DWLS")]
-        estimation: String,
-
-        /// Genomic control mode (conservative, standard, none)
-        #[arg(long, default_value = "standard")]
-        gc: String,
-
-        /// Number of threads
-        #[arg(long)]
-        threads: Option<usize>,
-
-        /// Standardize latent variables
-        #[arg(long)]
-        std_lv: bool,
-
-        /// Filter output to specific parameters (comma-separated, e.g., "F1~SNP,F2~SNP")
-        #[arg(long)]
-        sub: Option<String>,
-
-        /// Log warnings when covariance matrix requires smoothing
-        #[arg(long)]
-        smooth_check: bool,
-
-        /// Compute Q_SNP heterogeneity statistic per SNP
-        #[arg(long)]
-        q_snp: bool,
-
-        /// Fix measurement model parameters from baseline fit (estimate only SNP paths)
-        #[arg(long)]
-        fix_measurement: bool,
-
-        /// Run in TWAS mode (input uses Gene/Panel/HSQ instead of SNP/A1/A2/MAF)
-        #[arg(long)]
-        twas: bool,
-
-        /// Output file
-        #[arg(short, long, default_value = "gwas_result.tsv")]
-        out: PathBuf,
-    },
-
+    Gwas(GwasArgs),
     /// Run common factor GWAS (auto-generated 1-factor model per SNP)
     #[command(name = "commonfactorGWAS")]
-    CommonfactorGwas {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Merged summary statistics file
-        #[arg(long)]
-        sumstats: PathBuf,
-
-        /// Genomic control mode (conservative, standard, none)
-        #[arg(long, default_value = "standard")]
-        gc: String,
-
-        /// Number of threads
-        #[arg(long)]
-        threads: Option<usize>,
-
-        /// Output file
-        #[arg(short, long, default_value = "commonfactor_gwas_result.tsv")]
-        out: PathBuf,
-    },
-
+    CommonfactorGwas(CommonfactorGwasArgs),
     /// Auto-generate model syntax from factor loadings
     #[command(name = "write.model")]
-    WriteModel {
-        /// TSV file of factor loadings (rows=phenotypes, cols=factors)
-        #[arg(long)]
-        loadings: PathBuf,
-
-        /// Phenotype / variable names
-        #[arg(long, num_args = 1..)]
-        names: Vec<String>,
-
-        /// Minimum absolute loading to include an indicator
-        #[arg(long, default_value = "0.3")]
-        cutoff: f64,
-
-        /// Fix residual variances with positivity constraints
-        #[arg(long)]
-        fix_resid: bool,
-
-        /// Generate bifactor model
-        #[arg(long)]
-        bifactor: bool,
-
-        /// Output file
-        #[arg(short, long, default_value = "model.txt")]
-        out: PathBuf,
-    },
-
+    WriteModel(WriteModelArgs),
     /// Parallel analysis to determine number of factors
     #[command(name = "paLDSC")]
-    ParallelAnalysis {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Number of Monte Carlo simulations
-        #[arg(long, default_value = "500")]
-        n_sim: usize,
-
-        /// Output file
-        #[arg(short, long, default_value = "pa_result.tsv")]
-        out: PathBuf,
-    },
-
+    ParallelAnalysis(ParallelAnalysisArgs),
     /// Enrichment analysis using stratified LDSC results
-    Enrich {
-        /// JSON file with enrichment input data
-        #[arg(long)]
-        input: PathBuf,
-
-        /// Output file
-        #[arg(short, long, default_value = "enrich_result.tsv")]
-        out: PathBuf,
-    },
-
+    Enrich(EnrichArgs),
     /// Run stratified (partitioned) LD Score Regression
-    SLdsc {
-        /// Munged summary statistics files
-        #[arg(short, long, num_args = 1..)]
-        traits: Vec<PathBuf>,
-
-        /// Sample prevalences (comma-separated, NA for continuous)
-        #[arg(long)]
-        sample_prev: Option<String>,
-
-        /// Population prevalences (comma-separated, NA for continuous)
-        #[arg(long)]
-        pop_prev: Option<String>,
-
-        /// Annotation LD score directory
-        #[arg(long)]
-        ld: PathBuf,
-
-        /// Weight LD score directory
-        #[arg(long)]
-        wld: Option<PathBuf>,
-
-        /// Number of jackknife blocks
-        #[arg(long, default_value = "200")]
-        n_blocks: usize,
-
-        /// Number of chromosomes (default: 22)
-        #[arg(long, default_value = "22")]
-        chr: usize,
-
-        /// Chromosome selection: "all", "odd", "even", or comma-separated list
-        #[arg(long, default_value = "all")]
-        select: String,
-
-        /// Output file (JSON)
-        #[arg(short, long, default_value = "s_ldsc_result.json")]
-        out: PathBuf,
-    },
-
+    SLdsc(SLdscArgs),
     /// Compute model-implied genetic correlation matrix
-    Rgmodel {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Estimation method (DWLS or ML)
-        #[arg(long, default_value = "DWLS")]
-        estimation: String,
-
-        /// User-specified model (lavaan syntax). If omitted, fits common factor.
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Standardize latent variables
-        #[arg(long, default_value_t = false)]
-        std_lv: bool,
-
-        /// Output file
-        #[arg(short, long, default_value = "rgmodel_result.tsv")]
-        out: PathBuf,
-    },
-
+    Rgmodel(RgmodelArgs),
     /// Joint analysis of multiple SNPs with LD
     #[command(name = "multiSNP")]
-    MultiSnp {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Tab-delimited file with columns: SNP, A1, A2, MAF, beta.T1, se.T1, ...
-        #[arg(long)]
-        sumstats: PathBuf,
-
-        /// LD matrix file (tab-delimited, symmetric, SNP x SNP correlations)
-        #[arg(long)]
-        ld_matrix: PathBuf,
-
-        /// Model specification
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Model specification file
-        #[arg(long)]
-        model_file: Option<PathBuf>,
-
-        /// Estimation method
-        #[arg(long, default_value = "DWLS")]
-        estimation: String,
-
-        /// Output file
-        #[arg(short, long, default_value = "multi_snp_result.tsv")]
-        out: PathBuf,
-    },
-
+    MultiSnp(MultiSnpArgs),
     /// Simulate GWAS summary statistics
     #[command(name = "simLDSC")]
-    Simulate {
-        /// LDSC result JSON file
-        #[arg(long)]
-        covstruc: PathBuf,
-
-        /// Comma-separated per-trait sample sizes
-        #[arg(long)]
-        n_per_trait: String,
-
-        /// LD score directory
-        #[arg(long)]
-        ld: PathBuf,
-
-        /// Output file
-        #[arg(short, long, default_value = "simulated_sumstats.tsv")]
-        out: PathBuf,
-    },
-
+    Simulate(SimulateArgs),
     /// High-Definition Likelihood estimation of genetic covariance
-    Hdl {
-        /// Munged summary statistics files
-        #[arg(short, long, num_args = 1..)]
-        traits: Vec<PathBuf>,
-
-        /// Sample prevalences (comma-separated, NA for continuous)
-        #[arg(long)]
-        sample_prev: Option<String>,
-
-        /// Population prevalences (comma-separated, NA for continuous)
-        #[arg(long)]
-        pop_prev: Option<String>,
-
-        /// LD reference panel directory (text format)
-        #[arg(long)]
-        ld_path: PathBuf,
-
-        /// Reference panel sample size (default: 335265 for UKB)
-        #[arg(long, default_value = "335265")]
-        n_ref: f64,
-
-        /// Method: piecewise or jackknife
-        #[arg(long, default_value = "piecewise")]
-        method: String,
-
-        /// Output file (JSON)
-        #[arg(short, long, default_value = "hdl_result.json")]
-        out: PathBuf,
-    },
-
+    Hdl(HdlArgs),
     /// Generalized Least Squares regression on genetic parameters
     #[command(name = "summaryGLS")]
-    SummaryGls {
-        /// TSV file with predictor matrix X (rows=observations, cols=predictors)
-        #[arg(long)]
-        x: PathBuf,
+    SummaryGls(SummaryGlsArgs),
+}
 
-        /// TSV file with outcome vector Y (one value per line)
-        #[arg(long)]
-        y: PathBuf,
+#[derive(Args)]
+struct MungeArgs {
+    #[arg(short, long, num_args = 1..)]
+    files: Vec<PathBuf>,
+    #[arg(long)]
+    hm3: PathBuf,
+    #[arg(long, num_args = 1..)]
+    trait_names: Option<Vec<String>>,
+    #[arg(long, default_value = "0.9")]
+    info_filter: f64,
+    #[arg(long, default_value = "0.01")]
+    maf_filter: f64,
+    #[arg(short, long)]
+    n: Option<f64>,
+    #[arg(long)]
+    column_names: Option<String>,
+    #[arg(short, long, default_value = ".")]
+    out: PathBuf,
+}
 
-        /// TSV file with covariance matrix V (square, same rows as Y)
-        #[arg(long)]
-        v: PathBuf,
+#[derive(Args)]
+struct LdscArgs {
+    #[arg(short, long, num_args = 1..)]
+    traits: Vec<PathBuf>,
+    #[arg(long)]
+    sample_prev: Option<String>,
+    #[arg(long)]
+    pop_prev: Option<String>,
+    #[arg(long)]
+    ld: PathBuf,
+    #[arg(long)]
+    wld: Option<PathBuf>,
+    #[arg(long, default_value = "200")]
+    n_blocks: usize,
+    #[arg(long)]
+    chisq_max: Option<f64>,
+    #[arg(long, default_value = "22")]
+    chr: usize,
+    #[arg(long, default_value = "all")]
+    select: String,
+    #[arg(long)]
+    stand: bool,
+    #[arg(short, long, default_value = "ldsc_result.json")]
+    out: PathBuf,
+}
 
-        /// Add intercept column (default true)
-        #[arg(long, default_value = "true")]
-        intercept: bool,
+#[derive(Args)]
+struct SemArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long)]
+    model_file: Option<PathBuf>,
+    #[arg(long, default_value = "DWLS")]
+    estimation: String,
+    #[arg(long)]
+    std_lv: bool,
+    #[arg(long)]
+    fix_resid: bool,
+    #[arg(long)]
+    q_factor: bool,
+    #[arg(short, long, default_value = "sem_result.tsv")]
+    out: PathBuf,
+}
 
-        /// Output file
-        #[arg(short, long, default_value = "gls_result.tsv")]
-        out: PathBuf,
-    },
+#[derive(Args)]
+struct SumstatsArgs {
+    #[arg(short, long, num_args = 1..)]
+    files: Vec<PathBuf>,
+    #[arg(long, name = "ref")]
+    ref_file: PathBuf,
+    #[arg(long, num_args = 1..)]
+    trait_names: Option<Vec<String>>,
+    #[arg(long, default_value = "0.6")]
+    info_filter: f64,
+    #[arg(long, default_value = "0.01")]
+    maf_filter: f64,
+    #[arg(long)]
+    keep_indel: bool,
+    #[arg(short, long, default_value = "merged_sumstats.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct CommonFactorArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long, default_value = "DWLS")]
+    estimation: String,
+    #[arg(short, long, default_value = "commonfactor_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct GwasArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long)]
+    sumstats: PathBuf,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long)]
+    model_file: Option<PathBuf>,
+    #[arg(long, default_value = "DWLS")]
+    estimation: String,
+    #[arg(long, default_value = "standard")]
+    gc: String,
+    #[arg(long)]
+    threads: Option<usize>,
+    #[arg(long)]
+    std_lv: bool,
+    #[arg(long)]
+    sub: Option<String>,
+    #[arg(long)]
+    smooth_check: bool,
+    #[arg(long)]
+    q_snp: bool,
+    #[arg(long)]
+    fix_measurement: bool,
+    #[arg(long)]
+    twas: bool,
+    #[arg(short, long, default_value = "gwas_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct CommonfactorGwasArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long)]
+    sumstats: PathBuf,
+    #[arg(long, default_value = "standard")]
+    gc: String,
+    #[arg(long)]
+    threads: Option<usize>,
+    #[arg(short, long, default_value = "commonfactor_gwas_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct WriteModelArgs {
+    #[arg(long)]
+    loadings: PathBuf,
+    #[arg(long, num_args = 1..)]
+    names: Vec<String>,
+    #[arg(long, default_value = "0.3")]
+    cutoff: f64,
+    #[arg(long)]
+    fix_resid: bool,
+    #[arg(long)]
+    bifactor: bool,
+    #[arg(short, long, default_value = "model.txt")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct ParallelAnalysisArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long, default_value = "500")]
+    n_sim: usize,
+    #[arg(short, long, default_value = "pa_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct EnrichArgs {
+    #[arg(long)]
+    input: PathBuf,
+    #[arg(short, long, default_value = "enrich_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct SLdscArgs {
+    #[arg(short, long, num_args = 1..)]
+    traits: Vec<PathBuf>,
+    #[arg(long)]
+    sample_prev: Option<String>,
+    #[arg(long)]
+    pop_prev: Option<String>,
+    #[arg(long)]
+    ld: PathBuf,
+    #[arg(long)]
+    wld: Option<PathBuf>,
+    #[arg(long, default_value = "200")]
+    n_blocks: usize,
+    #[arg(long, default_value = "22")]
+    chr: usize,
+    #[arg(long, default_value = "all")]
+    select: String,
+    #[arg(short, long, default_value = "s_ldsc_result.json")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct RgmodelArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long, default_value = "DWLS")]
+    estimation: String,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long, default_value_t = false)]
+    std_lv: bool,
+    #[arg(short, long, default_value = "rgmodel_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct MultiSnpArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long)]
+    sumstats: PathBuf,
+    #[arg(long)]
+    ld_matrix: PathBuf,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long)]
+    model_file: Option<PathBuf>,
+    #[arg(long, default_value = "DWLS")]
+    estimation: String,
+    #[arg(short, long, default_value = "multi_snp_result.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct SimulateArgs {
+    #[arg(long)]
+    covstruc: PathBuf,
+    #[arg(long)]
+    n_per_trait: String,
+    #[arg(long)]
+    ld: PathBuf,
+    #[arg(short, long, default_value = "simulated_sumstats.tsv")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct HdlArgs {
+    #[arg(short, long, num_args = 1..)]
+    traits: Vec<PathBuf>,
+    #[arg(long)]
+    sample_prev: Option<String>,
+    #[arg(long)]
+    pop_prev: Option<String>,
+    #[arg(long)]
+    ld_path: PathBuf,
+    #[arg(long, default_value = "335265")]
+    n_ref: f64,
+    #[arg(long, default_value = "piecewise")]
+    method: String,
+    #[arg(short, long, default_value = "hdl_result.json")]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct SummaryGlsArgs {
+    #[arg(long)]
+    x: PathBuf,
+    #[arg(long)]
+    y: PathBuf,
+    #[arg(long)]
+    v: PathBuf,
+    #[arg(long, default_value = "true")]
+    intercept: bool,
+    #[arg(short, long, default_value = "gls_result.tsv")]
+    out: PathBuf,
 }
 
 fn main() -> Result<()> {
@@ -495,239 +336,34 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Munge {
-            files,
-            hm3,
-            trait_names,
-            info_filter,
-            maf_filter,
-            n,
-            column_names,
-            out,
-        } => run_munge(
-            &files,
-            &hm3,
-            trait_names.as_deref(),
-            info_filter,
-            maf_filter,
-            n,
-            column_names,
-            &out,
-        ),
-        Commands::Ldsc {
-            traits,
-            sample_prev,
-            pop_prev,
-            ld,
-            wld,
-            n_blocks,
-            chisq_max,
-            chr,
-            select,
-            stand,
-            out,
-        } => run_ldsc(
-            &traits,
-            sample_prev,
-            pop_prev,
-            &ld,
-            wld,
-            n_blocks,
-            chisq_max,
-            chr,
-            &select,
-            stand,
-            &out,
-        ),
-        Commands::Sem {
-            covstruc,
-            model,
-            model_file,
-            estimation,
-            std_lv,
-            fix_resid,
-            q_factor,
-            out,
-        } => run_sem(
-            &covstruc,
-            model,
-            model_file,
-            &estimation,
-            std_lv,
-            fix_resid,
-            q_factor,
-            &out,
-        ),
-        Commands::Sumstats {
-            files,
-            ref_file,
-            trait_names,
-            info_filter,
-            maf_filter,
-            keep_indel,
-            out,
-        } => run_sumstats(
-            &files,
-            &ref_file,
-            trait_names,
-            info_filter,
-            maf_filter,
-            keep_indel,
-            &out,
-        ),
-        Commands::CommonFactor {
-            covstruc,
-            estimation,
-            out,
-        } => run_commonfactor_cmd(&covstruc, &estimation, &out),
-        Commands::Gwas {
-            covstruc,
-            sumstats,
-            model,
-            model_file,
-            estimation,
-            gc,
-            threads,
-            std_lv,
-            sub,
-            smooth_check,
-            q_snp,
-            fix_measurement,
-            twas,
-            out,
-        } => run_gwas(
-            &covstruc,
-            &sumstats,
-            model,
-            model_file,
-            &estimation,
-            &gc,
-            threads,
-            std_lv,
-            sub,
-            smooth_check,
-            q_snp,
-            fix_measurement,
-            twas,
-            &out,
-        ),
-        Commands::CommonfactorGwas {
-            covstruc,
-            sumstats,
-            gc,
-            threads,
-            out,
-        } => run_commonfactor_gwas(&covstruc, &sumstats, &gc, threads, &out),
-        Commands::WriteModel {
-            loadings,
-            names,
-            cutoff,
-            fix_resid,
-            bifactor,
-            out,
-        } => run_write_model(&loadings, &names, cutoff, fix_resid, bifactor, &out),
-        Commands::ParallelAnalysis {
-            covstruc,
-            n_sim,
-            out,
-        } => run_parallel_analysis(&covstruc, n_sim, &out),
-        Commands::SLdsc {
-            traits,
-            sample_prev,
-            pop_prev,
-            ld,
-            wld,
-            n_blocks,
-            chr,
-            select,
-            out,
-        } => run_s_ldsc(
-            &traits,
-            sample_prev,
-            pop_prev,
-            &ld,
-            wld,
-            n_blocks,
-            chr,
-            &select,
-            &out,
-        ),
-        Commands::Enrich { input, out } => run_enrich(&input, &out),
-        Commands::Rgmodel {
-            covstruc,
-            estimation,
-            model,
-            std_lv,
-            out,
-        } => run_rgmodel_cmd(&covstruc, &estimation, model.as_deref(), std_lv, &out),
-        Commands::MultiSnp {
-            covstruc,
-            sumstats,
-            ld_matrix,
-            model,
-            model_file,
-            estimation,
-            out,
-        } => run_multi_snp_cmd(
-            &covstruc,
-            &sumstats,
-            &ld_matrix,
-            model,
-            model_file,
-            &estimation,
-            &out,
-        ),
-        Commands::Simulate {
-            covstruc,
-            n_per_trait,
-            ld,
-            out,
-        } => run_simulate(&covstruc, &n_per_trait, &ld, &out),
-        Commands::Hdl {
-            traits,
-            sample_prev,
-            pop_prev,
-            ld_path,
-            n_ref,
-            method,
-            out,
-        } => run_hdl(
-            &traits,
-            sample_prev,
-            pop_prev,
-            &ld_path,
-            n_ref,
-            &method,
-            &out,
-        ),
-        Commands::SummaryGls {
-            x,
-            y,
-            v,
-            intercept,
-            out,
-        } => run_summary_gls(&x, &y, &v, intercept, &out),
+        Commands::Munge(args) => run_munge(args),
+        Commands::Ldsc(args) => run_ldsc(args),
+        Commands::Sem(args) => run_sem(args),
+        Commands::Sumstats(args) => run_sumstats(args),
+        Commands::CommonFactor(args) => run_commonfactor_cmd(args),
+        Commands::Gwas(args) => run_gwas(args),
+        Commands::CommonfactorGwas(args) => run_commonfactor_gwas(args),
+        Commands::WriteModel(args) => run_write_model(args),
+        Commands::ParallelAnalysis(args) => run_parallel_analysis(args),
+        Commands::SLdsc(args) => run_s_ldsc(args),
+        Commands::Enrich(args) => run_enrich(args),
+        Commands::Rgmodel(args) => run_rgmodel_cmd(args),
+        Commands::MultiSnp(args) => run_multi_snp_cmd(args),
+        Commands::Simulate(args) => run_simulate(args),
+        Commands::Hdl(args) => run_hdl(args),
+        Commands::SummaryGls(args) => run_summary_gls(args),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_munge(
-    files: &[PathBuf],
-    hm3: &Path,
-    trait_names: Option<&[String]>,
-    info_filter: f64,
-    maf_filter: f64,
-    n_override: Option<f64>,
-    column_names: Option<String>,
-    out_dir: &Path,
-) -> Result<()> {
+fn run_munge(args: MungeArgs) -> Result<()> {
     // Read reference
-    eprintln!("Reading reference panel: {}", hm3.display());
-    let reference = munge::read_reference(hm3).context("failed to read HapMap3 reference")?;
+    eprintln!("Reading reference panel: {}", args.hm3.display());
+    let reference =
+        munge::read_reference(&args.hm3).context("failed to read HapMap3 reference")?;
     eprintln!("Loaded {} reference SNPs", reference.len());
 
     // Parse column name overrides from comma-separated KEY=VALUE pairs
-    let column_overrides = column_names.map(|s| {
+    let column_overrides = args.column_names.map(|s| {
         s.split(',')
             .filter_map(|pair| {
                 let mut parts = pair.splitn(2, '=');
@@ -743,20 +379,21 @@ fn run_munge(
     });
 
     let config = munge::MungeConfig {
-        info_filter,
-        maf_filter,
-        n_override,
+        info_filter: args.info_filter,
+        maf_filter: args.maf_filter,
+        n_override: args.n,
         column_overrides,
     };
 
-    for (i, file) in files.iter().enumerate() {
+    let trait_names = args.trait_names.as_deref();
+    for (i, file) in args.files.iter().enumerate() {
         let trait_name = trait_names
             .and_then(|names| names.get(i))
             .map(|s| s.as_str())
             .or_else(|| file.file_stem().and_then(|s| s.to_str()))
             .unwrap_or("trait");
 
-        let out_path = out_dir.join(format!("{trait_name}.sumstats.gz"));
+        let out_path = args.out.join(format!("{trait_name}.sumstats.gz"));
         eprintln!("Munging: {} -> {}", file.display(), out_path.display());
 
         munge::munge_and_write(file, &reference, &config, &out_path)
@@ -767,18 +404,9 @@ fn run_munge(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_sumstats(
-    files: &[PathBuf],
-    ref_file: &Path,
-    trait_names: Option<Vec<String>>,
-    info_filter: f64,
-    maf_filter: f64,
-    keep_indel: bool,
-    out: &Path,
-) -> Result<()> {
-    let names: Vec<String> = trait_names.unwrap_or_else(|| {
-        files
+fn run_sumstats(args: SumstatsArgs) -> Result<()> {
+    let names: Vec<String> = args.trait_names.unwrap_or_else(|| {
+        args.files
             .iter()
             .map(|f| {
                 f.file_stem()
@@ -789,46 +417,33 @@ fn run_sumstats(
             .collect()
     });
 
-    let k = files.len();
+    let k = args.files.len();
     let config = gsem::sumstats::SumstatsConfig {
-        info_filter,
-        maf_filter,
+        info_filter: args.info_filter,
+        maf_filter: args.maf_filter,
         n_overrides: vec![None; k],
         se_logit: vec![false; k],
         ols: vec![false; k],
         linprob: vec![false; k],
-        keep_indel,
+        keep_indel: args.keep_indel,
         keep_ambig: false,
         beta_overrides: Vec::new(),
         direct_filter: false,
     };
 
-    let file_refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+    let file_refs: Vec<&Path> = args.files.iter().map(|p| p.as_path()).collect();
     eprintln!("Merging {} GWAS files...", k);
-    gsem::sumstats::merge_sumstats(&file_refs, ref_file, &names, &config, out)?;
+    gsem::sumstats::merge_sumstats(&file_refs, &args.ref_file, &names, &config, &args.out)?;
     eprintln!("Done.");
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_ldsc(
-    traits: &[PathBuf],
-    sample_prev: Option<String>,
-    pop_prev: Option<String>,
-    ld: &Path,
-    wld: Option<PathBuf>,
-    n_blocks: usize,
-    chisq_max: Option<f64>,
-    chr: usize,
-    select: &str,
-    stand: bool,
-    out: &Path,
-) -> Result<()> {
-    eprintln!("Reading {} trait files...", traits.len());
+fn run_ldsc(args: LdscArgs) -> Result<()> {
+    eprintln!("Reading {} trait files...", args.traits.len());
 
     // Read summary stats
     let mut trait_data = Vec::new();
-    for path in traits {
+    for path in &args.traits {
         let records = gwas_reader::read_sumstats(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let n_snps = records.len();
@@ -844,9 +459,9 @@ fn run_ldsc(
     }
 
     // Read LD scores
-    let wld_dir = wld.as_deref().unwrap_or(ld);
-    let chromosomes = parse_chromosome_selection(select, chr);
-    let ld_data = gsem::io::ld_reader::read_ld_scores(ld, wld_dir, &chromosomes)
+    let wld_dir = args.wld.as_deref().unwrap_or(&args.ld);
+    let chromosomes = parse_chromosome_selection(&args.select, args.chr);
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&args.ld, wld_dir, &chromosomes)
         .context("failed to read LD scores")?;
 
     eprintln!(
@@ -856,16 +471,16 @@ fn run_ldsc(
     );
 
     // Parse prevalences
-    let k = traits.len();
-    let sp = parse_prevalences(&sample_prev, k);
-    let pp = parse_prevalences(&pop_prev, k);
+    let k = args.traits.len();
+    let sp = parse_prevalences(&args.sample_prev, k);
+    let pp = parse_prevalences(&args.pop_prev, k);
 
     let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
     let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
 
     let config = gsem_ldsc::LdscConfig {
-        n_blocks,
-        chisq_max,
+        n_blocks: args.n_blocks,
+        chisq_max: args.chisq_max,
     };
 
     let n_pairs = k * (k + 1) / 2;
@@ -892,9 +507,10 @@ fn run_ldsc(
 
     // Write JSON output
     let json = result.to_json_string()?;
-    std::fs::write(out, &json).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &json)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("LDSC complete. Results written to {}", out.display());
+    eprintln!("LDSC complete. Results written to {}", args.out.display());
 
     // Print S matrix
     let k = result.s.nrows();
@@ -914,7 +530,7 @@ fn run_ldsc(
         eprintln!("  {}", row.join(" "));
     }
 
-    if stand {
+    if args.stand {
         eprintln!("\nStandardized genetic correlation matrix (S_Stand):");
         for i in 0..k {
             let row: Vec<String> = (0..k)
@@ -935,23 +551,12 @@ fn run_ldsc(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_s_ldsc(
-    traits: &[PathBuf],
-    sample_prev: Option<String>,
-    pop_prev: Option<String>,
-    ld: &Path,
-    wld: Option<PathBuf>,
-    n_blocks: usize,
-    chr: usize,
-    select: &str,
-    out: &Path,
-) -> Result<()> {
-    eprintln!("Reading {} trait files...", traits.len());
+fn run_s_ldsc(args: SLdscArgs) -> Result<()> {
+    eprintln!("Reading {} trait files...", args.traits.len());
 
     // Read summary stats
     let mut trait_data = Vec::new();
-    for path in traits {
+    for path in &args.traits {
         let records = gwas_reader::read_sumstats(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let n_snps = records.len();
@@ -967,9 +572,9 @@ fn run_s_ldsc(
     }
 
     // Read annotation LD scores
-    let wld_dir = wld.as_deref().unwrap_or(ld);
-    let chromosomes = parse_chromosome_selection(select, chr);
-    let annot_data = gsem_ldsc::annot_reader::read_annot_ld_scores(ld, wld_dir, &chromosomes)
+    let wld_dir = args.wld.as_deref().unwrap_or(&args.ld);
+    let chromosomes = parse_chromosome_selection(&args.select, args.chr);
+    let annot_data = gsem_ldsc::annot_reader::read_annot_ld_scores(&args.ld, wld_dir, &chromosomes)
         .context("failed to read annotation LD scores")?;
 
     eprintln!(
@@ -980,11 +585,11 @@ fn run_s_ldsc(
     );
 
     // Parse prevalences
-    let k = traits.len();
-    let sp = parse_prevalences(&sample_prev, k);
-    let pp = parse_prevalences(&pop_prev, k);
+    let k = args.traits.len();
+    let sp = parse_prevalences(&args.sample_prev, k);
+    let pp = parse_prevalences(&args.pop_prev, k);
 
-    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks, rm_flank: false, flank_kb: 500 };
+    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks: args.n_blocks, rm_flank: false, flank_kb: 500 };
 
     eprintln!("Running stratified LDSC...");
     let result = gsem_ldsc::stratified::s_ldsc(
@@ -1003,11 +608,12 @@ fn run_s_ldsc(
 
     // Write JSON output
     let json = result.to_json_string()?;
-    std::fs::write(out, &json).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &json)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
     eprintln!(
         "Stratified LDSC complete. Results written to {}",
-        out.display()
+        args.out.display()
     );
 
     // Print summary
@@ -1037,31 +643,23 @@ fn run_s_ldsc(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_sem(
-    covstruc: &Path,
-    model: Option<String>,
-    model_file: Option<PathBuf>,
-    estimation: &str,
-    std_lv: bool,
-    fix_resid: bool,
-    q_factor: bool,
-    out: &Path,
-) -> Result<()> {
+fn run_sem(args: SemArgs) -> Result<()> {
     // Read LDSC result
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
     // Get model string
-    let model_str = if let Some(m) = model {
+    let model_str = if let Some(m) = args.model {
         m
-    } else if let Some(f) = model_file {
+    } else if let Some(f) = args.model_file {
         std::fs::read_to_string(&f).with_context(|| format!("failed to read {}", f.display()))?
     } else {
         anyhow::bail!("must provide --model or --model-file");
     };
 
+    let estimation = &args.estimation;
+    let std_lv = args.std_lv;
     eprintln!("Fitting SEM model (estimation={estimation}, std_lv={std_lv})...");
 
     // Parse and fit
@@ -1082,7 +680,7 @@ fn run_sem(
 
     // If model failed to converge and fix_resid is set, add lower bounds on
     // residual variances (op == "~~" && lhs == rhs) and retry.
-    let fit = if !fit.converged && fix_resid {
+    let fit = if !fit.converged && args.fix_resid {
         eprintln!(
             "Model did not converge; retrying with residual variance lower bounds (fix_resid)..."
         );
@@ -1122,7 +720,7 @@ fn run_sem(
     }
 
     // Q_Factor heterogeneity test
-    if q_factor {
+    if args.q_factor {
         let sigma_hat = sem_model.implied_cov();
         let fi = gsem_sem::q_factor::factor_indicators(&pt, &obs_names);
         if fi.len() >= 2 {
@@ -1131,7 +729,7 @@ fn run_sem(
                 &sigma_hat,
                 &ldsc_result.v,
                 &fi,
-            );
+            )?;
             if !q_results.is_empty() {
                 output.push_str("\n# Q_Factor heterogeneity test\n");
                 output.push_str("factor1\tfactor2\tQ_chisq\tQ_df\tQ_pval\n");
@@ -1151,31 +749,16 @@ fn run_sem(
         }
     }
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Results written to {}", out.display());
+    eprintln!("Results written to {}", args.out.display());
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_gwas(
-    covstruc: &Path,
-    sumstats: &Path,
-    model: Option<String>,
-    model_file: Option<PathBuf>,
-    estimation: &str,
-    gc: &str,
-    threads: Option<usize>,
-    std_lv: bool,
-    sub: Option<String>,
-    smooth_check: bool,
-    _q_snp: bool,
-    _fix_measurement: bool,
-    twas: bool,
-    out: &Path,
-) -> Result<()> {
+fn run_gwas(args: GwasArgs) -> Result<()> {
     // Set thread count
-    if let Some(t) = threads {
+    if let Some(t) = args.threads {
         rayon::ThreadPoolBuilder::new()
             .num_threads(t)
             .build_global()
@@ -1183,21 +766,21 @@ fn run_gwas(
     }
 
     // Read LDSC result
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
     // Get model string
-    let model_str = if let Some(m) = model {
+    let model_str = if let Some(m) = args.model {
         m
-    } else if let Some(f) = model_file {
+    } else if let Some(f) = args.model_file {
         std::fs::read_to_string(&f)
             .with_context(|| format!("failed to read model file {}", f.display()))?
     } else {
         anyhow::bail!("must provide --model or --model-file");
     };
 
-    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().expect("infallible");
+    let gc_mode: gsem::gwas::gc_correction::GcMode = args.gc.parse().expect("infallible");
     let k = ldsc_result.s.nrows();
 
     // Clamp intercept diagonals to >= 1 (matching R)
@@ -1209,48 +792,47 @@ fn run_gwas(
     }
 
     // Parse --sub filter list
-    let sub_filters: Option<Vec<String>> = sub.map(|s| {
+    let sub_filters: Option<Vec<String>> = args.sub.map(|s| {
         s.split(',')
             .map(|entry| entry.trim().to_string())
             .filter(|entry| !entry.is_empty())
             .collect()
     });
 
-    if twas {
+    if args.twas {
         run_gwas_twas(
-            sumstats,
+            &args.sumstats,
             &model_str,
-            estimation,
-            gc,
+            &args.estimation,
+            &args.gc,
             gc_mode,
             k,
-            std_lv,
-            smooth_check,
+            args.std_lv,
+            args.smooth_check,
             &ldsc_result,
             &i_ld,
             &sub_filters,
-            out,
+            &args.out,
         )
     } else {
         run_gwas_snp(
-            sumstats,
+            &args.sumstats,
             &model_str,
-            estimation,
-            gc,
+            &args.estimation,
+            &args.gc,
             gc_mode,
             k,
-            std_lv,
-            smooth_check,
+            args.std_lv,
+            args.smooth_check,
             &ldsc_result,
             &i_ld,
             &sub_filters,
-            out,
+            &args.out,
         )
     }
 }
 
 /// Standard SNP-based GWAS path.
-#[allow(clippy::too_many_arguments)]
 fn run_gwas_snp(
     sumstats: &Path,
     model_str: &str,
@@ -1362,7 +944,6 @@ fn run_gwas_snp(
 /// - Uses HSQ (heritability of expression) as var_snp instead of 2*MAF*(1-MAF)
 /// - Replaces "SNP" with "Gene" in model syntax
 /// - Outputs Gene/Panel/HSQ columns instead of SNP column
-#[allow(clippy::too_many_arguments)]
 fn run_gwas_twas(
     sumstats: &Path,
     model_str: &str,
@@ -1469,11 +1050,12 @@ fn run_gwas_twas(
     Ok(())
 }
 
-fn run_commonfactor_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result<()> {
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+fn run_commonfactor_cmd(args: CommonFactorArgs) -> Result<()> {
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
+    let estimation = &args.estimation;
     eprintln!("Fitting common factor model (estimation={estimation})...");
 
     let result =
@@ -1504,21 +1086,16 @@ fn run_commonfactor_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result
         result.fit.srmr
     ));
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Results written to {}", out.display());
+    eprintln!("Results written to {}", args.out.display());
     Ok(())
 }
 
-fn run_commonfactor_gwas(
-    covstruc: &Path,
-    sumstats: &Path,
-    gc: &str,
-    threads: Option<usize>,
-    out: &Path,
-) -> Result<()> {
+fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
     // Set thread count
-    if let Some(t) = threads {
+    if let Some(t) = args.threads {
         rayon::ThreadPoolBuilder::new()
             .num_threads(t)
             .build_global()
@@ -1526,19 +1103,20 @@ fn run_commonfactor_gwas(
     }
 
     // Read LDSC result
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
-    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().expect("infallible");
+    let gc_mode: gsem::gwas::gc_correction::GcMode = args.gc.parse().expect("infallible");
     let k = ldsc_result.s.nrows();
 
     // Read merged sumstats
-    eprintln!("Reading merged sumstats: {}", sumstats.display());
-    let merged = gsem::io::sumstats_reader::read_merged_sumstats(sumstats)
-        .with_context(|| format!("failed to read {}", sumstats.display()))?;
+    eprintln!("Reading merged sumstats: {}", args.sumstats.display());
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(&args.sumstats)
+        .with_context(|| format!("failed to read {}", args.sumstats.display()))?;
 
     let n_snps = merged.snps.len();
+    let gc = &args.gc;
     eprintln!("Common factor GWAS: {n_snps} SNPs, {k} traits, gc={gc}");
 
     if merged.trait_names.len() != k {
@@ -1602,27 +1180,21 @@ fn run_commonfactor_gwas(
         }
     }
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
     let n_converged = results.iter().filter(|r| r.converged).count();
     eprintln!(
         "Common factor GWAS complete: {n_snps} SNPs, {n_converged} converged. Results: {}",
-        out.display()
+        args.out.display()
     );
     Ok(())
 }
 
-fn run_write_model(
-    loadings_path: &Path,
-    names: &[String],
-    cutoff: f64,
-    fix_resid: bool,
-    bifactor: bool,
-    out: &Path,
-) -> Result<()> {
+fn run_write_model(args: WriteModelArgs) -> Result<()> {
     // Read loadings TSV: rows are phenotypes, columns are factors, values are floats
-    let content = std::fs::read_to_string(loadings_path)
-        .with_context(|| format!("failed to read {}", loadings_path.display()))?;
+    let content = std::fs::read_to_string(&args.loadings)
+        .with_context(|| format!("failed to read {}", args.loadings.display()))?;
 
     let mut rows: Vec<Vec<f64>> = Vec::new();
     for line in content.lines() {
@@ -1649,27 +1221,31 @@ fn run_write_model(
     let n_cols = rows[0].len();
     let loadings = Mat::from_fn(n_rows, n_cols, |i, j| rows[i][j]);
 
+    let cutoff = args.cutoff;
+    let fix_resid = args.fix_resid;
+    let bifactor = args.bifactor;
     eprintln!(
         "Generating model from {}x{} loadings matrix (cutoff={cutoff}, fix_resid={fix_resid}, bifactor={bifactor})",
         n_rows, n_cols
     );
 
     let model_str =
-        gsem_sem::write_model::write_model(&loadings, names, cutoff, fix_resid, bifactor, false, false);
+        gsem_sem::write_model::write_model(&loadings, &args.names, cutoff, fix_resid, bifactor, false, false);
 
-    std::fs::write(out, &model_str)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &model_str)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Model written to {}", out.display());
+    eprintln!("Model written to {}", args.out.display());
     Ok(())
 }
 
-fn run_parallel_analysis(covstruc: &Path, n_sim: usize, out: &Path) -> Result<()> {
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+fn run_parallel_analysis(args: ParallelAnalysisArgs) -> Result<()> {
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
     let k = ldsc_result.s.nrows();
+    let n_sim = args.n_sim;
     eprintln!("Running parallel analysis ({k} traits, {n_sim} simulations)...");
 
     let result =
@@ -1689,16 +1265,17 @@ fn run_parallel_analysis(covstruc: &Path, n_sim: usize, out: &Path) -> Result<()
     }
     output.push_str(&format!("\n# n_factors={}\n", result.n_factors));
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Results written to {}", out.display());
+    eprintln!("Results written to {}", args.out.display());
     Ok(())
 }
 
-fn run_enrich(input: &Path, out: &Path) -> Result<()> {
+fn run_enrich(args: EnrichArgs) -> Result<()> {
     // Read JSON input containing all enrichment data
-    let json = std::fs::read_to_string(input)
-        .with_context(|| format!("failed to read {}", input.display()))?;
+    let json = std::fs::read_to_string(&args.input)
+        .with_context(|| format!("failed to read {}", args.input.display()))?;
 
     #[derive(serde::Deserialize)]
     struct EnrichInput {
@@ -1760,27 +1337,23 @@ fn run_enrich(input: &Path, out: &Path) -> Result<()> {
         ));
     }
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Enrichment results written to {}", out.display());
+    eprintln!("Enrichment results written to {}", args.out.display());
     Ok(())
 }
 
-fn run_rgmodel_cmd(
-    covstruc: &Path,
-    estimation: &str,
-    model: Option<&str>,
-    std_lv: bool,
-    out: &Path,
-) -> Result<()> {
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+fn run_rgmodel_cmd(args: RgmodelArgs) -> Result<()> {
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
+    let estimation = &args.estimation;
     eprintln!("Fitting rgmodel (estimation={estimation})...");
 
     let result = gsem_sem::rgmodel::run_rgmodel_with_model(
-        &ldsc_result.s, &ldsc_result.v, estimation, model, std_lv,
+        &ldsc_result.s, &ldsc_result.v, estimation, args.model.as_deref(), args.std_lv,
     )?;
 
     let k = result.r.nrows();
@@ -1833,32 +1406,24 @@ fn run_rgmodel_cmd(
         result.sem_result.fit.srmr
     ));
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Results written to {}", out.display());
+    eprintln!("Results written to {}", args.out.display());
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_multi_snp_cmd(
-    covstruc: &Path,
-    sumstats: &Path,
-    ld_matrix_path: &Path,
-    model: Option<String>,
-    model_file: Option<PathBuf>,
-    estimation: &str,
-    out: &Path,
-) -> Result<()> {
+fn run_multi_snp_cmd(args: MultiSnpArgs) -> Result<()> {
     // Read LDSC result
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
     let k = ldsc_result.s.nrows();
 
     // Get model string
-    let model_str = if let Some(m) = model {
+    let model_str = if let Some(m) = args.model {
         m
-    } else if let Some(f) = model_file {
+    } else if let Some(f) = args.model_file {
         std::fs::read_to_string(&f)
             .with_context(|| format!("failed to read model file {}", f.display()))?
     } else {
@@ -1866,9 +1431,9 @@ fn run_multi_snp_cmd(
     };
 
     // Read merged sumstats
-    eprintln!("Reading merged sumstats: {}", sumstats.display());
-    let merged = gsem::io::sumstats_reader::read_merged_sumstats(sumstats)
-        .with_context(|| format!("failed to read {}", sumstats.display()))?;
+    eprintln!("Reading merged sumstats: {}", args.sumstats.display());
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(&args.sumstats)
+        .with_context(|| format!("failed to read {}", args.sumstats.display()))?;
 
     if merged.trait_names.len() != k {
         anyhow::bail!(
@@ -1878,8 +1443,8 @@ fn run_multi_snp_cmd(
     }
 
     // Read LD matrix
-    eprintln!("Reading LD matrix: {}", ld_matrix_path.display());
-    let (ld_mat, _ld_names) = gsem::gwas::multi_snp::read_ld_matrix(ld_matrix_path)?;
+    eprintln!("Reading LD matrix: {}", args.ld_matrix.display());
+    let (ld_mat, _ld_names) = gsem::gwas::multi_snp::read_ld_matrix(&args.ld_matrix)?;
     let n_snps = ld_mat.nrows();
     eprintln!("LD matrix: {n_snps} x {n_snps}");
 
@@ -1907,7 +1472,7 @@ fn run_multi_snp_cmd(
 
     let config = gsem::gwas::multi_snp::MultiSnpConfig {
         model: model_str,
-        estimation: estimation.to_string(),
+        estimation: args.estimation,
         max_iter: 500,
         snp_var_se: None,
     };
@@ -1942,22 +1507,24 @@ fn run_multi_snp_cmd(
         result.chisq, result.chisq_df, result.converged
     ));
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("Results written to {}", out.display());
+    eprintln!("Results written to {}", args.out.display());
     Ok(())
 }
 
-fn run_simulate(covstruc: &Path, n_per_trait: &str, ld_dir: &Path, out: &Path) -> Result<()> {
+fn run_simulate(args: SimulateArgs) -> Result<()> {
     // Read LDSC result
-    let json = std::fs::read_to_string(covstruc)
-        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let json = std::fs::read_to_string(&args.covstruc)
+        .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
     let k = ldsc_result.s.nrows();
 
     // Parse per-trait sample sizes
-    let n_vec: Vec<f64> = n_per_trait
+    let n_vec: Vec<f64> = args
+        .n_per_trait
         .split(',')
         .map(|s| {
             s.trim()
@@ -1975,7 +1542,7 @@ fn run_simulate(covstruc: &Path, n_per_trait: &str, ld_dir: &Path, out: &Path) -
 
     // Read LD scores (all 22 chromosomes by default)
     let chromosomes: Vec<usize> = (1..=22).collect();
-    let ld_data = gsem::io::ld_reader::read_ld_scores(ld_dir, ld_dir, &chromosomes)
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&args.ld, &args.ld, &chromosomes)
         .context("failed to read LD scores")?;
 
     let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
@@ -2010,11 +1577,12 @@ fn run_simulate(covstruc: &Path, n_per_trait: &str, ld_dir: &Path, out: &Path) -
         output.push('\n');
     }
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
     eprintln!(
         "Simulated {n_snps} SNPs x {k} traits. Results: {}",
-        out.display()
+        args.out.display()
     );
     Ok(())
 }
@@ -2051,23 +1619,14 @@ fn parse_chromosome_selection(select: &str, n_chr: usize) -> Vec<usize> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_hdl(
-    traits: &[PathBuf],
-    sample_prev: Option<String>,
-    pop_prev: Option<String>,
-    ld_path: &Path,
-    n_ref: f64,
-    method: &str,
-    out: &Path,
-) -> Result<()> {
+fn run_hdl(args: HdlArgs) -> Result<()> {
     use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
 
-    eprintln!("Reading {} trait files for HDL...", traits.len());
+    eprintln!("Reading {} trait files for HDL...", args.traits.len());
 
     // Read summary stats (same pattern as LDSC)
     let mut trait_data = Vec::new();
-    for path in traits {
+    for path in &args.traits {
         let records = gwas_reader::read_sumstats(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let n_snps = records.len();
@@ -2083,15 +1642,17 @@ fn run_hdl(
     }
 
     // Parse HDL method
-    let hdl_method = match method.to_lowercase().as_str() {
+    let hdl_method = match args.method.to_lowercase().as_str() {
         "jackknife" => HdlMethod::Jackknife,
         _ => HdlMethod::Piecewise,
     };
 
     let config = HdlConfig {
         method: hdl_method,
-        n_ref,
+        n_ref: args.n_ref,
     };
+
+    let ld_path = &args.ld_path;
 
     // Load LD pieces from text format directory.
     // Expected format:
@@ -2190,18 +1751,19 @@ fn run_hdl(
     );
 
     // Parse prevalences
-    let k = traits.len();
-    let sp = parse_prevalences(&sample_prev, k);
-    let pp = parse_prevalences(&pop_prev, k);
+    let k = args.traits.len();
+    let sp = parse_prevalences(&args.sample_prev, k);
+    let pp = parse_prevalences(&args.pop_prev, k);
 
     eprintln!("Running HDL...");
     let result = gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config)?;
 
     // Write JSON output
     let json = result.to_json_string()?;
-    std::fs::write(out, &json).with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(&args.out, &json)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
 
-    eprintln!("HDL complete. Results written to {}", out.display());
+    eprintln!("HDL complete. Results written to {}", args.out.display());
 
     // Print S matrix
     let k = result.s.nrows();
@@ -2224,15 +1786,9 @@ fn run_hdl(
     Ok(())
 }
 
-fn run_summary_gls(
-    x_path: &Path,
-    y_path: &Path,
-    v_path: &Path,
-    intercept: bool,
-    out: &Path,
-) -> Result<()> {
-    let x_content = std::fs::read_to_string(x_path)
-        .with_context(|| format!("failed to read {}", x_path.display()))?;
+fn run_summary_gls(args: SummaryGlsArgs) -> Result<()> {
+    let x_content = std::fs::read_to_string(&args.x)
+        .with_context(|| format!("failed to read {}", args.x.display()))?;
     let x_rows: Vec<Vec<f64>> = x_content
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -2249,19 +1805,19 @@ fn run_summary_gls(
         anyhow::bail!("empty X matrix");
     }
     let p_base = x_rows[0].len();
-    let p = if intercept { p_base + 1 } else { p_base };
+    let p = if args.intercept { p_base + 1 } else { p_base };
 
     let x = faer::Mat::from_fn(n, p, |i, j| {
-        if intercept && j == 0 {
+        if args.intercept && j == 0 {
             1.0
         } else {
-            let col = if intercept { j - 1 } else { j };
+            let col = if args.intercept { j - 1 } else { j };
             x_rows[i][col]
         }
     });
 
-    let y_content = std::fs::read_to_string(y_path)
-        .with_context(|| format!("failed to read {}", y_path.display()))?;
+    let y_content = std::fs::read_to_string(&args.y)
+        .with_context(|| format!("failed to read {}", args.y.display()))?;
     let y: Vec<f64> = y_content
         .split_whitespace()
         .filter_map(|s| s.parse().ok())
@@ -2271,8 +1827,8 @@ fn run_summary_gls(
         anyhow::bail!("Y length {} != X rows {}", y.len(), n);
     }
 
-    let v_content = std::fs::read_to_string(v_path)
-        .with_context(|| format!("failed to read {}", v_path.display()))?;
+    let v_content = std::fs::read_to_string(&args.v)
+        .with_context(|| format!("failed to read {}", args.v.display()))?;
     let v_rows: Vec<Vec<f64>> = v_content
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -2296,10 +1852,10 @@ fn run_summary_gls(
 
     let mut output = String::from("predictor\tbeta\tse\tz\tp\n");
     for i in 0..result.beta.len() {
-        let name = if intercept && i == 0 {
+        let name = if args.intercept && i == 0 {
             "intercept".to_string()
         } else {
-            format!("X{}", if intercept { i } else { i + 1 })
+            format!("X{}", if args.intercept { i } else { i + 1 })
         };
         output.push_str(&format!(
             "{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\n",
@@ -2307,7 +1863,7 @@ fn run_summary_gls(
         ));
     }
 
-    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
-    eprintln!("Results written to {}", out.display());
+    std::fs::write(&args.out, &output).with_context(|| format!("failed to write {}", args.out.display()))?;
+    eprintln!("Results written to {}", args.out.display());
     Ok(())
 }

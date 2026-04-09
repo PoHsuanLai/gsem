@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum MatrixError {
     #[error("matrix is not square: {rows}x{cols}")]
     NotSquare { rows: usize, cols: usize },

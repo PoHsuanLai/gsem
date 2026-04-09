@@ -15,8 +15,8 @@ pub fn ldsc_result_to_json_stand(result: &LdscResult) -> String {
     // where scale = sqrt(diag(V)) * (vech(S_Stand) / vech(S))
     let k = result.s.nrows();
     let kstar = k * (k + 1) / 2;
-    let s_vec = gsem_matrix::vech::vech(&result.s);
-    let s_stand_vec = gsem_matrix::vech::vech(&s_stand);
+    let s_vec = gsem_matrix::vech::vech(&result.s).expect("S must be square");
+    let s_stand_vec = gsem_matrix::vech::vech(&s_stand).expect("S_Stand must be square");
     let scale: Vec<f64> = s_stand_vec
         .iter()
         .zip(s_vec.iter())

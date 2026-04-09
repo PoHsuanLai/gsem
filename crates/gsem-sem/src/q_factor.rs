@@ -1,4 +1,5 @@
 use faer::{Mat, Side};
+use gsem_matrix::error::MatrixError;
 use gsem_matrix::vech;
 use statrs::distribution::{ChiSquared, ContinuousCDF};
 
@@ -65,7 +66,7 @@ pub fn compute_q_factor(
     sigma_hat: &Mat<f64>,
     v: &Mat<f64>,
     factor_inds: &[(String, Vec<usize>)],
-) -> Vec<QFactorResult> {
+) -> Result<Vec<QFactorResult>, MatrixError> {
     let k = s_obs.nrows();
     let mut results = Vec::new();
 
@@ -110,8 +111,8 @@ pub fn compute_q_factor(
             let n_cross = vech_indices.len();
 
             // Residual vector: eta = vech(S - Sigma)[cross indices]
-            let s_vec = vech::vech(s_obs);
-            let sig_vec = vech::vech(sigma_hat);
+            let s_vec = vech::vech(s_obs)?;
+            let sig_vec = vech::vech(sigma_hat)?;
             let eta: Vec<f64> = vech_indices
                 .iter()
                 .map(|&idx| s_vec[idx] - sig_vec[idx])
@@ -144,7 +145,7 @@ pub fn compute_q_factor(
         }
     }
 
-    results
+    Ok(results)
 }
 
 /// Compute Q = eta' * V^{-1} * eta via eigendecomposition for numerical stability.
@@ -225,7 +226,7 @@ mod tests {
             ("F2".to_string(), vec![2, 3]),
         ];
 
-        let results = compute_q_factor(&s, &sigma, &v, &fi);
+        let results = compute_q_factor(&s, &sigma, &v, &fi).unwrap();
         assert_eq!(results.len(), 1);
         assert!(
             results[0].q_chisq.abs() < 1e-10,
@@ -264,7 +265,7 @@ mod tests {
             ("F2".to_string(), vec![2, 3]),
         ];
 
-        let results = compute_q_factor(&s, &sigma, &v, &fi);
+        let results = compute_q_factor(&s, &sigma, &v, &fi).unwrap();
         assert_eq!(results.len(), 1);
         assert!(
             results[0].q_chisq > 0.0,

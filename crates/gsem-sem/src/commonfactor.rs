@@ -79,8 +79,9 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
             let se = se_vec.get(free_idx).copied().unwrap_or(0.0);
             let z = if se > 0.0 { est / se } else { 0.0 };
             let p = if z.abs() > 0.0 {
-                let chi2 = ChiSquared::new(1.0).unwrap();
-                2.0 * (1.0 - chi2.cdf(z * z))
+                ChiSquared::new(1.0)
+                    .map(|chi2| 2.0 * (1.0 - chi2.cdf(z * z)))
+                    .unwrap_or(1.0)
             } else {
                 1.0
             };

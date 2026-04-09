@@ -35,7 +35,7 @@ pub fn fit_dwls(
     max_iter: usize,
     grad_tol: Option<f64>,
 ) -> FitResult {
-    let s_vec = vech::vech(s_obs);
+    let s_vec = vech::vech(s_obs).expect("s_obs must be square");
     let w: Vec<f64> = v_diag
         .iter()
         .map(|&v| if v > 1e-30 { 1.0 / v } else { 0.0 })
@@ -83,10 +83,15 @@ fn apply_step(
     bounds: &[Option<f64>],
     out: &mut [f64],
 ) {
-    for (i, o) in out.iter_mut().enumerate() {
-        *o = params[i] + step * direction[i];
-        if let Some(lb) = bounds[i] {
-            *o = o.max(lb);
+    for (((o, &p), &d), bound) in out
+        .iter_mut()
+        .zip(params)
+        .zip(direction)
+        .zip(bounds)
+    {
+        *o = p + step * d;
+        if let Some(lb) = bound {
+            *o = o.max(*lb);
         }
     }
 }
@@ -300,7 +305,7 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 /// DWLS objective function value.
 fn dwls_objective(model: &Model, s_vec: &[f64], w: &[f64]) -> f64 {
     let sigma = model.implied_cov();
-    let sigma_vec = vech::vech(&sigma);
+    let sigma_vec = vech::vech(&sigma).expect("implied cov must be square");
     s_vec
         .iter()
         .zip(sigma_vec.iter())

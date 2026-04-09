@@ -33,9 +33,9 @@ pub fn estimate_h2(
     n_blocks: usize,
 ) -> Result<H2Result> {
     let n_snps = z.len();
-    assert_eq!(n_snps, n.len());
-    assert_eq!(n_snps, ld.len());
-    assert_eq!(n_snps, w_ld.len());
+    debug_assert_eq!(n_snps, n.len());
+    debug_assert_eq!(n_snps, ld.len());
+    debug_assert_eq!(n_snps, w_ld.len());
 
     // Compute chi-squared values
     let chi2: Vec<f64> = z.iter().map(|zi| zi * zi).collect();

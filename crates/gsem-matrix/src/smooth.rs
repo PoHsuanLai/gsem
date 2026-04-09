@@ -45,7 +45,7 @@ pub fn smooth_if_needed(mat: &mut Mat<f64>) -> bool {
 /// `cor[i,j] = cov[i,j] / sqrt(cov[i,i] * cov[j,j])`
 pub fn cov_to_cor(cov: &Mat<f64>) -> Mat<f64> {
     let n = cov.nrows();
-    assert_eq!(n, cov.ncols());
+    debug_assert_eq!(n, cov.ncols());
     let sds: Vec<f64> = (0..n).map(|i| cov[(i, i)].sqrt()).collect();
     Mat::from_fn(n, n, |i, j| {
         if sds[i] > 0.0 && sds[j] > 0.0 {
@@ -59,8 +59,8 @@ pub fn cov_to_cor(cov: &Mat<f64>) -> Mat<f64> {
 /// Convert a correlation matrix back to a covariance matrix given standard deviations.
 pub fn cor_to_cov(cor: &Mat<f64>, sds: &[f64]) -> Mat<f64> {
     let n = cor.nrows();
-    assert_eq!(n, cor.ncols());
-    assert_eq!(n, sds.len());
+    debug_assert_eq!(n, cor.ncols());
+    debug_assert_eq!(n, sds.len());
     Mat::from_fn(n, n, |i, j| cor[(i, j)] * sds[i] * sds[j])
 }
 

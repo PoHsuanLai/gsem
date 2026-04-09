@@ -179,7 +179,7 @@ impl Model {
 
     /// Set free parameter values from a vector.
     pub fn set_param_vec(&mut self, x: &[f64]) {
-        assert_eq!(x.len(), self.free_params.len());
+        debug_assert_eq!(x.len(), self.free_params.len());
         for (i, loc) in self.free_params.iter().enumerate() {
             match loc.matrix {
                 MatrixId::Lambda => self.lambda[(loc.row, loc.col)] = x[i],

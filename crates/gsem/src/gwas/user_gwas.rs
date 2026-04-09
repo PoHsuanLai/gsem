@@ -293,7 +293,8 @@ fn process_single_snp(
     // Compute Q_SNP if requested
     let (q_snp_val, q_snp_df_val, q_snp_p_val) = if config.q_snp {
         let sigma_hat = model.implied_cov();
-        let (q, df, p) = super::q_snp::compute_q_snp(&s_full, &sigma_hat, &v_full);
+        let (q, df, p) = super::q_snp::compute_q_snp(&s_full, &sigma_hat, &v_full)
+            .expect("q_snp: matrices must be square");
         (Some(q), Some(df), Some(p))
     } else {
         (None, None, None)

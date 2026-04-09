@@ -11,6 +11,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::gwas_reader::open_file_reader;
+use super::{col_idx, parse_beta_se_columns, parse_beta_se_values};
 
 /// Per-SNP data from merged sumstats.
 #[derive(Debug, Clone)]
@@ -51,41 +52,19 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
         .map(|s| s.trim().to_string())
         .collect();
 
-    // Find fixed columns
-    let snp_idx = col_idx(&headers, "SNP")?;
-    let a1_idx = col_idx(&headers, "A1")?;
-    let a2_idx = col_idx(&headers, "A2")?;
-    let maf_idx = col_idx(&headers, "MAF")?;
+    let snp_idx = col_idx(&headers, "SNP", "merged sumstats")?;
+    let a1_idx = col_idx(&headers, "A1", "merged sumstats")?;
+    let a2_idx = col_idx(&headers, "A2", "merged sumstats")?;
+    let maf_idx = col_idx(&headers, "MAF", "merged sumstats")?;
 
-    // Find beta.* and se.* columns (case-insensitive prefix match)
-    let mut beta_cols: Vec<(usize, String)> = Vec::new();
-    let mut se_cols: Vec<(usize, String)> = Vec::new();
+    let bs = parse_beta_se_columns(&headers, "merged sumstats")?;
 
-    for (i, h) in headers.iter().enumerate() {
-        let lower = h.to_lowercase();
-        if let Some(name) = lower.strip_prefix("beta.") {
-            beta_cols.push((i, name.to_string()));
-        } else if let Some(name) = lower.strip_prefix("se.") {
-            se_cols.push((i, name.to_string()));
-        }
-    }
-
-    if beta_cols.is_empty() {
-        anyhow::bail!("no beta.* columns found in merged sumstats");
-    }
-    if beta_cols.len() != se_cols.len() {
-        anyhow::bail!(
-            "mismatched beta ({}) and se ({}) column counts",
-            beta_cols.len(),
-            se_cols.len()
-        );
-    }
-
-    let trait_names: Vec<String> = beta_cols.iter().map(|(_, name)| name.clone()).collect();
-    let k = trait_names.len();
-
-    let beta_indices: Vec<usize> = beta_cols.iter().map(|(i, _)| *i).collect();
-    let se_indices: Vec<usize> = se_cols.iter().map(|(i, _)| *i).collect();
+    let max_idx = *[snp_idx, a1_idx, a2_idx, maf_idx]
+        .iter()
+        .chain(bs.beta_indices.iter())
+        .chain(bs.se_indices.iter())
+        .max()
+        .unwrap();
 
     let mut snps = Vec::new();
 
@@ -95,12 +74,6 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
             continue;
         }
         let fields: Vec<&str> = line.split('\t').collect();
-        let max_idx = *[snp_idx, a1_idx, a2_idx, maf_idx]
-            .iter()
-            .chain(beta_indices.iter())
-            .chain(se_indices.iter())
-            .max()
-            .unwrap();
         if fields.len() <= max_idx {
             continue;
         }
@@ -110,29 +83,10 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
             Err(_) => continue,
         };
 
-        let mut beta = Vec::with_capacity(k);
-        let mut se = Vec::with_capacity(k);
-        let mut skip = false;
-
-        for t in 0..k {
-            match (
-                fields[beta_indices[t]].parse::<f64>(),
-                fields[se_indices[t]].parse::<f64>(),
-            ) {
-                (Ok(b), Ok(s)) if b.is_finite() && s.is_finite() => {
-                    beta.push(b);
-                    se.push(s);
-                }
-                _ => {
-                    skip = true;
-                    break;
-                }
-            }
-        }
-
-        if skip {
+        let Some((beta, se)) = parse_beta_se_values(&fields, &bs.beta_indices, &bs.se_indices)
+        else {
             continue;
-        }
+        };
 
         snps.push(MergedSnp {
             snp: fields[snp_idx].to_string(),
@@ -147,19 +101,14 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
     log::info!(
         "Read {} SNPs with {} traits from {}",
         snps.len(),
-        k,
+        bs.trait_names.len(),
         path.display()
     );
 
-    Ok(MergedSumstats { snps, trait_names })
-}
-
-fn col_idx(headers: &[String], name: &str) -> Result<usize> {
-    let upper = name.to_uppercase();
-    headers
-        .iter()
-        .position(|h| h.to_uppercase() == upper)
-        .with_context(|| format!("{name} column not found in merged sumstats"))
+    Ok(MergedSumstats {
+        snps,
+        trait_names: bs.trait_names,
+    })
 }
 
 #[cfg(test)]

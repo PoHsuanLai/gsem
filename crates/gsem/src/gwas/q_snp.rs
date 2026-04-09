@@ -1,4 +1,5 @@
 use faer::{Mat, Side};
+use gsem_matrix::error::MatrixError;
 use gsem_matrix::vech;
 use statrs::distribution::{ChiSquared, ContinuousCDF};
 
@@ -12,10 +13,10 @@ pub fn compute_q_snp(
     s_subset: &Mat<f64>,
     sigma_subset: &Mat<f64>,
     v_subset: &Mat<f64>,
-) -> (f64, usize, f64) {
+) -> Result<(f64, usize, f64), MatrixError> {
     let p = s_subset.nrows();
-    let s_vec = vech::vech(s_subset);
-    let sig_vec = vech::vech(sigma_subset);
+    let s_vec = vech::vech(s_subset)?;
+    let sig_vec = vech::vech(sigma_subset)?;
 
     let eta: Vec<f64> = s_vec
         .iter()
@@ -26,7 +27,7 @@ pub fn compute_q_snp(
     let n = eta.len();
 
     let Ok(eigen) = v_subset.self_adjoint_eigen(Side::Lower) else {
-        return (f64::NAN, 0, 1.0);
+        return Ok((f64::NAN, 0, 1.0));
     };
 
     let u = eigen.U();
@@ -51,5 +52,5 @@ pub fn compute_q_snp(
         1.0
     };
 
-    (q, df, p_val)
+    Ok((q, df, p_val))
 }

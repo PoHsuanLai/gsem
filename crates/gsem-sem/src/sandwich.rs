@@ -15,7 +15,7 @@ use crate::model::Model;
 /// Returns (standard_errors, Ohtt_matrix).
 pub fn sandwich_se(model: &mut Model, w: &Mat<f64>, v: &Mat<f64>) -> (Vec<f64>, Mat<f64>) {
     let eps = 1e-7;
-    let delta_mat = delta::compute_delta(model, eps);
+    let delta_mat = delta::compute_delta(model, eps).expect("delta: implied cov must be square");
     let n_free = model.n_free();
 
     // bread = (Delta' * W * Delta)^{-1}

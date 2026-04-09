@@ -12,6 +12,22 @@ fn ensure_logger() {
     });
 }
 
+/// Convert R nullable floats to Option<f64>, mapping NA to None.
+fn rfloat_to_options(vals: &[Rfloat]) -> Vec<Option<f64>> {
+    vals.iter()
+        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
+        .collect()
+}
+
+/// Clamp intercept matrix diagonal to >= 1.0 (GenomicSEM convention).
+fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
+    for i in 0..i_mat.nrows() {
+        if i_mat[(i, i)] < 1.0 {
+            i_mat[(i, i)] = 1.0;
+        }
+    }
+}
+
 /// Run LDSC pipeline.
 ///
 /// @param trait_files Character vector of .sumstats.gz file paths
@@ -42,31 +58,13 @@ fn ldsc_rust(
     let n_blocks = n_blocks as usize;
     let chr_count = chr as usize;
 
-    let sp: Vec<Option<f64>> = sample_prev
-        .iter()
-        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
-        .collect();
-    let pp: Vec<Option<f64>> = pop_prev
-        .iter()
-        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
-        .collect();
+    let sp = rfloat_to_options(&sample_prev);
+    let pp = rfloat_to_options(&pop_prev);
 
-    let mut trait_data = Vec::new();
-    for path in &trait_files {
-        let path = std::path::Path::new(path);
-        match gsem::io::gwas_reader::read_sumstats(path) {
-            Ok(records) => {
-                trait_data.push(gsem_ldsc::TraitSumstats {
-                    snp: records.iter().map(|r| r.snp.clone()).collect(),
-                    z: records.iter().map(|r| r.z).collect(),
-                    n: records.iter().map(|r| r.n).collect(),
-                    a1: records.iter().map(|r| r.a1.clone()).collect(),
-                    a2: records.iter().map(|r| r.a2.clone()).collect(),
-                });
-            }
-            Err(e) => return format!("{{\"error\": \"{e}\"}}"),
-        }
-    }
+    let trait_data = match gsem::io::gwas_reader::load_trait_data(&trait_files) {
+        Ok(d) => d,
+        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+    };
 
     let ld_path = std::path::Path::new(ld_dir);
     let wld_path = std::path::Path::new(wld_dir);
@@ -105,7 +103,7 @@ fn ldsc_rust(
         indicatif::ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
         )
-        .unwrap(),
+        .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar()),
     );
 
     match gsem_ldsc::ldsc(
@@ -331,7 +329,7 @@ fn usermodel_rust(
             &sigma_hat,
             &ldsc_result.v,
             &factor_inds,
-        );
+        ).expect("q_factor: matrices must be square");
         let entries: Vec<String> = q_results
             .iter()
             .map(|q| {
@@ -550,11 +548,7 @@ fn commonfactor_gwas_rust(
         gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
 
     let mut i_ld = ldsc_result.i_mat.to_owned();
-    for i in 0..k {
-        if i_ld[(i, i)] < 1.0 {
-            i_ld[(i, i)] = 1.0;
-        }
-    }
+    clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_opt = if snp_se.is_na() || snp_se.inner().is_nan() {
         None
@@ -651,11 +645,7 @@ fn user_gwas_rust(
         gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
 
     let mut i_ld = ldsc_result.i_mat.to_owned();
-    for i in 0..k {
-        if i_ld[(i, i)] < 1.0 {
-            i_ld[(i, i)] = 1.0;
-        }
-    }
+    clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_opt = if snp_se.is_na() || snp_se.inner().is_nan() {
         None
@@ -901,32 +891,14 @@ fn hdl_rust(
     ensure_logger();
     use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
 
-    let sp: Vec<Option<f64>> = sample_prev
-        .iter()
-        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
-        .collect();
-    let pp: Vec<Option<f64>> = pop_prev
-        .iter()
-        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
-        .collect();
+    let sp = rfloat_to_options(&sample_prev);
+    let pp = rfloat_to_options(&pop_prev);
 
     // Read trait files
-    let mut trait_data = Vec::new();
-    for path in &trait_files {
-        let path = std::path::Path::new(path);
-        match gsem::io::gwas_reader::read_sumstats(path) {
-            Ok(records) => {
-                trait_data.push(HdlTraitData {
-                    snp: records.iter().map(|r| r.snp.clone()).collect(),
-                    z: records.iter().map(|r| r.z).collect(),
-                    n: records.iter().map(|r| r.n).collect(),
-                    a1: records.iter().map(|r| r.a1.clone()).collect(),
-                    a2: records.iter().map(|r| r.a2.clone()).collect(),
-                });
-            }
-            Err(e) => return format!("{{\"error\": \"{e}\"}}"),
-        }
-    }
+    let trait_data: Vec<HdlTraitData> = match gsem::io::gwas_reader::load_trait_data(&trait_files) {
+        Ok(d) => d.into_iter().map(HdlTraitData::from).collect(),
+        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+    };
 
     let hdl_method = match method.to_lowercase().as_str() {
         "jackknife" => HdlMethod::Jackknife,
@@ -940,99 +912,10 @@ fn hdl_rust(
 
     // Load LD pieces from text format directory
     let ld_dir = std::path::Path::new(ld_path);
-    let pieces_file = ld_dir.join("pieces.tsv");
-    let pieces_alt = ld_dir.join("pieces.txt");
-    let pieces_path = if pieces_file.exists() {
-        pieces_file
-    } else if pieces_alt.exists() {
-        pieces_alt
-    } else {
-        return format!(
-            "{{\"error\": \"HDL LD reference directory missing pieces.tsv at {}\"}}",
-            ld_dir.display()
-        );
+    let ld_pieces = match gsem::io::hdl_reader::load_hdl_pieces(ld_dir) {
+        Ok(p) => p,
+        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
     };
-
-    let pieces_content = match std::fs::read_to_string(&pieces_path) {
-        Ok(c) => c,
-        Err(e) => return format!("{{\"error\": \"failed to read pieces file: {e}\"}}"),
-    };
-
-    let mut ld_pieces = Vec::new();
-    for line in pieces_content.lines() {
-        let line = line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.starts_with("piece")
-            || line.starts_with("chr")
-        {
-            continue;
-        }
-        let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 3 {
-            continue;
-        }
-
-        // Try to find piece SNP file with various naming patterns
-        let chr_val = fields[0];
-        let piece_val = fields[1];
-        let snp_file_tsv = ld_dir.join(format!("chr{chr_val}.{piece_val}.snps.tsv"));
-        let snp_file_txt = ld_dir.join(format!("piece.{piece_val}.snps.txt"));
-        let snp_file = if snp_file_tsv.exists() {
-            snp_file_tsv
-        } else if snp_file_txt.exists() {
-            snp_file_txt
-        } else {
-            continue;
-        };
-
-        let snp_content = match std::fs::read_to_string(&snp_file) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let mut snps = Vec::new();
-        let mut a1 = Vec::new();
-        let mut a2 = Vec::new();
-        let mut ld_scores = Vec::new();
-
-        for sline in snp_content.lines() {
-            let sline = sline.trim();
-            if sline.is_empty() || sline.starts_with('#') || sline.starts_with("SNP") {
-                continue;
-            }
-            let sf: Vec<&str> = sline.split('\t').collect();
-            if sf.len() < 4 {
-                continue;
-            }
-            snps.push(sf[0].to_string());
-            a1.push(sf[1].to_string());
-            a2.push(sf[2].to_string());
-            if let Ok(ld) = sf[3].parse::<f64>() {
-                ld_scores.push(ld);
-            } else {
-                ld_scores.push(0.0);
-            }
-        }
-
-        let m = snps.len();
-        if m > 0 {
-            ld_pieces.push(LdPiece {
-                snps,
-                a1,
-                a2,
-                ld_scores,
-                m,
-            });
-        }
-    }
-
-    if ld_pieces.is_empty() {
-        return format!(
-            "{{\"error\": \"no valid LD pieces loaded from {}\"}}",
-            ld_dir.display()
-        );
-    }
 
     match gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config) {
         Ok(result) => {
@@ -1056,32 +939,14 @@ fn s_ldsc_rust(
     exclude_cont: bool,
 ) -> String {
     ensure_logger();
-    let sp: Vec<Option<f64>> = sample_prev
-        .iter()
-        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
-        .collect();
-    let pp: Vec<Option<f64>> = pop_prev
-        .iter()
-        .map(|v| if v.is_na() { None } else { Some(v.inner()) })
-        .collect();
+    let sp = rfloat_to_options(&sample_prev);
+    let pp = rfloat_to_options(&pop_prev);
 
     // Read trait files
-    let mut trait_data = Vec::new();
-    for path in &trait_files {
-        let path = std::path::Path::new(path);
-        match gsem::io::gwas_reader::read_sumstats(path) {
-            Ok(records) => {
-                trait_data.push(gsem_ldsc::TraitSumstats {
-                    snp: records.iter().map(|r| r.snp.clone()).collect(),
-                    z: records.iter().map(|r| r.z).collect(),
-                    n: records.iter().map(|r| r.n).collect(),
-                    a1: records.iter().map(|r| r.a1.clone()).collect(),
-                    a2: records.iter().map(|r| r.a2.clone()).collect(),
-                });
-            }
-            Err(e) => return format!("{{\"error\": \"{e}\"}}"),
-        }
-    }
+    let trait_data = match gsem::io::gwas_reader::load_trait_data(&trait_files) {
+        Ok(d) => d,
+        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+    };
 
     let ld = std::path::Path::new(ld_dir);
     let wld = std::path::Path::new(wld_dir);

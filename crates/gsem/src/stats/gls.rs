@@ -23,8 +23,9 @@ pub struct GlsResult {
 pub fn summary_gls(x: &Mat<f64>, y: &[f64], v: &Mat<f64>) -> Option<GlsResult> {
     let n = x.nrows();
     let p = x.ncols();
-    assert_eq!(n, y.len());
-    assert_eq!(n, v.nrows());
+    if n != y.len() || n != v.nrows() {
+        return None;
+    }
 
     // V^{-1}
     let v_inv = v.partial_piv_lu().inverse();

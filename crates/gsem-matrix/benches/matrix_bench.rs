@@ -34,12 +34,12 @@ fn bench_near_pd(c: &mut Criterion) {
 fn bench_vech(c: &mut Criterion) {
     let mat = Mat::from_fn(20, 20, |i, j| (i + j) as f64 * 0.1);
     c.bench_function("vech_20x20", |b| {
-        b.iter(|| gsem_matrix::vech::vech(black_box(&mat)))
+        b.iter(|| gsem_matrix::vech::vech(black_box(&mat)).unwrap())
     });
 
-    let v = gsem_matrix::vech::vech(&mat);
+    let v = gsem_matrix::vech::vech(&mat).unwrap();
     c.bench_function("vech_reverse_20x20", |b| {
-        b.iter(|| gsem_matrix::vech::vech_reverse(black_box(&v), 20))
+        b.iter(|| gsem_matrix::vech::vech_reverse(black_box(&v), 20).unwrap())
     });
 }
 

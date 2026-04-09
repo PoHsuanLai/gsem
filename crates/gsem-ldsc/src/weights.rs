@@ -8,9 +8,9 @@
 /// - w = het_w * oc_w, normalized: sqrt(w) / sum(sqrt(w))
 pub fn compute_h2_weights(chi2: &[f64], ld: &[f64], w_ld: &[f64], n: &[f64], m: f64) -> Vec<f64> {
     let n_snps = chi2.len();
-    assert_eq!(n_snps, ld.len());
-    assert_eq!(n_snps, w_ld.len());
-    assert_eq!(n_snps, n.len());
+    debug_assert_eq!(n_snps, ld.len());
+    debug_assert_eq!(n_snps, w_ld.len());
+    debug_assert_eq!(n_snps, n.len());
 
     // Compute total aggregated heritability
     // R: tot.agg <- (M.tot*(mean(merged$chi1)-1))/mean(merged$L2*merged$N)

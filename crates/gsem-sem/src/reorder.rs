@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use faer::Mat;
 
 /// Reorder V matrix from user variable ordering to model variable ordering.
@@ -7,12 +8,15 @@ use faer::Mat;
 /// The V matrix is the sampling covariance of vech(S). Its rows/columns correspond
 /// to elements of the lower triangle of S. When the SEM model reorders variables
 /// internally, V must be permuted accordingly.
-pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) -> Mat<f64> {
+pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) -> Result<Mat<f64>> {
     let k = user_order.len();
-    assert_eq!(k, model_order.len());
+    if k != model_order.len() {
+        bail!("user_order length ({k}) != model_order length ({})", model_order.len());
+    }
     let kstar = k * (k + 1) / 2;
-    assert_eq!(v.nrows(), kstar);
-    assert_eq!(v.ncols(), kstar);
+    if v.nrows() != kstar || v.ncols() != kstar {
+        bail!("V dimensions {}x{} don't match expected {kstar}x{kstar}", v.nrows(), v.ncols());
+    }
 
     // Build permutation: where does each user-ordered variable appear in model order?
     let perm: Vec<usize> = model_order
@@ -45,7 +49,7 @@ pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) ->
     };
 
     // Apply permutation to V
-    Mat::from_fn(kstar, kstar, |i, j| v[(model_to_user[i], model_to_user[j])])
+    Ok(Mat::from_fn(kstar, kstar, |i, j| v[(model_to_user[i], model_to_user[j])]))
 }
 
 /// Build a mapping: for a k×k matrix, vech position of element (i,j) where i>=j.
@@ -70,7 +74,7 @@ mod tests {
     fn test_reorder_identity() {
         let v = faer::mat![[1.0, 0.5, 0.3], [0.5, 2.0, 0.4], [0.3, 0.4, 3.0],];
         let order = vec!["A".to_string(), "B".to_string()];
-        let result = reorder_v(&v, &order, &order);
+        let result = reorder_v(&v, &order, &order).unwrap();
         for i in 0..3 {
             for j in 0..3 {
                 assert!((result[(i, j)] - v[(i, j)]).abs() < 1e-15);
@@ -84,7 +88,7 @@ mod tests {
         let v = faer::mat![[1.0, 0.2, 0.3], [0.2, 2.0, 0.4], [0.3, 0.4, 3.0],];
         let user = vec!["A".to_string(), "B".to_string()];
         let model = vec!["B".to_string(), "A".to_string()];
-        let result = reorder_v(&v, &user, &model);
+        let result = reorder_v(&v, &user, &model).unwrap();
         // After swapping: vech order should be (B,B), (A,B), (A,A)
         // which maps to original (1,1), (1,0), (0,0) = indices 2, 1, 0
         assert!((result[(0, 0)] - v[(2, 2)]).abs() < 1e-15);

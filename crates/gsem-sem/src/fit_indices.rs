@@ -19,8 +19,8 @@ pub fn compute_fit(
     q_null: Option<f64>,
     df_null: Option<usize>,
 ) -> ModelFit {
-    let s_vec = vech::vech(s_obs);
-    let sigma_vec = vech::vech(sigma_hat);
+    let s_vec = vech::vech(s_obs).expect("s_obs must be square");
+    let sigma_vec = vech::vech(sigma_hat).expect("sigma_hat must be square");
 
     // Residual
     let eta: Vec<f64> = s_vec
@@ -34,8 +34,9 @@ pub fn compute_fit(
 
     // p-value
     let p_chisq = if df > 0 {
-        let chi2_dist = ChiSquared::new(df as f64).unwrap();
-        1.0 - chi2_dist.cdf(chisq)
+        ChiSquared::new(df as f64)
+            .map(|chi2| 1.0 - chi2.cdf(chisq))
+            .unwrap_or(1.0)
     } else {
         1.0
     };

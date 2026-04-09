@@ -4,6 +4,15 @@ use pyo3::prelude::*;
 
 mod conversions;
 
+/// Clamp intercept matrix diagonal to >= 1.0 (GenomicSEM convention).
+fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
+    for i in 0..i_mat.nrows() {
+        if i_mat[(i, i)] < 1.0 {
+            i_mat[(i, i)] = 1.0;
+        }
+    }
+}
+
 /// Python wrapper for LDSC result.
 #[pyclass(name = "LdscResult")]
 struct PyLdscResult {
@@ -27,26 +36,26 @@ struct PyLdscResult {
 impl PyLdscResult {
     /// Genetic covariance matrix S as NumPy array.
     #[getter]
-    fn s<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let arr =
-            Array2::from_shape_vec(self.s_shape, self.s_data.clone()).expect("S shape mismatch");
-        arr.into_pyarray(py)
+    fn s<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let arr = Array2::from_shape_vec(self.s_shape, self.s_data.clone())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("S shape: {e}")))?;
+        Ok(arr.into_pyarray(py))
     }
 
     /// Sampling covariance matrix V as NumPy array.
     #[getter]
-    fn v<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let arr =
-            Array2::from_shape_vec(self.v_shape, self.v_data.clone()).expect("V shape mismatch");
-        arr.into_pyarray(py)
+    fn v<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let arr = Array2::from_shape_vec(self.v_shape, self.v_data.clone())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("V shape: {e}")))?;
+        Ok(arr.into_pyarray(py))
     }
 
     /// Intercept matrix I as NumPy array.
     #[getter]
-    fn i_mat<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let arr =
-            Array2::from_shape_vec(self.i_shape, self.i_data.clone()).expect("I shape mismatch");
-        arr.into_pyarray(py)
+    fn i_mat<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let arr = Array2::from_shape_vec(self.i_shape, self.i_data.clone())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("I shape: {e}")))?;
+        Ok(arr.into_pyarray(py))
     }
 
     /// Sample sizes per vech element.
@@ -63,20 +72,28 @@ impl PyLdscResult {
 
     /// Standardized genetic correlation matrix (only when stand=True).
     #[getter]
-    fn s_stand<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
-        self.s_stand_data.as_ref().map(|data| {
-            let shape = self.s_stand_shape.unwrap();
-            Array2::from_shape_vec(shape, data.clone()).expect("S_Stand shape").into_pyarray(py)
-        })
+    fn s_stand<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
+        match (&self.s_stand_data, self.s_stand_shape) {
+            (Some(data), Some(shape)) => {
+                let arr = Array2::from_shape_vec(shape, data.clone())
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("S_Stand shape: {e}")))?;
+                Ok(Some(arr.into_pyarray(py)))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Standardized sampling covariance (only when stand=True).
     #[getter]
-    fn v_stand<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
-        self.v_stand_data.as_ref().map(|data| {
-            let shape = self.v_stand_shape.unwrap();
-            Array2::from_shape_vec(shape, data.clone()).expect("V_Stand shape").into_pyarray(py)
-        })
+    fn v_stand<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
+        match (&self.v_stand_data, self.v_stand_shape) {
+            (Some(data), Some(shape)) => {
+                let arr = Array2::from_shape_vec(shape, data.clone())
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("V_Stand shape: {e}")))?;
+                Ok(Some(arr.into_pyarray(py)))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Serialize to JSON string.
@@ -102,8 +119,8 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResul
         let s_stand = gsem_matrix::smooth::cov_to_cor(&result.s);
         let k = result.s.nrows();
         let kstar = k * (k + 1) / 2;
-        let s_vec = gsem_matrix::vech::vech(&result.s);
-        let ss_vec = gsem_matrix::vech::vech(&s_stand);
+        let s_vec = gsem_matrix::vech::vech(&result.s).expect("S must be square");
+        let ss_vec = gsem_matrix::vech::vech(&s_stand).expect("S_Stand must be square");
         let scale: Vec<f64> = ss_vec.iter().zip(s_vec.iter()).enumerate().map(|(i, (&st, &orig))| {
             let ratio = if orig.abs() > 1e-30 { st / orig } else { 0.0 };
             result.v[(i, i)].sqrt() * ratio
@@ -161,19 +178,8 @@ fn ldsc(
     }
     let wld_dir = if wld.is_empty() { ld } else { wld };
 
-    let mut trait_data = Vec::new();
-    for path_str in &traits {
-        let path = std::path::Path::new(path_str);
-        let records = gsem::io::gwas_reader::read_sumstats(path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
-        trait_data.push(gsem_ldsc::TraitSumstats {
-            snp: records.iter().map(|r| r.snp.clone()).collect(),
-            z: records.iter().map(|r| r.z).collect(),
-            n: records.iter().map(|r| r.n).collect(),
-            a1: records.iter().map(|r| r.a1.clone()).collect(),
-            a2: records.iter().map(|r| r.a2.clone()).collect(),
-        });
-    }
+    let trait_data = gsem::io::gwas_reader::load_trait_data(&traits)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
     let ld_path = std::path::Path::new(ld);
     let wld_path = std::path::Path::new(wld_dir);
@@ -200,7 +206,7 @@ fn ldsc(
         indicatif::ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
         )
-        .unwrap(),
+        .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar()),
     );
 
     let result = gsem_ldsc::ldsc(
@@ -420,7 +426,7 @@ fn commonfactor_gwas(
     let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
     let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
     let mut i_ld = ldsc_result.i_mat.to_owned();
-    for i in 0..k { if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; } }
+    clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_val = if snpse { Some(0.0005) } else { None };
 
@@ -486,7 +492,7 @@ fn user_gwas(
     let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
     let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
     let mut i_ld = ldsc_result.i_mat.to_owned();
-    for i in 0..k { if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; } }
+    clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_val = if snpse { Some(0.0005) } else { None };
     let snp_label = if twas { "Gene".to_string() } else { "SNP".to_string() };
@@ -659,19 +665,11 @@ fn hdl(
     let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();
 
     // Read trait files
-    let mut trait_data = Vec::new();
-    for path_str in &traits {
-        let path = std::path::Path::new(path_str);
-        let records = gsem::io::gwas_reader::read_sumstats(path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
-        trait_data.push(HdlTraitData {
-            snp: records.iter().map(|r| r.snp.clone()).collect(),
-            z: records.iter().map(|r| r.z).collect(),
-            n: records.iter().map(|r| r.n).collect(),
-            a1: records.iter().map(|r| r.a1.clone()).collect(),
-            a2: records.iter().map(|r| r.a2.clone()).collect(),
-        });
-    }
+    let trait_data: Vec<HdlTraitData> = gsem::io::gwas_reader::load_trait_data(&traits)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?
+        .into_iter()
+        .map(HdlTraitData::from)
+        .collect();
 
     let hdl_method = match method.to_lowercase().as_str() {
         "jackknife" => HdlMethod::Jackknife,
@@ -685,97 +683,8 @@ fn hdl(
 
     // Load LD pieces from text format directory
     let ld_dir = std::path::Path::new(ld_path);
-    let pieces_file = ld_dir.join("pieces.tsv");
-    let pieces_alt = ld_dir.join("pieces.txt");
-    let pieces_path = if pieces_file.exists() {
-        pieces_file
-    } else if pieces_alt.exists() {
-        pieces_alt
-    } else {
-        return Err(pyo3::exceptions::PyIOError::new_err(format!(
-            "HDL LD reference directory missing pieces.tsv at {}",
-            ld_dir.display()
-        )));
-    };
-
-    let pieces_content = std::fs::read_to_string(&pieces_path)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("failed to read pieces file: {e}")))?;
-
-    let mut ld_pieces = Vec::new();
-    for line in pieces_content.lines() {
-        let line = line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.starts_with("piece")
-            || line.starts_with("chr")
-        {
-            continue;
-        }
-        let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 3 {
-            continue;
-        }
-
-        // Try to find piece SNP file with various naming patterns
-        let chr_val = fields[0];
-        let piece_val = fields[1];
-        let snp_file_tsv = ld_dir.join(format!("chr{chr_val}.{piece_val}.snps.tsv"));
-        let snp_file_txt = ld_dir.join(format!("piece.{piece_val}.snps.txt"));
-        let snp_file = if snp_file_tsv.exists() {
-            snp_file_tsv
-        } else if snp_file_txt.exists() {
-            snp_file_txt
-        } else {
-            continue;
-        };
-
-        let snp_content = match std::fs::read_to_string(&snp_file) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let mut snps = Vec::new();
-        let mut a1 = Vec::new();
-        let mut a2 = Vec::new();
-        let mut ld_scores = Vec::new();
-
-        for sline in snp_content.lines() {
-            let sline = sline.trim();
-            if sline.is_empty() || sline.starts_with('#') || sline.starts_with("SNP") {
-                continue;
-            }
-            let sf: Vec<&str> = sline.split('\t').collect();
-            if sf.len() < 4 {
-                continue;
-            }
-            snps.push(sf[0].to_string());
-            a1.push(sf[1].to_string());
-            a2.push(sf[2].to_string());
-            if let Ok(ld) = sf[3].parse::<f64>() {
-                ld_scores.push(ld);
-            } else {
-                ld_scores.push(0.0);
-            }
-        }
-
-        let m = snps.len();
-        if m > 0 {
-            ld_pieces.push(LdPiece {
-                snps,
-                a1,
-                a2,
-                ld_scores,
-                m,
-            });
-        }
-    }
-
-    if ld_pieces.is_empty() {
-        return Err(pyo3::exceptions::PyIOError::new_err(format!(
-            "no valid LD pieces loaded from {}",
-            ld_dir.display()
-        )));
-    }
+    let ld_pieces = gsem::io::hdl_reader::load_hdl_pieces(ld_dir)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
     let result = gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
@@ -812,19 +721,8 @@ fn s_ldsc(
     let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();
 
     // Read trait files
-    let mut trait_data = Vec::new();
-    for path_str in &traits {
-        let path = std::path::Path::new(path_str);
-        let records = gsem::io::gwas_reader::read_sumstats(path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
-        trait_data.push(gsem_ldsc::TraitSumstats {
-            snp: records.iter().map(|r| r.snp.clone()).collect(),
-            z: records.iter().map(|r| r.z).collect(),
-            n: records.iter().map(|r| r.n).collect(),
-            a1: records.iter().map(|r| r.a1.clone()).collect(),
-            a2: records.iter().map(|r| r.a2.clone()).collect(),
-        });
-    }
+    let trait_data = gsem::io::gwas_reader::load_trait_data(&traits)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
     let ld_path = std::path::Path::new(ld);
     let wld_path = std::path::Path::new(wld);
