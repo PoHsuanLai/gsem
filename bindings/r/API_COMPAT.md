@@ -24,7 +24,7 @@ All core parameters for every function work identically to R GenomicSEM, includi
 - **sumstats**: files, ref, trait.names, se.logit, OLS, linprob, N, info.filter, maf.filter, keep.indel, out, ambig, betas, direct.filter
 - **userGWAS**: covstruc, SNPs, model, estimation, GC, sub, SNPSE, smooth_check, std.lv, fix_measurement, Q_SNP, printwarn, TWAS
 - **commonfactorGWAS**: covstruc, SNPs, estimation, GC, SNPSE, smooth_check, TWAS
-- **paLDSC**: covstruc, r, p, diag, save.pdf
+- **paLDSC**: covstruc, r, p, diag, save.pdf, fa, fm, nfactors
 - **write.model**: Loadings, S_LD, cutoff, fix_resid, bifactor, mustload, common
 - **rgmodel**: LDSCoutput, model, std.lv, estimation, sub
 - **hdl**: traits, sample.prev, population.prev, LD.path, Nref, method
@@ -46,6 +46,4 @@ These parameters are accepted but have no effect. An informational message is pr
 ### Enrichment model options
 - `enrich(params, fix, std.lv, rm_flank, tau, toler, fixparam)` — The Rust enrichment implementation uses a simplified test. The full lavaan-based enrichment model with custom parameter constraints is not yet ported.
 
-### Parallel analysis variants
-- `paLDSC(fa, fm, nfactors)` — Factor analysis mode and factor extraction methods. Would require implementing principal axis factoring and ML factor analysis algorithms.
 
