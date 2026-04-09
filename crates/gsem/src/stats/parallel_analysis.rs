@@ -108,11 +108,12 @@ fn compute_cholesky_l(v: &Mat<f64>, kstar: usize) -> Mat<f64> {
     }
 
     // V is not PD; apply nearPD then retry
-    if let Ok(v_pd) = gsem_matrix::near_pd::nearest_pd(v, false, 100, 1e-8)
-        && let Ok(llt) = v_pd.llt(Side::Lower)
-    {
-        let l_ref = llt.L();
-        return Mat::from_fn(kstar, kstar, |i, j| l_ref[(i, j)]);
+    #[allow(clippy::collapsible_if)]
+    if let Ok(v_pd) = gsem_matrix::near_pd::nearest_pd(v, false, 100, 1e-8) {
+        if let Ok(llt) = v_pd.llt(Side::Lower) {
+            let l_ref = llt.L();
+            return Mat::from_fn(kstar, kstar, |i, j| l_ref[(i, j)]);
+        }
     }
 
     // Last resort: use diagonal sqrt
