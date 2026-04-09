@@ -23,10 +23,6 @@ pub struct FitResult {
 ///
 /// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
 /// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
-/// Fit a model using Diagonally Weighted Least Squares (DWLS).
-///
-/// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
-/// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
 ///
 /// `grad_tol`: gradient norm convergence threshold (default 1e-6).
 pub fn fit_dwls(
