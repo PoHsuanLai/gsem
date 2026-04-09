@@ -53,6 +53,9 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
         log::warn!("Common factor model did not converge");
     }
 
+    // Compute implied cov BEFORE sandwich_se (which may mutate model internals)
+    let sigma_hat = model.implied_cov();
+
     // Sandwich SEs
     let w = Mat::from_fn(kstar, kstar, |i, j| {
         if i == j {
@@ -114,7 +117,6 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
     let null_fit_stats = fit_indices::compute_fit(s, &null_sigma, v, null_df, k, None, None);
 
     // Model fit
-    let sigma_hat = model.implied_cov();
     let n_free = model.n_free();
     let df = kstar.saturating_sub(n_free);
     let model_fit = fit_indices::compute_fit(

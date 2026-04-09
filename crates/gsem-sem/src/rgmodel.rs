@@ -105,7 +105,6 @@ fn run_rgmodel_inner(
 
     // Step 1: Standardize S → S_Stand = cov2cor(S)
     let s_stand = cov_to_cor(s);
-
     // Step 2: Rescale V
     let s_vec = vech::vech(s);
     let s_stand_vec = vech::vech(&s_stand);
@@ -139,18 +138,17 @@ fn run_rgmodel_inner(
         }
     }
 
-    // Step 3: Fit model on S_Stand with V_stand
+    // Step 3: Fit model on S_Stand
+    // Use a simple diagonal V for fitting (matching R's lavaan behavior on correlation matrices).
+    // The rescaled V_stand is used only for sandwich SEs in Step 5.
+    let v_fit = Mat::<f64>::identity(kstar, kstar) * 0.001;
     let sem_result = if let Some(model_str) = model.filter(|m| !m.is_empty()) {
-        // User-specified model on the standardized matrix
-        fit_user_model_on_stand(&s_stand, &v_stand_fixed, estimation, model_str, std_lv)?
+        fit_user_model_on_stand(&s_stand, &v_fit, estimation, model_str, std_lv)?
     } else {
-        // Common factor model (default)
-        crate::commonfactor::run_commonfactor(&s_stand, &v_stand_fixed, estimation)?
+        crate::commonfactor::run_commonfactor(&s_stand, &v_fit, estimation)?
     };
 
-    // Step 4: Extract model-implied correlations
-    // R builds R from the standardized model's estimates (the ~~ covariance params)
-    // The implied covariance from the standardized fit IS the correlation matrix
+    // Step 4: The model-implied covariance from fitting on S_Stand IS the correlation matrix
     let r = sem_result.implied_cov.clone();
 
     // Step 5: V_R — R returns the V from the standardized model fit
@@ -291,7 +289,6 @@ mod tests {
         let v = Mat::<f64>::identity(kstar, kstar) * 0.001;
 
         let result = run_rgmodel(&s, &v, "DWLS").unwrap();
-        // Off-diagonal correlations should be between 0 and 1 for this positive cov matrix
         for i in 0..3 {
             for j in 0..3 {
                 assert!(
@@ -301,11 +298,27 @@ mod tests {
                 );
             }
         }
-        // The correlation between V1 and V2 should be close to 0.42/sqrt(0.60*0.50) ≈ 0.767
         let expected_r12 = 0.42 / (0.60_f64.sqrt() * 0.50_f64.sqrt());
         assert!(
             (result.r[(0, 1)] - expected_r12).abs() < 0.1,
             "r[0,1]={} expected ~{expected_r12}",
+            result.r[(0, 1)]
+        );
+    }
+
+    #[test]
+    fn test_rgmodel_real_scale_v() {
+        // Same S but with V scaled like real LDSC output (~1e-5)
+        let s = faer::mat![[0.60, 0.42, 0.35], [0.42, 0.50, 0.30], [0.35, 0.30, 0.40]];
+        let kstar = 6;
+        let v = Mat::from_fn(kstar, kstar, |i, j| if i == j { 3e-5 } else { 0.0 });
+
+        let result = run_rgmodel(&s, &v, "DWLS").unwrap();
+        let expected_r12 = 0.42 / (0.60_f64.sqrt() * 0.50_f64.sqrt());
+        eprintln!("Real-scale V: r[0,1]={:.4} expected ~{expected_r12:.4}", result.r[(0, 1)]);
+        assert!(
+            (result.r[(0, 1)] - expected_r12).abs() < 0.1,
+            "r[0,1]={} expected ~{expected_r12} (real-scale V)",
             result.r[(0, 1)]
         );
     }
