@@ -11,7 +11,7 @@
 #' @param params Character vector of parameter names to test (default NULL = all free params)
 #' @param fix Which parameters to fix: "regressions" (default), "loadings", or "none"
 #' @param std.lv Standardize latent variables (default FALSE)
-#' @param rm_flank Remove flanking regions (default TRUE; not yet used in basic test)
+#' @param rm_flank Remove flanking regions (default TRUE; implemented in Rust s_ldsc engine)
 #' @param tau Use tau parameterization (default FALSE; not yet used)
 #' @param base Include baseline (default TRUE)
 #' @param toler Gradient tolerance for optimizer (default NULL = auto)

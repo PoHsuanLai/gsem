@@ -866,6 +866,8 @@ fn s_ldsc(
 
     let config = gsem_ldsc::stratified::StratifiedLdscConfig {
         n_blocks,
+        rm_flank: false,
+        flank_kb: 500,
     };
 
     let result = gsem_ldsc::stratified::s_ldsc(
@@ -878,6 +880,8 @@ fn s_ldsc(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
+        None,
+        None,
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 

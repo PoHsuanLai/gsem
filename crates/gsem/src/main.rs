@@ -974,7 +974,7 @@ fn run_s_ldsc(
     let sp = parse_prevalences(&sample_prev, k);
     let pp = parse_prevalences(&pop_prev, k);
 
-    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks };
+    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks, rm_flank: false, flank_kb: 500 };
 
     eprintln!("Running stratified LDSC...");
     let result = gsem_ldsc::stratified::s_ldsc(
@@ -987,6 +987,8 @@ fn run_s_ldsc(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
+        Some(&annot_data.chr),
+        Some(&annot_data.bp),
     )?;
 
     // Write JSON output

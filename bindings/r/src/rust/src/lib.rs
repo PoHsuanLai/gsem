@@ -1070,6 +1070,8 @@ fn s_ldsc_rust(
 
     let config = gsem_ldsc::stratified::StratifiedLdscConfig {
         n_blocks: n_blocks as usize,
+        rm_flank: false,
+        flank_kb: 500,
     };
 
     match gsem_ldsc::stratified::s_ldsc(
@@ -1082,6 +1084,8 @@ fn s_ldsc_rust(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
+        None,
+        None,
     ) {
         Ok(result) => match result.to_json_string() {
             Ok(json) => json,

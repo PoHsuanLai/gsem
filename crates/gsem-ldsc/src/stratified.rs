@@ -38,11 +38,20 @@ pub struct StratifiedLdscResult {
 pub struct StratifiedLdscConfig {
     /// Number of jackknife blocks.
     pub n_blocks: usize,
+    /// Remove flanking SNPs (within `flank_kb` kb) around each annotation's SNPs
+    /// before running the regression for that annotation.
+    pub rm_flank: bool,
+    /// Flanking window size in kilobases (default 500).
+    pub flank_kb: u64,
 }
 
 impl Default for StratifiedLdscConfig {
     fn default() -> Self {
-        Self { n_blocks: 200 }
+        Self {
+            n_blocks: 200,
+            rm_flank: false,
+            flank_kb: 500,
+        }
     }
 }
 
@@ -69,6 +78,8 @@ pub fn s_ldsc(
     annot_names: &[String],
     m_annot: &[f64],
     config: &StratifiedLdscConfig,
+    snp_chr: Option<&[u32]>,
+    snp_bp: Option<&[u64]>,
 ) -> Result<StratifiedLdscResult> {
     let k = traits.len();
     let n_annot = annot_names.len();
@@ -87,6 +98,26 @@ pub fn s_ldsc(
     let m_total: f64 = m_annot.iter().sum();
 
     log::info!("s_ldsc: {k} traits, {n_annot} annotations, {n_snps} SNPs, {n_blocks} blocks");
+
+    // Pre-compute flanking masks if rm_flank is enabled
+    let flank_masks: Vec<Vec<bool>> = if config.rm_flank {
+        match (snp_chr, snp_bp) {
+            (Some(chr), Some(bp)) => compute_flank_masks(
+                &merged.annot_ld,
+                &merged.ld_indices,
+                chr,
+                bp,
+                n_annot,
+                config.flank_kb,
+            ),
+            _ => {
+                log::warn!("rm_flank=true but chr/bp data not available; skipping flanking removal");
+                vec![vec![false; n_snps]; n_annot]
+            }
+        }
+    } else {
+        vec![vec![false; n_snps]; n_annot]
+    };
 
     let kstar = k * (k + 1) / 2;
     let mut i_mat = Mat::zeros(k, k);
@@ -152,35 +183,77 @@ pub fn s_ldsc(
                 )
             };
 
-            // Run multi-predictor block regression
-            let reg = block_regression_multi(&merged.annot_ld, &outcome, &w, n_blocks, n_annot);
-
-            // Extract intercept (last coefficient)
-            let intercept = reg.coef[n_annot];
-            if j == jj {
-                i_mat[(j, j)] = intercept;
-            } else {
-                i_mat[(j, jj)] = intercept;
-                i_mat[(jj, j)] = intercept;
-            }
-
-            // Extract per-annotation contributions
-            for a in 0..n_annot {
-                let tau = reg.coef[a];
-                let contribution = tau * m_annot[a] / mean_n;
-
+            if config.rm_flank {
+                // rm_flank: run a separate regression per annotation,
+                // excluding flanking SNPs around that annotation's SNPs.
+                // First run the full regression once for the intercept.
+                let reg_full = block_regression_multi(&merged.annot_ld, &outcome, &w, n_blocks, n_annot);
+                let intercept = reg_full.coef[n_annot];
                 if j == jj {
-                    s_annot[a][(j, j)] = contribution;
+                    i_mat[(j, j)] = intercept;
                 } else {
-                    s_annot[a][(j, jj)] = contribution;
-                    s_annot[a][(jj, j)] = contribution;
+                    i_mat[(j, jj)] = intercept;
+                    i_mat[(jj, j)] = intercept;
                 }
-            }
 
-            // Jackknife pseudo-values per annotation
-            let jk = jackknife_multi(&reg, n_annot);
-            for (a, pseudos) in all_pseudos_per_annot.iter_mut().enumerate().take(n_annot) {
-                pseudos.push(jk.pseudo_coefs[a].clone());
+                for a in 0..n_annot {
+                    let mask = &flank_masks[a];
+                    // Build filtered data for this annotation
+                    let kept: Vec<usize> = (0..n_snps).filter(|i| !mask[*i]).collect();
+                    let n_kept = kept.len();
+                    if n_kept < n_annot + 2 {
+                        // Not enough SNPs after flanking removal
+                        all_pseudos_per_annot[a].push(vec![0.0; n_blocks.min(n_kept.max(1))]);
+                        continue;
+                    }
+
+                    let filt_annot = Mat::from_fn(n_kept, n_annot, |i, col| merged.annot_ld[(kept[i], col)]);
+                    let filt_outcome: Vec<f64> = kept.iter().map(|&i| outcome[i]).collect();
+                    let filt_w: Vec<f64> = kept.iter().map(|&i| w[i]).collect();
+                    let filt_blocks = n_blocks.min(n_kept);
+
+                    let reg_a = block_regression_multi(&filt_annot, &filt_outcome, &filt_w, filt_blocks, n_annot);
+                    let tau = reg_a.coef[a];
+                    let contribution = tau * m_annot[a] / mean_n;
+
+                    if j == jj {
+                        s_annot[a][(j, j)] = contribution;
+                    } else {
+                        s_annot[a][(j, jj)] = contribution;
+                        s_annot[a][(jj, j)] = contribution;
+                    }
+
+                    let jk = jackknife_multi(&reg_a, n_annot);
+                    all_pseudos_per_annot[a].push(jk.pseudo_coefs[a].clone());
+                }
+            } else {
+                // Standard: single regression for all annotations
+                let reg = block_regression_multi(&merged.annot_ld, &outcome, &w, n_blocks, n_annot);
+
+                let intercept = reg.coef[n_annot];
+                if j == jj {
+                    i_mat[(j, j)] = intercept;
+                } else {
+                    i_mat[(j, jj)] = intercept;
+                    i_mat[(jj, j)] = intercept;
+                }
+
+                for a in 0..n_annot {
+                    let tau = reg.coef[a];
+                    let contribution = tau * m_annot[a] / mean_n;
+
+                    if j == jj {
+                        s_annot[a][(j, j)] = contribution;
+                    } else {
+                        s_annot[a][(j, jj)] = contribution;
+                        s_annot[a][(jj, j)] = contribution;
+                    }
+                }
+
+                let jk = jackknife_multi(&reg, n_annot);
+                for (a, pseudos) in all_pseudos_per_annot.iter_mut().enumerate().take(n_annot) {
+                    pseudos.push(jk.pseudo_coefs[a].clone());
+                }
             }
 
             vech_idx += 1;
@@ -241,6 +314,8 @@ struct StratifiedMergedData {
     w_ld: Vec<f64>,
     /// Number of SNPs after merging.
     n_snps: usize,
+    /// Original LD reference indices for each merged SNP (for chr/bp lookup).
+    ld_indices: Vec<usize>,
 }
 
 /// Merge trait data with annotation LD scores on SNP ID.
@@ -313,12 +388,15 @@ fn merge_stratified_data(
         ld_snps.len()
     );
 
+    let ld_indices: Vec<usize> = common_indices.iter().map(|(ld_idx, _)| *ld_idx).collect();
+
     Ok(StratifiedMergedData {
         z,
         n,
         annot_ld: merged_annot,
         w_ld: merged_wld,
         n_snps,
+        ld_indices,
     })
 }
 
@@ -519,6 +597,56 @@ impl StratifiedLdscResult {
     }
 }
 
+/// Compute per-annotation flanking masks.
+///
+/// For each annotation, finds SNPs where the annotation value > 0 (annotation SNPs),
+/// then marks all SNPs within `flank_kb` kilobases on the same chromosome as flanking.
+/// Returns a Vec of bool masks (one per annotation), where `true` = exclude this SNP.
+fn compute_flank_masks(
+    annot_ld: &Mat<f64>,
+    ld_indices: &[usize],
+    chr: &[u32],
+    bp: &[u64],
+    n_annot: usize,
+    flank_kb: u64,
+) -> Vec<Vec<bool>> {
+    let n_snps = ld_indices.len();
+    let flank_bp = flank_kb * 1000;
+
+    (0..n_annot)
+        .map(|a| {
+            // Find annotation SNPs (non-zero annotation value)
+            let annot_snp_positions: Vec<(u32, u64)> = (0..n_snps)
+                .filter(|&i| annot_ld[(i, a)] > 0.0)
+                .map(|i| {
+                    let orig_idx = ld_indices[i];
+                    (chr[orig_idx], bp[orig_idx])
+                })
+                .collect();
+
+            // Mark flanking SNPs
+            let mut mask = vec![false; n_snps];
+            for i in 0..n_snps {
+                let orig_idx = ld_indices[i];
+                let snp_chr = chr[orig_idx];
+                let snp_bp = bp[orig_idx];
+
+                // Check if this SNP is within flank_bp of any annotation SNP on same chr
+                // (but is not itself an annotation SNP)
+                if annot_ld[(i, a)] <= 0.0 {
+                    for &(a_chr, a_bp) in &annot_snp_positions {
+                        if snp_chr == a_chr && snp_bp.abs_diff(a_bp) <= flank_bp {
+                            mask[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            mask
+        })
+        .collect()
+}
+
 /// Convert a faer Mat to a JSON-style nested array string.
 fn mat_to_json(m: &Mat<f64>) -> String {
     let rows: Vec<String> = (0..m.nrows())
@@ -564,7 +692,7 @@ mod tests {
         let annot_names = vec!["annot1".to_string(), "annot2".to_string()];
         let m_annot = vec![500000.0, 300000.0];
 
-        let config = StratifiedLdscConfig { n_blocks: 10 };
+        let config = StratifiedLdscConfig { n_blocks: 10, rm_flank: false, flank_kb: 500 };
 
         let result = s_ldsc(
             &[trait_data],
@@ -576,6 +704,8 @@ mod tests {
             &annot_names,
             &m_annot,
             &config,
+            None,
+            None,
         )
         .expect("s_ldsc should succeed");
 
