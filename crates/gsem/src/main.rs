@@ -418,6 +418,37 @@ enum Commands {
         #[arg(short, long, default_value = "simulated_sumstats.tsv")]
         out: PathBuf,
     },
+
+    /// High-Definition Likelihood estimation of genetic covariance
+    Hdl {
+        /// Munged summary statistics files
+        #[arg(short, long, num_args = 1..)]
+        traits: Vec<PathBuf>,
+
+        /// Sample prevalences (comma-separated, NA for continuous)
+        #[arg(long)]
+        sample_prev: Option<String>,
+
+        /// Population prevalences (comma-separated, NA for continuous)
+        #[arg(long)]
+        pop_prev: Option<String>,
+
+        /// LD reference panel directory (text format)
+        #[arg(long)]
+        ld_path: PathBuf,
+
+        /// Reference panel sample size (default: 335265 for UKB)
+        #[arg(long, default_value = "335265")]
+        n_ref: f64,
+
+        /// Method: piecewise or jackknife
+        #[arg(long, default_value = "piecewise")]
+        method: String,
+
+        /// Output file (JSON)
+        #[arg(short, long, default_value = "hdl_result.json")]
+        out: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -611,6 +642,15 @@ fn main() -> Result<()> {
             ld,
             out,
         } => run_simulate(&covstruc, &n_per_trait, &ld, &out),
+        Commands::Hdl {
+            traits,
+            sample_prev,
+            pop_prev,
+            ld_path,
+            n_ref,
+            method,
+            out,
+        } => run_hdl(&traits, sample_prev, pop_prev, &ld_path, n_ref, &method, &out),
     }
 }
 
@@ -1926,4 +1966,177 @@ fn parse_chromosome_selection(select: &str, n_chr: usize) -> Vec<usize> {
                 .collect()
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hdl(
+    traits: &[PathBuf],
+    sample_prev: Option<String>,
+    pop_prev: Option<String>,
+    ld_path: &Path,
+    n_ref: f64,
+    method: &str,
+    out: &Path,
+) -> Result<()> {
+    use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
+
+    eprintln!("Reading {} trait files for HDL...", traits.len());
+
+    // Read summary stats (same pattern as LDSC)
+    let mut trait_data = Vec::new();
+    for path in traits {
+        let records = gwas_reader::read_sumstats(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let n_snps = records.len();
+        eprintln!("  {}: {} SNPs", path.display(), n_snps);
+
+        trait_data.push(HdlTraitData {
+            snp: records.iter().map(|r| r.snp.clone()).collect(),
+            z: records.iter().map(|r| r.z).collect(),
+            n: records.iter().map(|r| r.n).collect(),
+            a1: records.iter().map(|r| r.a1.clone()).collect(),
+            a2: records.iter().map(|r| r.a2.clone()).collect(),
+        });
+    }
+
+    // Parse HDL method
+    let hdl_method = match method.to_lowercase().as_str() {
+        "jackknife" => HdlMethod::Jackknife,
+        _ => HdlMethod::Piecewise,
+    };
+
+    let config = HdlConfig {
+        method: hdl_method,
+        n_ref,
+    };
+
+    // Load LD pieces from text format directory.
+    // Expected format:
+    //   {ld_path}/pieces.txt — tab-delimited: piece_idx, chr, n_snps
+    //   {ld_path}/piece.{N}.snps.txt — per-piece SNP info: SNP\tA1\tA2\tLDscore
+    let pieces_file = ld_path.join("pieces.txt");
+    if !pieces_file.exists() {
+        anyhow::bail!(
+            "HDL LD reference directory not found or missing pieces.txt at {}.\n\
+             HDL requires a text-format LD reference panel directory containing:\n\
+             - pieces.txt: tab-delimited index file with columns: piece_idx, chr, n_snps\n\
+             - piece.{{N}}.snps.txt: per-piece SNP data with columns: SNP, A1, A2, LDscore\n\n\
+             The R version of GenomicSEM uses .rda files which cannot be read directly.\n\
+             Convert R LD reference panels to text format first, e.g. in R:\n\
+             \n  load('UKB_SVD_eigen99_extraction/LDmatrix1.RData')\n\
+             \n  write.table(data.frame(SNP=snps, A1=a1, A2=a2, LDscore=ld), \
+             'piece.1.snps.txt', sep='\\t', row.names=FALSE, quote=FALSE)",
+            pieces_file.display()
+        );
+    }
+
+    let pieces_content = std::fs::read_to_string(&pieces_file)
+        .with_context(|| format!("failed to read {}", pieces_file.display()))?;
+
+    let mut ld_pieces = Vec::new();
+    for line in pieces_content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with("piece") {
+            continue; // skip header or comments
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        let piece_idx: usize = fields[0].parse().with_context(|| {
+            format!("invalid piece index in pieces.txt: '{}'", fields[0])
+        })?;
+
+        // Read per-piece SNP file
+        let snp_file = ld_path.join(format!("piece.{piece_idx}.snps.txt"));
+        if !snp_file.exists() {
+            eprintln!(
+                "Warning: piece file {} not found, skipping",
+                snp_file.display()
+            );
+            continue;
+        }
+
+        let snp_content = std::fs::read_to_string(&snp_file)
+            .with_context(|| format!("failed to read {}", snp_file.display()))?;
+
+        let mut snps = Vec::new();
+        let mut a1 = Vec::new();
+        let mut a2 = Vec::new();
+        let mut ld_scores = Vec::new();
+
+        for sline in snp_content.lines() {
+            let sline = sline.trim();
+            if sline.is_empty() || sline.starts_with('#') || sline.starts_with("SNP") {
+                continue;
+            }
+            let sf: Vec<&str> = sline.split('\t').collect();
+            if sf.len() < 4 {
+                continue;
+            }
+            snps.push(sf[0].to_string());
+            a1.push(sf[1].to_string());
+            a2.push(sf[2].to_string());
+            if let Ok(ld) = sf[3].parse::<f64>() {
+                ld_scores.push(ld);
+            } else {
+                ld_scores.push(0.0);
+            }
+        }
+
+        let m = snps.len();
+        if m > 0 {
+            ld_pieces.push(LdPiece {
+                snps,
+                a1,
+                a2,
+                ld_scores,
+                m,
+            });
+        }
+    }
+
+    if ld_pieces.is_empty() {
+        anyhow::bail!("no valid LD pieces loaded from {}", ld_path.display());
+    }
+
+    eprintln!(
+        "Loaded {} LD pieces ({} total SNPs)",
+        ld_pieces.len(),
+        ld_pieces.iter().map(|p| p.m).sum::<usize>()
+    );
+
+    // Parse prevalences
+    let k = traits.len();
+    let sp = parse_prevalences(&sample_prev, k);
+    let pp = parse_prevalences(&pop_prev, k);
+
+    eprintln!("Running HDL...");
+    let result = gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config)?;
+
+    // Write JSON output
+    let json = result.to_json_string()?;
+    std::fs::write(out, &json).with_context(|| format!("failed to write {}", out.display()))?;
+
+    eprintln!("HDL complete. Results written to {}", out.display());
+
+    // Print S matrix
+    let k = result.s.nrows();
+    eprintln!("\nGenetic covariance matrix (S):");
+    for i in 0..k {
+        let row: Vec<String> = (0..k)
+            .map(|j| format!("{:8.4}", result.s[(i, j)]))
+            .collect();
+        eprintln!("  {}", row.join(" "));
+    }
+
+    eprintln!("\nIntercepts (I):");
+    for i in 0..k {
+        let row: Vec<String> = (0..k)
+            .map(|j| format!("{:8.4}", result.i_mat[(i, j)]))
+            .collect();
+        eprintln!("  {}", row.join(" "));
+    }
+
+    Ok(())
 }

@@ -72,3 +72,56 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
+
+  r-binding:
+    name: R Binding Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bindings/r/src/rust
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: bindings/r
+          extra-packages: any::jsonlite
+      - name: Build Rust staticlib
+        working-directory: bindings/r/src/rust
+        run: cargo build --release
+      - name: R CMD check
+        working-directory: bindings/r
+        run: |
+          cp src/rust/target/release/libgsemr.a src/
+          R CMD build .
+          R CMD check gsemr_*.tar.gz --no-manual --no-vignettes
+        env:
+          _R_CHECK_FORCE_SUGGESTS_: false
+
+  python-binding:
+    name: Python Binding Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bindings/python/src/rust
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cargo check (Rust compilation)
+        working-directory: bindings/python/src/rust
+        run: cargo check
+      - name: Install maturin and build wheel
+        working-directory: bindings/python
+        run: |
+          pip install maturin numpy
+          maturin build --release
+      - name: Install and smoke test
+        run: |
+          pip install bindings/python/src/rust/target/wheels/genomicsem-*.whl
+          python -c "import genomicsem; print('genomicsem imported OK')"

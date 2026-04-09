@@ -12,6 +12,7 @@
 pub mod annot_reader;
 pub mod covariance;
 pub mod error;
+pub mod hdl;
 pub mod heritability;
 pub mod jackknife;
 pub mod liability;
@@ -46,7 +47,7 @@ pub struct LdscResult {
 }
 
 /// Serialize a `Mat<f64>` as a row-major 2D array: `[[1,2],[3,4]]`.
-fn ser_mat<S: serde::Serializer>(mat: &Mat<f64>, s: S) -> std::result::Result<S::Ok, S::Error> {
+pub fn ser_mat<S: serde::Serializer>(mat: &Mat<f64>, s: S) -> std::result::Result<S::Ok, S::Error> {
     use serde::ser::SerializeSeq;
     let mut seq = s.serialize_seq(Some(mat.nrows()))?;
     for i in 0..mat.nrows() {
@@ -57,7 +58,7 @@ fn ser_mat<S: serde::Serializer>(mat: &Mat<f64>, s: S) -> std::result::Result<S:
 }
 
 /// Deserialize a `Mat<f64>` from a row-major 2D array: `[[1,2],[3,4]]`.
-fn de_mat<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Mat<f64>, D::Error> {
+pub fn de_mat<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Mat<f64>, D::Error> {
     let rows: Vec<Vec<f64>> = Deserialize::deserialize(d)?;
     if rows.is_empty() {
         return Ok(Mat::zeros(0, 0));
