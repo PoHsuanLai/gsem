@@ -174,7 +174,43 @@ fn usermodel_rust(
     };
 
     let k = ldsc_result.s.nrows();
-    let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+    // Extract observed variable names from the model partable.
+    // Observed variables = RHS of =~ (loadings), excluding latent factors and SNP.
+    let obs_names: Vec<String> = {
+        let latents: std::collections::HashSet<String> = pt.rows.iter()
+            .filter(|r| r.op == gsem_sem::syntax::Op::Loading)
+            .map(|r| r.lhs.clone())
+            .collect();
+        let mut names = Vec::new();
+        for row in &pt.rows {
+            if row.op == gsem_sem::syntax::Op::Loading {
+                let name = &row.rhs;
+                if !latents.contains(name) && name != "SNP" && !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+        if names.is_empty() {
+            // No loadings found — try self-covariances (models without =~)
+            for row in &pt.rows {
+                if row.op == gsem_sem::syntax::Op::Covariance
+                    && row.lhs == row.rhs
+                    && !latents.contains(&row.lhs)
+                    && row.lhs != "SNP"
+                    && !names.contains(&row.lhs)
+                {
+                    names.push(row.lhs.clone());
+                }
+            }
+        }
+        if names.len() != k {
+            return format!(
+                "{{\"error\": \"model has {} observed variables but S matrix is {}x{}: obs=[{}]\"}}",
+                names.len(), k, k, names.join(", ")
+            );
+        }
+        names
+    };
     let mut sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
 
     let kstar = k * (k + 1) / 2;
