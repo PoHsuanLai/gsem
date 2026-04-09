@@ -15,6 +15,7 @@ pub mod commonfactor;
 pub mod delta;
 pub mod error;
 pub mod estimator;
+pub mod jacobian;
 pub mod fit_indices;
 pub mod model;
 pub mod q_factor;

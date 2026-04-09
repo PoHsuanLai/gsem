@@ -5,6 +5,7 @@ use faer::prelude::Solve;
 
 use gsem_matrix::vech;
 
+use crate::jacobian;
 use crate::model::Model;
 
 /// Result of SEM estimation.
@@ -45,8 +46,8 @@ pub fn fit_dwls(
 
     let obj_fn = |model: &Model| -> f64 { dwls_objective(model, &s_vec, &w) };
 
-    let grad_fn = |model: &mut Model, params: &[f64]| -> Vec<f64> {
-        numerical_gradient(model, params, |m| dwls_objective(m, &s_vec, &w))
+    let grad_fn = |model: &mut Model, _params: &[f64]| -> Vec<f64> {
+        dwls_gradient_analytical(model, &s_vec, &w)
     };
 
     lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, grad_tol)
@@ -68,8 +69,8 @@ pub fn fit_ml(
 
     let obj_fn = |model: &Model| -> f64 { ml_objective(model, &s_owned) };
 
-    let grad_fn = |model: &mut Model, params: &[f64]| -> Vec<f64> {
-        numerical_gradient(model, params, |m| ml_objective(m, &s_owned))
+    let grad_fn = |model: &mut Model, _params: &[f64]| -> Vec<f64> {
+        ml_gradient_analytical(model, &s_owned)
     };
 
     lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, grad_tol)
@@ -352,7 +353,94 @@ fn ml_objective(model: &Model, s_obs: &Mat<f64>) -> f64 {
     log_det_sigma + trace - log_det_s - p as f64
 }
 
-/// Numerical gradient via central differences.
+/// Analytical DWLS gradient.
+///
+/// grad_j = -2 * sum_k w_k * (s_k - sigma_k) * Delta_{k,j}
+///        = -2 * Delta' * (w .* residual)
+fn dwls_gradient_analytical(model: &Model, s_vec: &[f64], w: &[f64]) -> Vec<f64> {
+    let sigma = model.implied_cov();
+    let sigma_vec = vech::vech(&sigma).expect("implied cov must be square");
+    let n_free = model.n_free();
+
+    // w_residual = w .* (s - sigma)
+    let w_residual: Vec<f64> = s_vec
+        .iter()
+        .zip(sigma_vec.iter())
+        .zip(w.iter())
+        .map(|((&s, &sig), &wi)| wi * (s - sig))
+        .collect();
+
+    // Delta: kstar × n_free
+    let delta = jacobian::analytical_jacobian(model);
+    let kstar = w_residual.len();
+
+    // grad = -2 * Delta' * w_residual
+    let mut grad = vec![0.0; n_free];
+    for j in 0..n_free {
+        let mut sum = 0.0;
+        for k in 0..kstar {
+            sum += delta[(k, j)] * w_residual[k];
+        }
+        grad[j] = -2.0 * sum;
+    }
+    grad
+}
+
+/// Analytical ML gradient.
+///
+/// dF/dtheta_j = tr((Sigma^{-1} - Sigma^{-1} * S * Sigma^{-1}) * dSigma/dtheta_j)
+fn ml_gradient_analytical(model: &Model, s_obs: &Mat<f64>) -> Vec<f64> {
+    let sigma = model.implied_cov();
+    let p = s_obs.nrows();
+    let n_free = model.n_free();
+
+    // Compute Sigma^{-1} via Cholesky
+    let sigma_inv = match sigma.llt(faer::Side::Lower) {
+        Ok(llt) => {
+            let mut eye = Mat::identity(p, p);
+            llt.solve_in_place(eye.as_mut());
+            eye
+        }
+        Err(_) => {
+            // If Cholesky fails, return zero gradient (will cause line search to fail gracefully)
+            return vec![0.0; n_free];
+        }
+    };
+
+    // R = Sigma^{-1} - Sigma^{-1} * S * Sigma^{-1}
+    let sigma_inv_s = &sigma_inv * s_obs;
+    let r_mat = &sigma_inv - &(&sigma_inv_s * &sigma_inv);
+
+    // Convert R to vech with scaling: off-diagonal elements multiply by 2
+    let kstar = p * (p + 1) / 2;
+    let mut r_vech_scaled = Vec::with_capacity(kstar);
+    for col in 0..p {
+        for row in col..p {
+            if row == col {
+                r_vech_scaled.push(r_mat[(row, col)]);
+            } else {
+                r_vech_scaled.push(2.0 * r_mat[(row, col)]);
+            }
+        }
+    }
+
+    // Delta: kstar × n_free
+    let delta = jacobian::analytical_jacobian(model);
+
+    // grad = Delta' * r_vech_scaled
+    let mut grad = vec![0.0; n_free];
+    for j in 0..n_free {
+        let mut sum = 0.0;
+        for k in 0..kstar {
+            sum += delta[(k, j)] * r_vech_scaled[k];
+        }
+        grad[j] = sum;
+    }
+    grad
+}
+
+/// Numerical gradient via central differences (kept for testing/validation).
+#[allow(dead_code)]
 fn numerical_gradient<F>(model: &mut Model, params: &[f64], obj_fn: F) -> Vec<f64>
 where
     F: Fn(&Model) -> f64,
