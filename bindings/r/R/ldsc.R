@@ -30,11 +30,9 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
 
   # Ignored params
   if (!identical(sep_weights, FALSE)) {
-    message("Note: 'sep_weights' is ignored in gsemr -- weight LD scores are always read from wld directory")
+    message("Note: sep_weights is always enabled in gsemr -- weight LD scores are read from the wld directory")
   }
-  if (!is.null(ldsc.log)) {
-    message("Note: 'ldsc.log' is ignored in gsemr -- logging is handled by the Rust runtime")
-  }
+  # ldsc.log: handled after computation below
 
   if (is.null(trait.names)) {
     trait.names <- paste0("V", seq_along(traits))
@@ -72,11 +70,31 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
   I <- as.matrix(result$i_mat)
   rownames(I) <- colnames(I) <- trait.names
 
-  list(
+  out <- list(
     S = S,
     V = V,
     I = I,
     N = result$n_vec,
     m = result$m
   )
+
+  # Write log file if requested
+  if (!is.null(ldsc.log)) {
+    sink(ldsc.log)
+    cat("gsemr LDSC Results\n")
+    cat("==================\n\n")
+    cat("Traits:", paste(traits, collapse=", "), "\n")
+    cat("N blocks:", n.blocks, "\n")
+    cat("M (SNPs used):", result$m, "\n\n")
+    cat("Genetic Covariance Matrix (S):\n")
+    print(round(S, 4))
+    cat("\nIntercept Matrix (I):\n")
+    print(round(I, 4))
+    cat("\nSample Sizes (N):\n")
+    print(result$n_vec)
+    sink()
+    message("LDSC log written to: ", ldsc.log)
+  }
+
+  out
 }

@@ -19,18 +19,15 @@
 munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.filter=0.01,
                   log.name=NULL, column.names=list(), parallel=FALSE, cores=NULL, overwrite=TRUE) {
 
-  # Ignored params
-  if (!is.null(log.name)) {
-    message("Note: 'log.name' is ignored in gsemr -- logging is handled by the Rust runtime")
-  }
+  # log.name: handled after computation below
   if (!identical(parallel, FALSE)) {
-    message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
+    message("Note: Rust backend is always parallel via rayon")
   }
   if (!is.null(cores)) {
-    message("Note: 'cores' is ignored in gsemr -- Rust uses native parallelism automatically")
+    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
   }
   if (!identical(overwrite, TRUE)) {
-    message("Note: 'overwrite' is ignored in gsemr -- files are always overwritten")
+    message("Note: gsemr always overwrites existing output files")
   }
 
   if (is.null(trait.names)) {
@@ -64,6 +61,20 @@ munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.fil
 
   if (length(result) == 0) {
     warning("munge produced no output files")
+  }
+
+  # Write log file if requested
+  if (!is.null(log.name)) {
+    sink(log.name)
+    cat("gsemr Munge Results\n")
+    cat("===================\n\n")
+    cat("Input files:", paste(files, collapse=", "), "\n")
+    cat("Trait names:", paste(trait.names, collapse=", "), "\n")
+    cat("INFO filter:", info.filter, "\n")
+    cat("MAF filter:", maf.filter, "\n")
+    cat("Output files:", paste(result, collapse=", "), "\n")
+    sink()
+    message("Munge log written to: ", log.name)
   }
 
   invisible(result)

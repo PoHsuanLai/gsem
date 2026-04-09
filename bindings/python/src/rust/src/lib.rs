@@ -153,7 +153,12 @@ fn ldsc(
     select: Option<String>,
     chisq_max: Option<f64>,
 ) -> PyResult<PyLdscResult> {
-    let _ = (sep_weights, ldsc_log);
+    if sep_weights {
+        log::info!("sep_weights is always enabled in gsemr — weight LD scores are read from the wld directory");
+    }
+    if let Some(ref path) = ldsc_log {
+        log::info!("ldsc_log='{path}' — file logging is handled at the Python/R wrapper level");
+    }
     let wld_dir = if wld.is_empty() { ld } else { wld };
 
     let mut trait_data = Vec::new();
@@ -485,7 +490,18 @@ fn user_gwas(
         q_snp,
         fix_measurement,
     };
-    let _ = (printwarn, toler, parallel, mpi);
+    if !printwarn {
+        log::info!("printwarn=False — warning suppression is not yet supported");
+    }
+    if toler {
+        log::info!("toler — convergence tolerance is controlled by the L-BFGS optimizer internally");
+    }
+    if !parallel {
+        log::info!("parallel=False — gsemr always uses native Rust parallelism via rayon");
+    }
+    if mpi {
+        log::warn!("MPI is not supported in gsemr — use the cores parameter for thread control");
+    }
     if let Some(n) = cores {
         rayon::ThreadPoolBuilder::new()
             .num_threads(n)
@@ -623,7 +639,9 @@ fn hdl(
     method: &str,
 ) -> PyResult<String> {
     use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
-    let _ = trait_names;
+    if trait_names.is_some() {
+        log::info!("trait_names are used for labeling output in the Python wrapper");
+    }
 
     let sp: Vec<Option<f64>> = sample_prev.unwrap_or_default();
     let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();
@@ -771,7 +789,12 @@ fn s_ldsc(
     ldsc_log: Option<String>,
     exclude_cont: bool,
 ) -> PyResult<String> {
-    let _ = (trait_names, ldsc_log);
+    if trait_names.is_some() {
+        log::info!("trait_names are used for labeling output in the Python wrapper");
+    }
+    if let Some(ref path) = ldsc_log {
+        log::info!("ldsc_log='{path}' — file logging is handled at the Python/R wrapper level");
+    }
 
     let sp: Vec<Option<f64>> = sample_prev.unwrap_or_default();
     let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();

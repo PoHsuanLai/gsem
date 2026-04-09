@@ -19,9 +19,7 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
                    trait.names=NULL, n.blocks=200, ldsc.log=NULL, exclude_cont=TRUE) {
 
   # Ignored params
-  if (!is.null(ldsc.log)) {
-    message("Note: 'ldsc.log' is ignored in gsemr -- logging is handled by the Rust runtime")
-  }
+  # ldsc.log: handled after computation below
 
   if (is.null(trait.names)) {
     trait.names <- paste0("V", seq_along(traits))
@@ -80,6 +78,24 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
       rownames(I) <- colnames(I) <- trait.names
     }
     result$I <- I
+  }
+
+  # Write log file if requested
+  if (!is.null(ldsc.log)) {
+    sink(ldsc.log)
+    cat("gsemr Stratified LDSC Results\n")
+    cat("=============================\n\n")
+    cat("Traits:", paste(traits, collapse=", "), "\n")
+    if (!is.null(result$S)) {
+      cat("\nGenetic Covariance Matrix (S):\n")
+      print(round(result$S, 4))
+    }
+    if (!is.null(result$I)) {
+      cat("\nIntercept Matrix (I):\n")
+      print(round(result$I, 4))
+    }
+    sink()
+    message("s_ldsc log written to: ", ldsc.log)
   }
 
   result
