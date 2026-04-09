@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml/badge.svg)](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Rust](https://img.shields.io/badge/rust-2024_edition-orange.svg)](https://www.rust-lang.org)
+
 
 A Rust rewrite of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) for multivariate genomic structural equation modeling on GWAS summary statistics.
 
@@ -11,7 +11,7 @@ A Rust rewrite of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) for mul
 - **Performance**: Per-SNP GWAS loop parallelized with rayon (vs R's foreach/doParallel)
 - **No system deps**: Pure-Rust linear algebra via [faer](https://github.com/sarah-quinones/faer-rs) (no LAPACK/cmake)
 - **Portable**: Single static binary, plus R and Python bindings
-- **Correctness**: 91 unit tests, algorithms validated against R GenomicSEM output
+- **Correctness**: Algorithms validated against R GenomicSEM output
 
 ## Architecture
 
@@ -25,8 +25,6 @@ gsem/
     gsem-r/        R bindings via extendr
     gsem-py/       Python bindings via PyO3
 ```
-
-Each core crate (`gsem-matrix`, `gsem-ldsc`, `gsem-sem`) is independently useful outside of gsem.
 
 ## Installation
 
@@ -120,71 +118,6 @@ genomicsem gwas \
   --threads 8 \
   --out gwas_result.tsv
 ```
-
-## Pipeline
-
-```
-Raw GWAS files ──► munge ──► .sumstats.gz ──► ldsc ──► S, V, I (JSON)
-                                                           │
-                                              ┌────────────┼────────────┐
-                                              ▼            ▼            ▼
-                                            sem          gwas      enrichment
-                                         (usermodel)  (per-SNP)   (stratified)
-```
-
-## Crate Details
-
-### gsem-matrix
-
-| Feature | Description |
-|---------|-------------|
-| `nearest_pd()` | Higham (2002) alternating projections with Dykstra correction |
-| `vech()` / `vech_reverse()` | Half-vectorization (column-major lower triangle) |
-| `smooth_if_needed()` | PSD check via Cholesky, auto-smooth with nearPD |
-| `cov_to_cor()` / `cor_to_cov()` | Covariance-correlation conversions |
-
-### gsem-ldsc
-
-| Feature | Description |
-|---------|-------------|
-| `ldsc()` | Full multivariate LDSC: weights, block WLS, jackknife V, liability scale |
-| `estimate_h2()` | Single-trait heritability via LD regression |
-| `estimate_gcov()` | Pairwise genetic covariance |
-| Serialization | `LdscResult` supports JSON via faer's serde feature |
-
-### gsem-sem
-
-| Feature | Description |
-|---------|-------------|
-| Syntax parser | Lavaan-compatible: `=~`, `~~`, `~`, `:=`, labels, constraints |
-| DWLS / ML | L-BFGS optimizer with Armijo line search and projected bounds |
-| Sandwich SE | Corrected standard errors via `(Delta' W Delta)^{-1} Delta' W V W Delta (Delta' W Delta)^{-1}` |
-| Fit indices | Chi-square, CFI, AIC, SRMR |
-| V reorder | Port of `.rearrange()` for model variable ordering |
-
-## Input Formats
-
-### Munged sumstats (`.sumstats.gz`)
-
-Tab-delimited, gzipped: `SNP  N  Z  A1  A2`
-
-### Merged sumstats (for GWAS)
-
-Tab-delimited: `SNP  A1  A2  MAF  beta.Trait1  se.Trait1  beta.Trait2  se.Trait2  ...`
-
-### LD scores
-
-Standard LDSC format: `{chr}.l2.ldscore.gz` files + `{chr}.l2.M_5_50` files in a directory.
-
-## Differences from R GenomicSEM
-
-| Aspect | R GenomicSEM | gsem |
-|--------|-------------|------|
-| SEM engine | lavaan | Built-in L-BFGS |
-| Linear algebra | R's LAPACK bindings | faer |
-| GWAS parallelism | foreach + doParallel | rayon |
-| Serialization | R `.rds` files | JSON |
-| Distribution | R package | CLI + Rust lib + R/Python bindings |
 
 ## Development
 
