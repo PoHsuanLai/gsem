@@ -350,6 +350,21 @@ if (!is.null(fit_2f)) {
   pe_2f <- parameterEstimates(fit_2f)
   free_2f <- pe_2f[pe_2f$op %in% c("=~", "~~") & pe_2f$se > 0, ]
 
+  fit_measures_2f <- fitMeasures(fit_2f, c("chisq", "df", "pvalue", "cfi", "srmr"))
+
+  # Sandwich SEs for 2-factor model
+  Delta_2f_raw <- lavInspect(fit_2f, "delta")
+  if (is.list(Delta_2f_raw)) { Delta_2f <- Delta_2f_raw[[1]] } else { Delta_2f <- as.matrix(Delta_2f_raw) }
+  W_2f_lav <- lavInspect(fit_2f, "WLS.V")
+  bread_2f <- solve(t(Delta_2f) %*% W_2f_lav %*% Delta_2f)
+  lettuce_2f <- W_2f_lav %*% Delta_2f
+
+  order_idx_2f <- .rearrange(k = 4, fit = fit_2f, names = c("V1", "V2", "V3", "V4"))
+  V_reorder_2f <- V_2f[order_idx_2f, order_idx_2f]
+
+  Ohtt_2f <- bread_2f %*% t(lettuce_2f) %*% V_reorder_2f %*% lettuce_2f %*% bread_2f
+  sandwich_se_2f <- sqrt(diag(Ohtt_2f))
+
   write_fixture(list(
     s = mat_to_list(S_2f),
     v = mat_to_list(V_2f),
@@ -363,7 +378,15 @@ if (!is.null(fit_2f)) {
         est = free_2f$est[i],
         se = free_2f$se[i]
       )
-    })
+    }),
+    sandwich_se = as.numeric(sandwich_se_2f),
+    fit_indices = list(
+      chisq = as.numeric(fit_measures_2f["chisq"]),
+      df = as.numeric(fit_measures_2f["df"]),
+      p_chisq = as.numeric(fit_measures_2f["pvalue"]),
+      cfi = as.numeric(fit_measures_2f["cfi"]),
+      srmr = as.numeric(fit_measures_2f["srmr"])
+    )
   ), "sem_2factor")
 } else {
   cat("Skipping 2-factor fixture\n")

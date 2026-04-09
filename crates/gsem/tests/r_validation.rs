@@ -343,9 +343,51 @@ fn test_sem_estimates_match_r() {
         }
     }
 
-    // More robust check: the model-implied covariance should approximate S
-    let implied = model.implied_cov();
-    assert_mat_close(&implied, &s, 0.05, "SEM implied cov ≈ S");
+    // Check sandwich SEs against R
+    let r_sandwich_se = json_to_vec(&fix["sandwich_se"]);
+    let kstar = 3 * 4 / 2;
+    let v = json_to_mat(&fix["v"]);
+    let w = faer::Mat::from_fn(kstar, kstar, |i, j| {
+        if i == j && v_diag[i] > 1e-30 { 1.0 / v_diag[i] } else { 0.0 }
+    });
+    let (se_vec, _ohtt) = gsem_sem::sandwich::sandwich_se(&mut model, &w, &v);
+    assert_eq!(
+        se_vec.len(), r_sandwich_se.len(),
+        "Sandwich SE count mismatch: Rust={} R={}", se_vec.len(), r_sandwich_se.len()
+    );
+    for (i, (&rust_se, &r_se)) in se_vec.iter().zip(r_sandwich_se.iter()).enumerate() {
+        let diff = (rust_se - r_se).abs();
+        assert!(
+            diff < 0.01,
+            "1-factor sandwich SE[{i}]: Rust={rust_se:.6} R={r_se:.6} diff={diff:.6}"
+        );
+    }
+
+    // Check fit indices against R
+    let r_fit = &fix["fit_indices"];
+    let r_chisq = r_fit["chisq"].as_f64().unwrap();
+    let r_df = r_fit["df"].as_f64().unwrap() as usize;
+    let r_srmr = r_fit["srmr"].as_f64().unwrap();
+
+    let sigma_hat = model.implied_cov();
+    let n_free = model.n_free();
+    let df = kstar.saturating_sub(n_free);
+    assert_eq!(df, r_df, "1-factor df mismatch");
+
+    let fit_stats = gsem_sem::fit_indices::compute_fit(&s, &sigma_hat, &v, df, n_free, None, None);
+    let chisq_diff = (fit_stats.chisq - r_chisq).abs();
+    assert!(
+        chisq_diff < 1e-4,
+        "1-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}", fit_stats.chisq
+    );
+    let srmr_diff = (fit_stats.srmr - r_srmr).abs();
+    assert!(
+        srmr_diff < 1e-6,
+        "1-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}", fit_stats.srmr
+    );
+
+    // Check implied cov approximates S
+    assert_mat_close(&sigma_hat, &s, 0.05, "SEM implied cov ≈ S");
 
     // Check objective is small (good fit)
     assert!(
@@ -427,6 +469,49 @@ fn test_sem_2factor_all_params_match_r() {
             );
         }
     }
+
+    // Check sandwich SEs against R (tests correct indexing through sandwich computation)
+    let r_sandwich_se = json_to_vec(&fix["sandwich_se"]);
+    let kstar = 4 * 5 / 2; // 10
+    let v = json_to_mat(&fix["v"]);
+    let w = faer::Mat::from_fn(kstar, kstar, |i, j| {
+        if i == j && v_diag[i] > 1e-30 { 1.0 / v_diag[i] } else { 0.0 }
+    });
+    let (se_vec, _ohtt) = gsem_sem::sandwich::sandwich_se(&mut model, &w, &v);
+    assert_eq!(
+        se_vec.len(), r_sandwich_se.len(),
+        "2-factor sandwich SE count mismatch: Rust={} R={}", se_vec.len(), r_sandwich_se.len()
+    );
+    for (i, (&rust_se, &r_se)) in se_vec.iter().zip(r_sandwich_se.iter()).enumerate() {
+        let diff = (rust_se - r_se).abs();
+        assert!(
+            diff < 0.01,
+            "2-factor sandwich SE[{i}]: Rust={rust_se:.6} R={r_se:.6} diff={diff:.6}"
+        );
+    }
+
+    // Check fit indices against R
+    let r_fit = &fix["fit_indices"];
+    let r_chisq = r_fit["chisq"].as_f64().unwrap();
+    let r_df = r_fit["df"].as_f64().unwrap() as usize;
+    let r_srmr = r_fit["srmr"].as_f64().unwrap();
+
+    let sigma_hat = model.implied_cov();
+    let n_free = model.n_free();
+    let df = kstar.saturating_sub(n_free);
+    assert_eq!(df, r_df, "2-factor df mismatch");
+
+    let fit_stats = gsem_sem::fit_indices::compute_fit(&s, &sigma_hat, &v, df, n_free, None, None);
+    let chisq_diff = (fit_stats.chisq - r_chisq).abs();
+    assert!(
+        chisq_diff < 1e-4,
+        "2-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}", fit_stats.chisq
+    );
+    let srmr_diff = (fit_stats.srmr - r_srmr).abs();
+    assert!(
+        srmr_diff < 1e-6,
+        "2-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}", fit_stats.srmr
+    );
 }
 
 // ── Test Case 9: V reorder ──────────────────────────────────────────────────
@@ -522,5 +607,32 @@ fn test_commonfactor_matches_r() {
         &r_implied,
         1e-6,
         "commonfactor implied cov",
+    );
+
+    // Check fit indices against R
+    let r_chisq = fix["chisq"].as_f64().unwrap();
+    let r_df = fix["df"].as_f64().unwrap() as usize;
+    let r_cfi = fix["cfi"].as_f64().unwrap();
+    let r_srmr = fix["srmr"].as_f64().unwrap();
+
+    assert_eq!(result.fit.df, r_df, "commonfactor df mismatch");
+
+    let chisq_diff = (result.fit.chisq - r_chisq).abs();
+    assert!(
+        chisq_diff < 1e-4,
+        "commonfactor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
+        result.fit.chisq
+    );
+    let cfi_diff = (result.fit.cfi - r_cfi).abs();
+    assert!(
+        cfi_diff < 0.01,
+        "commonfactor CFI: Rust={:.6} R={r_cfi:.6} diff={cfi_diff:.6}",
+        result.fit.cfi
+    );
+    let srmr_diff = (result.fit.srmr - r_srmr).abs();
+    assert!(
+        srmr_diff < 1e-6,
+        "commonfactor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
+        result.fit.srmr
     );
 }
