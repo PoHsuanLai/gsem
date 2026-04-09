@@ -214,10 +214,10 @@ fn usermodel_rust(
     let kstar = k * (k + 1) / 2;
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
-    let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, grad_tol)
-    } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, grad_tol)
+    let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
+    let fit = match est_method {
+        gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, grad_tol),
+        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, grad_tol),
     };
 
     // If model failed to converge and fix_resid is true, add lower bounds and retry
@@ -232,10 +232,9 @@ fn usermodel_rust(
             }
         }
         let mut model_retry = gsem_sem::model::Model::from_partable(&pt, &obs_names);
-        let fit2 = if estimation.to_uppercase() == "ML" {
-            gsem_sem::estimator::fit_ml(&mut model_retry, &ldsc_result.s, 1000, grad_tol)
-        } else {
-            gsem_sem::estimator::fit_dwls(&mut model_retry, &ldsc_result.s, &v_diag, 1000, grad_tol)
+        let fit2 = match est_method {
+            gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut model_retry, &ldsc_result.s, 1000, grad_tol),
+            gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut model_retry, &ldsc_result.s, &v_diag, 1000, grad_tol),
         };
         (fit2, pt.clone())
     } else {
@@ -274,10 +273,9 @@ fn usermodel_rust(
             .join("\n");
         if let Ok(null_pt) = gsem_sem::syntax::parse_model(&null_model_str, false) {
             let mut null_model = gsem_sem::model::Model::from_partable(&null_pt, &obs_names);
-            if estimation.to_uppercase() == "ML" {
-                gsem_sem::estimator::fit_ml(&mut null_model, &ldsc_result.s, 1000, None);
-            } else {
-                gsem_sem::estimator::fit_dwls(&mut null_model, &ldsc_result.s, &v_diag, 1000, None);
+            match est_method {
+                gsem_sem::EstimationMethod::Ml => { gsem_sem::estimator::fit_ml(&mut null_model, &ldsc_result.s, 1000, None); },
+                gsem_sem::EstimationMethod::Dwls => { gsem_sem::estimator::fit_dwls(&mut null_model, &ldsc_result.s, &v_diag, 1000, None); },
             }
             let null_sigma = null_model.implied_cov();
             let null_df = kstar - k;
@@ -434,7 +432,7 @@ fn commonfactor_rust(covstruc_json: &str, estimation: &str) -> String {
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
     };
 
-    match gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, estimation) {
+    match gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, gsem_sem::EstimationMethod::from_str_lossy(estimation)) {
         Ok(result) => {
             let params: Vec<String> = result.parameters.iter().map(|p| {
                 format!(
@@ -557,7 +555,7 @@ fn commonfactor_gwas_rust(
     };
 
     let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
-        estimation: estimation.to_string(),
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
         snp_se: snp_se_opt,
         smooth_check,
@@ -596,13 +594,28 @@ fn commonfactor_gwas_rust(
         Err(e) => return format!("{{\"error\": \"{e}\"}}"),
     };
 
-    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
-    let var_snp: Vec<f64> = merged
-        .snps
-        .iter()
+    // Filter out SNPs with zero MAF (var_snp=0 causes singular matrices)
+    let valid_idx: Vec<usize> = merged.snps.iter().enumerate()
+        .filter(|(_, s)| {
+            let v = 2.0 * s.maf * (1.0 - s.maf);
+            v > 1e-10
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    if valid_idx.is_empty() {
+        return "{\"error\": \"no SNPs with valid MAF (all MAF=0)\"}".to_string();
+    }
+
+    let filtered_snps: Vec<_> = valid_idx.iter().map(|&i| &merged.snps[i]).collect();
+    let beta_snp: Vec<Vec<f64>> = filtered_snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = filtered_snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = filtered_snps.iter()
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
+
+    // Remap snp indices: create a new merged.snps with only valid entries
+    let valid_merged_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
 
     let results = gsem::gwas::common_factor::run_common_factor_gwas(
         &merged.trait_names,
@@ -615,7 +628,7 @@ fn commonfactor_gwas_rust(
         &cf_config,
     );
 
-    conversions::snp_results_to_json(&results, &merged.snps)
+    conversions::snp_results_to_json(&results, &valid_merged_snps)
 }
 
 /// Run user-specified GWAS.
@@ -667,19 +680,22 @@ fn user_gwas_rust(
         let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
 
         // Replace "SNP" with "Gene" in model syntax
-        let twas_model = model.replace("SNP", "Gene");
+        let twas_model_str = model.replace("SNP", "Gene");
+        let twas_pt = match gsem_sem::syntax::parse_model(&twas_model_str, std_lv) {
+            Ok(pt) => pt,
+            Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+        };
 
         let config = gsem::gwas::user_gwas::UserGwasConfig {
-            model: twas_model,
-            estimation: estimation.to_string(),
+            model: twas_pt,
+            estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
             gc: gc_mode,
-            std_lv,
             smooth_check,
             snp_se: snp_se_opt,
             fix_measurement,
             q_snp,
-            snp_label: "Gene".to_string(),
-            ..Default::default()
+            variant_label: gsem::gwas::user_gwas::VariantLabel::Gene,
+            max_iter: 500,
         };
 
         let mut results = gsem::gwas::user_gwas::run_user_gwas(
@@ -715,16 +731,20 @@ fn user_gwas_rust(
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
 
+    let snp_pt = match gsem_sem::syntax::parse_model(model, std_lv) {
+        Ok(pt) => pt,
+        Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+    };
     let config = gsem::gwas::user_gwas::UserGwasConfig {
-        model: model.to_string(),
-        estimation: estimation.to_string(),
+        model: snp_pt,
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
-        std_lv,
+        max_iter: 500,
         smooth_check,
         snp_se: snp_se_opt,
+        variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         fix_measurement,
         q_snp,
-        ..Default::default()
     };
 
     let mut results = gsem::gwas::user_gwas::run_user_gwas(
@@ -840,12 +860,14 @@ fn rgmodel_rust(
         let sub_indices: Vec<usize> = sub_names.iter()
             .filter_map(|name| all_names.iter().position(|n| n == name))
             .collect();
+        let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
         gsem_sem::rgmodel::run_rgmodel_sub(
-            &ldsc_result.s, &ldsc_result.v, estimation, model_opt, std_lv, &sub_indices,
+            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv, &sub_indices,
         )
     } else {
+        let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
         gsem_sem::rgmodel::run_rgmodel_with_model(
-            &ldsc_result.s, &ldsc_result.v, estimation, model_opt, std_lv,
+            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv,
         )
     };
 
@@ -1184,9 +1206,13 @@ fn multi_snp_rust(
         Some(snp_se.inner())
     };
 
+    let pt = match gsem_sem::syntax::parse_model(model, false) {
+        Ok(pt) => pt,
+        Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+    };
     let config = gsem::gwas::multi_snp::MultiSnpConfig {
-        model: model.to_string(),
-        estimation: estimation.to_string(),
+        model: pt,
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         max_iter: 1000,
         snp_var_se,
     };

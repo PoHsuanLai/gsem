@@ -303,10 +303,10 @@ fn usermodel(
     let kstar = k * (k + 1) / 2;
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
-    let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
-    } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
+    let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
+    let fit = match est_method {
+        gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None),
+        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
     };
 
     let params_json: Vec<String> = pt
@@ -338,7 +338,7 @@ fn commonfactor(covstruc_json: &str, estimation: &str) -> PyResult<String> {
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
 
-    let result = gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, estimation)
+    let result = gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, gsem_sem::EstimationMethod::from_str_lossy(estimation))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
     let params: Vec<String> = result.parameters.iter().map(|p| {
@@ -436,17 +436,18 @@ fn commonfactor_gwas(
         .chain(merged.trait_names[1..].iter().cloned())
         .collect::<Vec<_>>()
         .join(" + ");
-    let model = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
+    let model_str = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
+    let model = gsem_sem::syntax::parse_model(&model_str, false)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
 
     let config = gsem::gwas::user_gwas::UserGwasConfig {
         model,
-        estimation: estimation.to_string(),
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
         max_iter: 500,
-        std_lv: false,
         smooth_check,
         snp_se: snp_se_val,
-        snp_label: "SNP".to_string(),
+        variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         q_snp: false,
         fix_measurement: false,
     };
@@ -495,17 +496,18 @@ fn user_gwas(
     clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_val = if snpse { Some(0.0005) } else { None };
-    let snp_label = if twas { "Gene".to_string() } else { "SNP".to_string() };
+    let variant_label = if twas { gsem::gwas::user_gwas::VariantLabel::Gene } else { gsem::gwas::user_gwas::VariantLabel::Snp };
 
+    let pt = gsem_sem::syntax::parse_model(model, std_lv)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
     let config = gsem::gwas::user_gwas::UserGwasConfig {
-        model: model.to_string(),
-        estimation: estimation.to_string(),
+        model: pt,
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
         max_iter: 500,
-        std_lv,
         smooth_check,
         snp_se: snp_se_val,
-        snp_label,
+        variant_label,
         q_snp,
         fix_measurement,
     };
@@ -611,7 +613,7 @@ fn rgmodel(
     estimation: bool,
     sub: Option<Vec<String>>,  // not yet used
 ) -> PyResult<String> {
-    let est_str = if estimation { "DWLS" } else { "ML" };
+    let est_method = if estimation { gsem_sem::EstimationMethod::Dwls } else { gsem_sem::EstimationMethod::Ml };
     let model_opt = if model.is_empty() { None } else { Some(model) };
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
@@ -622,11 +624,11 @@ fn rgmodel(
             .filter_map(|name| all_names.iter().position(|n| n == name))
             .collect();
         gsem_sem::rgmodel::run_rgmodel_sub(
-            &ldsc_result.s, &ldsc_result.v, est_str, model_opt, std_lv, &sub_indices,
+            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv, &sub_indices,
         )
     } else {
         gsem_sem::rgmodel::run_rgmodel_with_model(
-            &ldsc_result.s, &ldsc_result.v, est_str, model_opt, std_lv,
+            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv,
         )
     }
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
@@ -954,9 +956,11 @@ fn multi_snp(
     let nc = if nr > 0 { ld_matrix[0].len() } else { 0 };
     let ld_mat = faer::Mat::from_fn(nr, nc, |i, j| ld_matrix[i][j]);
 
+    let pt = gsem_sem::syntax::parse_model(model, false)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
     let config = gsem::gwas::multi_snp::MultiSnpConfig {
-        model: model.to_string(),
-        estimation: estimation.to_string(),
+        model: pt,
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         max_iter,
         snp_var_se: None,
     };

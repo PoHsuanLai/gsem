@@ -1,5 +1,8 @@
 use faer::Mat;
 
+use gsem_sem::EstimationMethod;
+use gsem_sem::syntax;
+
 use super::gc_correction::GcMode;
 use super::user_gwas::{self, SnpResult, UserGwasConfig};
 
@@ -11,8 +14,8 @@ use super::user_gwas::{self, SnpResult, UserGwasConfig};
 ///   F1 ~~ 1*F1
 ///   SNP ~~ SNP
 pub struct CommonFactorGwasConfig {
-    /// Estimation method: "DWLS" or "ML"
-    pub estimation: String,
+    /// Estimation method
+    pub estimation: EstimationMethod,
     /// Genomic control correction mode
     pub gc: GcMode,
     /// Override for SNP SE (default: 0.0005)
@@ -24,7 +27,7 @@ pub struct CommonFactorGwasConfig {
 impl Default for CommonFactorGwasConfig {
     fn default() -> Self {
         Self {
-            estimation: "DWLS".to_string(),
+            estimation: EstimationMethod::Dwls,
             gc: GcMode::Standard,
             snp_se: None,
             smooth_check: false,
@@ -43,22 +46,23 @@ pub fn run_common_factor_gwas(
     var_snp: &[f64],
     cfg: &CommonFactorGwasConfig,
 ) -> Vec<SnpResult> {
-    // Auto-generate model
+    // Auto-generate and parse model
     let loading = std::iter::once(format!("NA*{}", trait_names[0]))
         .chain(trait_names[1..].iter().cloned())
         .collect::<Vec<_>>()
         .join(" + ");
-    let model = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
+    let model_str = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
+    // This parse cannot fail since we generate the syntax ourselves
+    let model = syntax::parse_model(&model_str, false).expect("auto-generated model syntax is invalid");
 
     let config = UserGwasConfig {
         model,
-        estimation: cfg.estimation.clone(),
+        estimation: cfg.estimation,
         gc: cfg.gc,
         max_iter: 500,
-        std_lv: false,
         smooth_check: cfg.smooth_check,
         snp_se: cfg.snp_se,
-        snp_label: "SNP".to_string(),
+        variant_label: user_gwas::VariantLabel::Snp,
         q_snp: false,
         fix_measurement: false,
     };

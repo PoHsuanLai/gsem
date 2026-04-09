@@ -658,7 +658,7 @@ fn run_sem(args: SemArgs) -> Result<()> {
         anyhow::bail!("must provide --model or --model-file");
     };
 
-    let estimation = &args.estimation;
+    let estimation = gsem_sem::EstimationMethod::from_str_lossy(&args.estimation);
     let std_lv = args.std_lv;
     eprintln!("Fitting SEM model (estimation={estimation}, std_lv={std_lv})...");
 
@@ -672,10 +672,9 @@ fn run_sem(args: SemArgs) -> Result<()> {
     let kstar = k * (k + 1) / 2;
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
-    let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
-    } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
+    let fit = match estimation {
+        gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None),
+        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
     };
 
     // If model failed to converge and fix_resid is set, add lower bounds on
@@ -695,10 +694,9 @@ fn run_sem(args: SemArgs) -> Result<()> {
         }
         // Rebuild model with updated lower bounds
         sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
-        if estimation.to_uppercase() == "ML" {
-            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
-        } else {
-            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
+        match estimation {
+            gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None),
+            gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
         }
     } else {
         fit
@@ -799,11 +797,13 @@ fn run_gwas(args: GwasArgs) -> Result<()> {
             .collect()
     });
 
+    let estimation = gsem_sem::EstimationMethod::from_str_lossy(&args.estimation);
+
     if args.twas {
         run_gwas_twas(
             &args.sumstats,
             &model_str,
-            &args.estimation,
+            estimation,
             &args.gc,
             gc_mode,
             k,
@@ -818,7 +818,7 @@ fn run_gwas(args: GwasArgs) -> Result<()> {
         run_gwas_snp(
             &args.sumstats,
             &model_str,
-            &args.estimation,
+            estimation,
             &args.gc,
             gc_mode,
             k,
@@ -836,7 +836,7 @@ fn run_gwas(args: GwasArgs) -> Result<()> {
 fn run_gwas_snp(
     sumstats: &Path,
     model_str: &str,
-    estimation: &str,
+    estimation: gsem_sem::EstimationMethod,
     gc: &str,
     gc_mode: gsem::gwas::gc_correction::GcMode,
     k: usize,
@@ -871,17 +871,18 @@ fn run_gwas_snp(
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
 
-    // fix_measurement is handled inside run_user_gwas when config.fix_measurement is true
+    // Parse model once upfront
+    let model = gsem_sem::syntax::parse_model(model_str, std_lv)
+        .map_err(|e| anyhow::anyhow!("model parse error: {e}"))?;
 
     let config = gsem::gwas::user_gwas::UserGwasConfig {
-        model: model_str.to_string(),
-        estimation: estimation.to_string(),
+        model,
+        estimation,
         gc: gc_mode,
         max_iter: 500,
-        std_lv,
         smooth_check,
         snp_se: None,
-        snp_label: "SNP".to_string(),
+        variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         q_snp: false,
         fix_measurement: false,
     };
@@ -947,7 +948,7 @@ fn run_gwas_snp(
 fn run_gwas_twas(
     sumstats: &Path,
     model_str: &str,
-    estimation: &str,
+    estimation: gsem_sem::EstimationMethod,
     gc: &str,
     gc_mode: gsem::gwas::gc_correction::GcMode,
     k: usize,
@@ -981,17 +982,18 @@ fn run_gwas_twas(
 
     // Replace "SNP" with "Gene" in model syntax so that the observed variable
     // name matches what userGWAS expects in the first position
-    let twas_model = model_str.replace("SNP", "Gene");
+    let twas_model_str = model_str.replace("SNP", "Gene");
+    let model = gsem_sem::syntax::parse_model(&twas_model_str, std_lv)
+        .map_err(|e| anyhow::anyhow!("model parse error: {e}"))?;
 
     let config = gsem::gwas::user_gwas::UserGwasConfig {
-        model: twas_model,
-        estimation: estimation.to_string(),
+        model,
+        estimation,
         gc: gc_mode,
         max_iter: 500,
-        std_lv,
         smooth_check,
         snp_se: None,
-        snp_label: "Gene".to_string(),
+        variant_label: gsem::gwas::user_gwas::VariantLabel::Gene,
         q_snp: false,
         fix_measurement: false,
     };
@@ -1055,7 +1057,7 @@ fn run_commonfactor_cmd(args: CommonFactorArgs) -> Result<()> {
         .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
-    let estimation = &args.estimation;
+    let estimation = gsem_sem::EstimationMethod::from_str_lossy(&args.estimation);
     eprintln!("Fitting common factor model (estimation={estimation})...");
 
     let result =
@@ -1349,7 +1351,7 @@ fn run_rgmodel_cmd(args: RgmodelArgs) -> Result<()> {
         .with_context(|| format!("failed to read {}", args.covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
-    let estimation = &args.estimation;
+    let estimation = gsem_sem::EstimationMethod::from_str_lossy(&args.estimation);
     eprintln!("Fitting rgmodel (estimation={estimation})...");
 
     let result = gsem_sem::rgmodel::run_rgmodel_with_model(
@@ -1470,9 +1472,11 @@ fn run_multi_snp_cmd(args: MultiSnpArgs) -> Result<()> {
         .map(|s| s.snp.clone())
         .collect();
 
+    let model = gsem_sem::syntax::parse_model(&model_str, false)
+        .map_err(|e| anyhow::anyhow!("model parse error: {e}"))?;
     let config = gsem::gwas::multi_snp::MultiSnpConfig {
-        model: model_str,
-        estimation: args.estimation,
+        model,
+        estimation: gsem_sem::EstimationMethod::from_str_lossy(&args.estimation),
         max_iter: 500,
         snp_var_se: None,
     };

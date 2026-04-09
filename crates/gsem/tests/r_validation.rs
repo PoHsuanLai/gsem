@@ -397,7 +397,7 @@ fn test_commonfactor_matches_r() {
     let r_sandwich_se = json_to_vec(&fix["sandwich_se"]);
     let r_implied = json_to_mat(&fix["implied_cov"]);
 
-    let result = gsem_sem::commonfactor::run_commonfactor(&s, &v, "DWLS").unwrap();
+    let result = gsem_sem::commonfactor::run_commonfactor(&s, &v, gsem_sem::EstimationMethod::Dwls).unwrap();
 
     // Check parameter estimates match R
     assert_eq!(

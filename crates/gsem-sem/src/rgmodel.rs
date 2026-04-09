@@ -33,7 +33,7 @@ pub struct RgModelResult {
 pub fn run_rgmodel(
     s: &Mat<f64>,
     v: &Mat<f64>,
-    estimation: &str,
+    estimation: crate::EstimationMethod,
 ) -> Result<RgModelResult> {
     run_rgmodel_inner(s, v, estimation, None, false)
 }
@@ -42,7 +42,7 @@ pub fn run_rgmodel(
 pub fn run_rgmodel_with_model(
     s: &Mat<f64>,
     v: &Mat<f64>,
-    estimation: &str,
+    estimation: crate::EstimationMethod,
     model: Option<&str>,
     std_lv: bool,
 ) -> Result<RgModelResult> {
@@ -54,7 +54,7 @@ pub fn run_rgmodel_with_model(
 pub fn run_rgmodel_sub(
     s: &Mat<f64>,
     v: &Mat<f64>,
-    estimation: &str,
+    estimation: crate::EstimationMethod,
     model: Option<&str>,
     std_lv: bool,
     sub_indices: &[usize],
@@ -96,7 +96,7 @@ pub fn run_rgmodel_sub(
 fn run_rgmodel_inner(
     s: &Mat<f64>,
     v: &Mat<f64>,
-    estimation: &str,
+    estimation: crate::EstimationMethod,
     model: Option<&str>,
     std_lv: bool,
 ) -> Result<RgModelResult> {
@@ -180,7 +180,7 @@ fn run_rgmodel_inner(
 fn fit_user_model_on_stand(
     s_stand: &Mat<f64>,
     v_stand: &Mat<f64>,
-    estimation: &str,
+    estimation: crate::EstimationMethod,
     model_str: &str,
     std_lv: bool,
 ) -> Result<crate::SemResult> {
@@ -196,10 +196,9 @@ fn fit_user_model_on_stand(
 
     let v_diag: Vec<f64> = (0..kstar).map(|i| v_stand[(i, i)]).collect();
 
-    let fit = if estimation.to_uppercase() == "ML" {
-        estimator::fit_ml(&mut model, s_stand, 1000, None)
-    } else {
-        estimator::fit_dwls(&mut model, s_stand, &v_diag, 1000, None)
+    let fit = match estimation {
+        crate::EstimationMethod::Ml => estimator::fit_ml(&mut model, s_stand, 1000, None),
+        crate::EstimationMethod::Dwls => estimator::fit_dwls(&mut model, s_stand, &v_diag, 1000, None),
     };
 
     let w = Mat::from_fn(kstar, kstar, |i, j| {
@@ -222,7 +221,7 @@ fn fit_user_model_on_stand(
                 1.0
             };
             parameters.push(ParamEstimate {
-                lhs: row.lhs.clone(), op: row.op.to_string(), rhs: row.rhs.clone(),
+                lhs: row.lhs.clone(), op: row.op, rhs: row.rhs.clone(),
                 est, se, z, p,
             });
             free_idx += 1;
@@ -279,7 +278,7 @@ mod tests {
         let kstar = 3;
         let v = Mat::<f64>::identity(kstar, kstar) * 0.001;
 
-        let result = run_rgmodel(&s, &v, "DWLS").unwrap();
+        let result = run_rgmodel(&s, &v, crate::EstimationMethod::Dwls).unwrap();
         assert!((result.r[(0, 0)] - 1.0).abs() < 1e-3);
         assert!((result.r[(1, 1)] - 1.0).abs() < 1e-3);
     }
@@ -290,7 +289,7 @@ mod tests {
         let kstar = 6;
         let v = Mat::<f64>::identity(kstar, kstar) * 0.001;
 
-        let result = run_rgmodel(&s, &v, "DWLS").unwrap();
+        let result = run_rgmodel(&s, &v, crate::EstimationMethod::Dwls).unwrap();
         for i in 0..3 {
             for j in 0..3 {
                 assert!(
@@ -315,7 +314,7 @@ mod tests {
         let kstar = 6;
         let v = Mat::from_fn(kstar, kstar, |i, j| if i == j { 3e-5 } else { 0.0 });
 
-        let result = run_rgmodel(&s, &v, "DWLS").unwrap();
+        let result = run_rgmodel(&s, &v, crate::EstimationMethod::Dwls).unwrap();
         let expected_r12 = 0.42 / (0.60_f64.sqrt() * 0.50_f64.sqrt());
         eprintln!("Real-scale V: r[0,1]={:.4} expected ~{expected_r12:.4}", result.r[(0, 1)]);
         assert!(

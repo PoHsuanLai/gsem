@@ -27,6 +27,37 @@ pub mod write_model;
 
 use faer::Mat;
 
+use crate::syntax::Op;
+
+/// SEM estimation method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstimationMethod {
+    /// Diagonally Weighted Least Squares
+    Dwls,
+    /// Maximum Likelihood
+    Ml,
+}
+
+impl EstimationMethod {
+    /// Parse from a string (case-insensitive). Defaults to DWLS for unrecognized values.
+    pub fn from_str_lossy(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("ML") {
+            Self::Ml
+        } else {
+            Self::Dwls
+        }
+    }
+}
+
+impl std::fmt::Display for EstimationMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Dwls => write!(f, "DWLS"),
+            Self::Ml => write!(f, "ML"),
+        }
+    }
+}
+
 /// Result of SEM fitting.
 #[derive(Debug, Clone)]
 pub struct SemResult {
@@ -43,8 +74,8 @@ pub struct SemResult {
 pub struct ParamEstimate {
     /// Left-hand side variable name
     pub lhs: String,
-    /// Operator (e.g., "=~", "~~", "~")
-    pub op: String,
+    /// Operator type
+    pub op: Op,
     /// Right-hand side variable name
     pub rhs: String,
     /// Point estimate

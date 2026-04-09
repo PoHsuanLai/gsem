@@ -14,12 +14,12 @@ use crate::fit_indices;
 use crate::model::Model;
 use crate::sandwich;
 use crate::syntax::parse_model;
-use crate::{ParamEstimate, SemResult};
+use crate::{EstimationMethod, ParamEstimate, SemResult};
 
 /// Run common factor analysis on LDSC output.
 ///
 /// Equivalent to R GenomicSEM's `commonfactor()`.
-pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<SemResult> {
+pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: EstimationMethod) -> Result<SemResult> {
     let k = s.nrows();
     let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
 
@@ -43,10 +43,9 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
     let kstar = k * (k + 1) / 2;
     let v_diag: Vec<f64> = (0..kstar).map(|i| v[(i, i)]).collect();
 
-    let fit = if estimation.to_uppercase() == "ML" {
-        estimator::fit_ml(&mut model, s, 1000, None)
-    } else {
-        estimator::fit_dwls(&mut model, s, &v_diag, 1000, None)
+    let fit = match estimation {
+        EstimationMethod::Ml => estimator::fit_ml(&mut model, s, 1000, None),
+        EstimationMethod::Dwls => estimator::fit_dwls(&mut model, s, &v_diag, 1000, None),
     };
 
     if !fit.converged {
@@ -87,7 +86,7 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
             };
             parameters.push(ParamEstimate {
                 lhs: row.lhs.clone(),
-                op: row.op.to_string(),
+                op: row.op,
                 rhs: row.rhs.clone(),
                 est,
                 se,
@@ -107,10 +106,9 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
         .join("\n");
     let null_pt = parse_model(&null_model_str, false).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut null_model = Model::from_partable(&null_pt, &obs_names);
-    let null_fit = if estimation.to_uppercase() == "ML" {
-        estimator::fit_ml(&mut null_model, s, 1000, None)
-    } else {
-        estimator::fit_dwls(&mut null_model, s, &v_diag, 1000, None)
+    let null_fit = match estimation {
+        EstimationMethod::Ml => estimator::fit_ml(&mut null_model, s, 1000, None),
+        EstimationMethod::Dwls => estimator::fit_dwls(&mut null_model, s, &v_diag, 1000, None),
     };
     let _ = null_fit; // used only to set parameter values in null_model
     let null_sigma = null_model.implied_cov();
@@ -152,7 +150,7 @@ mod tests {
     #[test]
     fn test_commonfactor_dwls_converges() {
         let (s, v) = simple_s_and_v();
-        let result = run_commonfactor(&s, &v, "DWLS").expect("DWLS should not error");
+        let result = run_commonfactor(&s, &v, crate::EstimationMethod::Dwls).expect("DWLS should not error");
         // Should have parameters: 3 loadings + 3 residual variances = 6
         assert_eq!(result.parameters.len(), 6, "expected 6 free parameters");
         // Check that estimates are finite
@@ -180,7 +178,7 @@ mod tests {
     #[test]
     fn test_commonfactor_ml_converges() {
         let (s, v) = simple_s_and_v();
-        let result = run_commonfactor(&s, &v, "ML").expect("ML should not error");
+        let result = run_commonfactor(&s, &v, crate::EstimationMethod::Ml).expect("ML should not error");
         assert_eq!(result.parameters.len(), 6, "expected 6 free parameters");
         for p in &result.parameters {
             assert!(p.est.is_finite(), "estimate should be finite");
@@ -190,14 +188,14 @@ mod tests {
     #[test]
     fn test_commonfactor_parameter_structure() {
         let (s, v) = simple_s_and_v();
-        let result = run_commonfactor(&s, &v, "DWLS").unwrap();
+        let result = run_commonfactor(&s, &v, crate::EstimationMethod::Dwls).unwrap();
 
         // First 3 params should be loadings (F1 =~ V1, V2, V3)
-        let loadings: Vec<_> = result.parameters.iter().filter(|p| p.op == "=~").collect();
+        let loadings: Vec<_> = result.parameters.iter().filter(|p| p.op == crate::syntax::Op::Loading).collect();
         assert_eq!(loadings.len(), 3, "should have 3 loadings");
 
         // Last 3 params should be residual variances (V1 ~~ V1, etc.)
-        let resid: Vec<_> = result.parameters.iter().filter(|p| p.op == "~~").collect();
+        let resid: Vec<_> = result.parameters.iter().filter(|p| p.op == crate::syntax::Op::Covariance).collect();
         assert_eq!(resid.len(), 3, "should have 3 residual variances");
 
         // Loadings should be positive for this well-behaved covariance matrix
@@ -224,7 +222,7 @@ mod tests {
     #[test]
     fn test_commonfactor_implied_cov_shape() {
         let (s, v) = simple_s_and_v();
-        let result = run_commonfactor(&s, &v, "DWLS").unwrap();
+        let result = run_commonfactor(&s, &v, crate::EstimationMethod::Dwls).unwrap();
         assert_eq!(result.implied_cov.nrows(), 3);
         assert_eq!(result.implied_cov.ncols(), 3);
     }

@@ -3,13 +3,40 @@ use gsem_matrix::smooth;
 use gsem_sem::estimator;
 use gsem_sem::model::Model;
 use gsem_sem::sandwich;
-use gsem_sem::syntax::{self, ParTable};
+use gsem_sem::syntax::ParTable;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use statrs::distribution::ContinuousCDF;
 
 use super::add_snps;
 use super::gc_correction::GcMode;
+use gsem_sem::EstimationMethod;
+use gsem_sem::syntax::Op;
+
+/// Whether the analysis targets SNPs or genes (TWAS mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariantLabel {
+    /// Standard GWAS — first observed variable is "SNP"
+    Snp,
+    /// TWAS mode — first observed variable is "Gene"
+    Gene,
+}
+
+impl VariantLabel {
+    /// The string label used as the first observed variable name.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Snp => "SNP",
+            Self::Gene => "Gene",
+        }
+    }
+}
+
+impl std::fmt::Display for VariantLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Result for a single SNP from userGWAS.
 #[derive(Debug, Clone)]
@@ -39,8 +66,8 @@ pub struct SnpResult {
 pub struct SnpParamResult {
     /// Left-hand side variable name
     pub lhs: String,
-    /// Operator (e.g., "=~", "~~", "~")
-    pub op: String,
+    /// Operator type
+    pub op: Op,
     /// Right-hand side variable name
     pub rhs: String,
     /// Point estimate
@@ -56,46 +83,26 @@ pub struct SnpParamResult {
 /// Configuration for userGWAS.
 #[derive(Debug, Clone)]
 pub struct UserGwasConfig {
-    /// Lavaan-style model syntax string
-    pub model: String,
-    /// Estimation method: "DWLS" or "ML"
-    pub estimation: String,
+    /// Pre-parsed model parameter table
+    pub model: ParTable,
+    /// Estimation method
+    pub estimation: EstimationMethod,
     /// Genomic control correction mode
     pub gc: GcMode,
     /// Maximum optimizer iterations per SNP
     pub max_iter: usize,
-    /// Standardize latent variables (free all loadings, fix factor variances to 1)
-    pub std_lv: bool,
     /// Log warnings when covariance matrix requires smoothing.
     pub smooth_check: bool,
     /// Override for SNP SE (default: 0.0005, treating MAF as fixed).
     /// Matches R's `SNPSE` parameter.
     pub snp_se: Option<f64>,
-    /// Label for the first observed variable in the model.
-    /// "SNP" for standard GWAS, "Gene" for TWAS mode.
-    pub snp_label: String,
+    /// Whether this is a SNP-level or gene-level (TWAS) analysis.
+    pub variant_label: VariantLabel,
     /// Compute Q_SNP heterogeneity statistic.
     pub q_snp: bool,
     /// Fix measurement parameters at baseline estimates (fit without SNP first).
     /// Dramatically speeds up per-SNP fitting.
     pub fix_measurement: bool,
-}
-
-impl Default for UserGwasConfig {
-    fn default() -> Self {
-        Self {
-            model: String::new(),
-            estimation: "DWLS".to_string(),
-            gc: GcMode::Standard,
-            max_iter: 500,
-            std_lv: false,
-            smooth_check: false,
-            snp_se: None,
-            snp_label: "SNP".to_string(),
-            q_snp: false,
-            fix_measurement: false,
-        }
-    }
 }
 
 /// Run user-specified model GWAS across all SNPs.
@@ -113,36 +120,20 @@ pub fn run_user_gwas(
     let n_snps = var_snp.len();
     let k = s_ld.nrows();
 
-    // Parse model once
-    let mut pt = match syntax::parse_model(&config.model, config.std_lv) {
-        Ok(pt) => pt,
-        Err(e) => {
-            return vec![SnpResult {
-                snp_idx: 0,
-                params: vec![],
-                chisq: f64::NAN,
-                chisq_df: 0,
-                converged: false,
-                warning: Some(format!("model parse error: {e}")),
-                q_snp: None,
-                q_snp_df: None,
-                q_snp_p: None,
-            }];
-        }
-    };
+    let mut pt = config.model.clone();
 
     // fix_measurement: fit baseline model on S_LD (without SNP),
     // then fix all non-SNP parameters at baseline estimates
     if config.fix_measurement {
         // Build a baseline model using only the trait-trait portion of the model
         // (parameters that don't involve the SNP label)
-        let snp_label = &config.snp_label;
+        let snp_label = config.variant_label.as_str();
         let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
         // Extract only non-SNP rows from the partable
         let baseline_rows: Vec<_> = pt
             .rows
             .iter()
-            .filter(|r| r.lhs != *snp_label && r.rhs != *snp_label)
+            .filter(|r| r.lhs != snp_label && r.rhs != snp_label)
             .cloned()
             .collect();
         if !baseline_rows.is_empty() {
@@ -150,10 +141,9 @@ pub fn run_user_gwas(
             let mut baseline_model = Model::from_partable(&baseline_pt, &obs_names);
             let kstar_ld = k * (k + 1) / 2;
             let v_diag: Vec<f64> = (0..kstar_ld).map(|i| v_ld[(i, i)]).collect();
-            let baseline_fit = if config.estimation.to_uppercase() == "ML" {
-                estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter, None)
-            } else {
-                estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter, None)
+            let baseline_fit = match config.estimation {
+                EstimationMethod::Ml => estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter, None),
+                EstimationMethod::Dwls => estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter, None),
             };
             if baseline_fit.converged {
                 // Fix baseline parameters in the full model
@@ -254,7 +244,7 @@ fn process_single_snp(
     }
 
     // Build model
-    let mut obs_names = vec![config.snp_label.clone()];
+    let mut obs_names = vec![config.variant_label.as_str().to_string()];
     obs_names.extend((0..k).map(|i| format!("V{}", i + 1)));
 
     let mut model = Model::from_partable(pt, &obs_names);
@@ -264,10 +254,9 @@ fn process_single_snp(
     let v_diag: Vec<f64> = (0..kstar_full).map(|i| v_full[(i, i)]).collect();
 
     // Fit model
-    let fit = if config.estimation.eq_ignore_ascii_case("ML") {
-        estimator::fit_ml(&mut model, &s_full, config.max_iter, None)
-    } else {
-        estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None)
+    let fit = match config.estimation {
+        EstimationMethod::Ml => estimator::fit_ml(&mut model, &s_full, config.max_iter, None),
+        EstimationMethod::Dwls => estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None),
     };
 
     // Compute sandwich SEs
@@ -298,7 +287,7 @@ fn process_single_snp(
             };
             SnpParamResult {
                 lhs: row.lhs.clone(),
-                op: row.op.to_string(),
+                op: row.op,
                 rhs: row.rhs.clone(),
                 est,
                 se: se_val,

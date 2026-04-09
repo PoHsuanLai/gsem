@@ -10,6 +10,7 @@
 //! Port of R GenomicSEM's `multiSNP()`.
 
 use faer::Mat;
+use gsem_sem::EstimationMethod;
 use gsem_sem::estimator;
 use gsem_sem::model::Model;
 use gsem_sem::sandwich;
@@ -18,10 +19,10 @@ use gsem_sem::syntax;
 /// Configuration for multi-SNP analysis.
 #[derive(Debug, Clone)]
 pub struct MultiSnpConfig {
-    /// Lavaan-style model syntax string
-    pub model: String,
-    /// Estimation method: "DWLS" or "ML"
-    pub estimation: String,
+    /// Pre-parsed model parameter table
+    pub model: syntax::ParTable,
+    /// Estimation method
+    pub estimation: EstimationMethod,
     /// Maximum optimizer iterations
     pub max_iter: usize,
     /// Override for SNP variance SE (default: 0.0005).
@@ -164,26 +165,15 @@ pub fn run_multi_snp(
     let mut obs_names: Vec<String> = snp_names.to_vec();
     obs_names.extend((0..k).map(|i| format!("V{}", i + 1)));
 
-    // Parse model and fit
-    let pt = match syntax::parse_model(&config.model, false) {
-        Ok(pt) => pt,
-        Err(_e) => {
-            return MultiSnpResult {
-                params: vec![],
-                chisq: f64::NAN,
-                chisq_df: 0,
-                converged: false,
-            };
-        }
-    };
+    // Use pre-parsed model
+    let pt = &config.model;
 
-    let mut model = Model::from_partable(&pt, &obs_names);
+    let mut model = Model::from_partable(pt, &obs_names);
     let v_diag: Vec<f64> = (0..kstar_full).map(|i| v_full[(i, i)]).collect();
 
-    let fit = if config.estimation.eq_ignore_ascii_case("ML") {
-        estimator::fit_ml(&mut model, &s_full, config.max_iter, None)
-    } else {
-        estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None)
+    let fit = match config.estimation {
+        EstimationMethod::Ml => estimator::fit_ml(&mut model, &s_full, config.max_iter, None),
+        EstimationMethod::Dwls => estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None),
     };
 
     // Sandwich SEs
@@ -215,7 +205,7 @@ pub fn run_multi_snp(
             };
             super::user_gwas::SnpParamResult {
                 lhs: row.lhs.clone(),
-                op: row.op.to_string(),
+                op: row.op,
                 rhs: row.rhs.clone(),
                 est,
                 se: se_val,
@@ -385,8 +375,8 @@ mod tests {
         let snp_names = vec!["SNP1".to_string(), "SNP2".to_string()];
 
         let config = MultiSnpConfig {
-            model: "F1 =~ NA*V1 + V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nF1 ~ SNP1 + SNP2\nSNP1 ~~ SNP1\nSNP2 ~~ SNP2".to_string(),
-            estimation: "DWLS".to_string(),
+            model: syntax::parse_model("F1 =~ NA*V1 + V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nF1 ~ SNP1 + SNP2\nSNP1 ~~ SNP1\nSNP2 ~~ SNP2", false).unwrap(),
+            estimation: EstimationMethod::Dwls,
             max_iter: 500,
             snp_var_se: None,
         };
