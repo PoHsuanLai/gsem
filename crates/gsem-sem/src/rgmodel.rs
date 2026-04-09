@@ -1,6 +1,6 @@
 //! Model-implied genetic correlation matrix.
 //!
-//! Wrapper around [`commonfactor`] or a user-specified model that additionally computes:
+//! Wrapper around [`crate::commonfactor`] or a user-specified model that additionally computes:
 //! - R: the model-implied genetic correlation matrix (standardized implied covariance)
 //! - V_R: the sampling covariance of R (via delta method / numerical Jacobian)
 //!
