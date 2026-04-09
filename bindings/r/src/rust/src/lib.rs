@@ -1084,8 +1084,8 @@ fn s_ldsc_rust(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
-        None,
-        None,
+        Some(&annot_data.chr),
+        Some(&annot_data.bp),
     ) {
         Ok(result) => match result.to_json_string() {
             Ok(json) => json,

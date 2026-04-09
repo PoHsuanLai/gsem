@@ -880,8 +880,8 @@ fn s_ldsc(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
-        None,
-        None,
+        Some(&annot_data.chr),
+        Some(&annot_data.bp),
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
