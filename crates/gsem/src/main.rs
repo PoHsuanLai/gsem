@@ -896,6 +896,7 @@ fn run_gwas_snp(
         variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         q_snp: false,
         fix_measurement: false,
+        num_threads: None,
     };
 
     eprintln!("Running GWAS across {n_snps} SNPs...");
@@ -1017,6 +1018,7 @@ fn run_gwas_twas(
         variant_label: gsem::gwas::user_gwas::VariantLabel::Gene,
         q_snp: false,
         fix_measurement: false,
+        num_threads: None,
     };
 
     eprintln!("Running TWAS across {n_genes} genes...");

@@ -67,6 +67,7 @@ pub fn run_common_factor_gwas(
         variant_label: user_gwas::VariantLabel::Snp,
         q_snp: false,
         fix_measurement: true,
+        num_threads: None,
     };
 
     user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp, on_snp_done)

@@ -743,6 +743,7 @@ fn user_gwas_rust(
             q_snp,
             variant_label: gsem::gwas::user_gwas::VariantLabel::Gene,
             max_iter: 500,
+            num_threads: None,
         };
 
         let n_genes = var_gene.len();
@@ -796,6 +797,7 @@ fn user_gwas_rust(
         variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         fix_measurement,
         q_snp,
+        num_threads: None,
     };
 
     let n_snps = var_snp.len();

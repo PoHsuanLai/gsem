@@ -102,6 +102,9 @@ pub struct UserGwasConfig {
     /// Fix measurement parameters at baseline estimates (fit without SNP first).
     /// Dramatically speeds up per-SNP fitting.
     pub fix_measurement: bool,
+    /// Number of rayon threads.  `None` or `Some(0)` uses the rayon default
+    /// (all available cores).  `Some(1)` disables parallelism.
+    pub num_threads: Option<usize>,
 }
 
 /// Run user-specified model GWAS across all SNPs.
@@ -208,28 +211,39 @@ pub fn run_user_gwas(
         }
     }
 
-    // Process SNPs in parallel
-    (0..n_snps)
-        .into_par_iter()
-        .map(|i| {
-            let result = process_single_snp(
-                i,
-                &pt,
-                config,
-                s_ld,
-                v_ld,
-                i_ld,
-                &beta_snp[i],
-                &se_snp[i],
-                var_snp[i],
-                k,
-            );
-            if let Some(cb) = on_snp_done {
-                cb();
-            }
-            result
-        })
-        .collect()
+    // Build a local thread pool so callers can control parallelism per-invocation
+    // without relying on the once-only global pool.
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(n) = config.num_threads {
+        if n > 0 {
+            builder = builder.num_threads(n);
+        }
+    }
+    let pool = builder.build().expect("failed to build rayon thread pool");
+
+    pool.install(|| {
+        (0..n_snps)
+            .into_par_iter()
+            .map(|i| {
+                let result = process_single_snp(
+                    i,
+                    &pt,
+                    config,
+                    s_ld,
+                    v_ld,
+                    i_ld,
+                    &beta_snp[i],
+                    &se_snp[i],
+                    var_snp[i],
+                    k,
+                );
+                if let Some(cb) = on_snp_done {
+                    cb();
+                }
+                result
+            })
+            .collect()
+    })
 }
 
 /// Process a single SNP.

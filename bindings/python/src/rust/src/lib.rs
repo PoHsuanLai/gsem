@@ -404,10 +404,10 @@ fn commonfactor_gwas(
     covstruc_json: &str,
     sumstats_path: &str,
     estimation: &str,          // threaded
-    cores: Option<usize>,      // ignored
+    cores: Option<usize>,      // threaded (via num_threads)
     toler: bool,               // ignored
     snpse: bool,               // threaded (as snp_se)
-    parallel: bool,            // ignored
+    parallel: bool,            // threaded (via num_threads)
     gc: &str,
     mpi: bool,                 // ignored
     twas: bool,                // ignored
@@ -448,6 +448,7 @@ fn commonfactor_gwas(
         variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         q_snp: false,
         fix_measurement: false,
+        num_threads: if parallel { cores } else { Some(1) },
     };
 
     let results = gsem::gwas::user_gwas::run_user_gwas(
@@ -508,6 +509,7 @@ fn user_gwas(
         variant_label,
         q_snp,
         fix_measurement,
+        num_threads: if parallel { cores } else { Some(1) },
     };
     if !printwarn {
         log::set_max_level(log::LevelFilter::Error);
@@ -515,20 +517,8 @@ fn user_gwas(
     if toler {
         log::info!("toler — convergence tolerance is controlled by the L-BFGS optimizer internally");
     }
-    if !parallel {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build_global()
-            .ok();
-    }
     if mpi {
         log::warn!("MPI is not supported in gsemr — use the cores parameter for thread control");
-    }
-    if let Some(n) = cores {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build_global()
-            .ok(); // ignore if already initialized
     }
 
     let mut results = gsem::gwas::user_gwas::run_user_gwas(
