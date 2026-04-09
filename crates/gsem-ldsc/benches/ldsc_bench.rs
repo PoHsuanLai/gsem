@@ -22,7 +22,9 @@ fn bench_weights(c: &mut Criterion) {
 fn bench_regression(c: &mut Criterion) {
     let n = 10_000;
     let ld: Vec<f64> = (0..n).map(|i| 5.0 + 20.0 * (i as f64 / n as f64)).collect();
-    let y: Vec<f64> = (0..n).map(|i| 1.0 + 0.01 * ld[i] + 0.1 * ((i * 7) as f64 % 3.0)).collect();
+    let y: Vec<f64> = (0..n)
+        .map(|i| 1.0 + 0.01 * ld[i] + 0.1 * ((i * 7) as f64 % 3.0))
+        .collect();
     let w = vec![1.0 / n as f64; n];
 
     c.bench_function("block_regression_10k_200blocks", |b| {
@@ -63,5 +65,10 @@ fn bench_h2_estimation(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_weights, bench_regression, bench_h2_estimation);
+criterion_group!(
+    benches,
+    bench_weights,
+    bench_regression,
+    bench_h2_estimation
+);
 criterion_main!(benches);

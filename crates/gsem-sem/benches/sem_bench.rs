@@ -25,11 +25,7 @@ fn bench_implied_cov(c: &mut Criterion) {
 }
 
 fn bench_fit_dwls(c: &mut Criterion) {
-    let s = faer::mat![
-        [0.60, 0.42, 0.35],
-        [0.42, 0.50, 0.30],
-        [0.35, 0.30, 0.40],
-    ];
+    let s = faer::mat![[0.60, 0.42, 0.35], [0.42, 0.50, 0.30], [0.35, 0.30, 0.40],];
     let v_diag = vec![0.001; 6];
     let model_str = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3";
     let pt = gsem_sem::syntax::parse_model(model_str, false).unwrap();
@@ -49,7 +45,11 @@ fn bench_fit_dwls(c: &mut Criterion) {
 
     // Larger model: 2 factors, 6 vars
     let s6 = Mat::from_fn(6, 6, |i, j| {
-        if i == j { 0.5 } else { 0.2 / (1.0 + (i as f64 - j as f64).abs()) }
+        if i == j {
+            0.5
+        } else {
+            0.2 / (1.0 + (i as f64 - j as f64).abs())
+        }
     });
     let v_diag6 = vec![0.001; 21]; // 6*7/2
     let model6 = "F1 =~ NA*V1 + V2 + V3\nF2 =~ NA*V4 + V5 + V6\n\
@@ -71,5 +71,10 @@ fn bench_fit_dwls(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_parse_model, bench_implied_cov, bench_fit_dwls);
+criterion_group!(
+    benches,
+    bench_parse_model,
+    bench_implied_cov,
+    bench_fit_dwls
+);
 criterion_main!(benches);
