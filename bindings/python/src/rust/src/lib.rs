@@ -224,6 +224,182 @@ fn munge(
     Ok(output_paths)
 }
 
+/// Fit common factor model.
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, estimation="DWLS"))]
+fn commonfactor(covstruc_json: &str, estimation: &str) -> PyResult<String> {
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+
+    let result = gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, estimation)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+
+    let params: Vec<String> = result.parameters.iter().map(|p| {
+        format!(
+            "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+            p.lhs, p.op, p.rhs, p.est, p.se, p.z, p.p
+        )
+    }).collect();
+    Ok(format!(
+        "{{\"parameters\":[{}],\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"cfi\":{:.4},\"srmr\":{:.4}}}",
+        params.join(","), result.fit.chisq, result.fit.df, result.fit.p_chisq,
+        result.fit.aic, result.fit.cfi, result.fit.srmr
+    ))
+}
+
+/// Merge GWAS summary statistics.
+#[pyfunction]
+#[pyo3(signature = (files, ref_dir, trait_names, info_filter=0.6, maf_filter=0.01, keep_indel=false, out="merged_sumstats.tsv"))]
+fn sumstats(
+    files: Vec<String>,
+    ref_dir: &str,
+    trait_names: Vec<String>,
+    info_filter: f64,
+    maf_filter: f64,
+    keep_indel: bool,
+    out: &str,
+) -> PyResult<String> {
+    let config = gsem::sumstats::SumstatsConfig {
+        info_filter,
+        maf_filter,
+        keep_indel,
+        ..Default::default()
+    };
+    let file_refs: Vec<&std::path::Path> = files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
+    gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &trait_names, &config, std::path::Path::new(out))
+        .map(|n| format!("{{\"path\":\"{out}\",\"n_snps\":{n}}}"))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
+}
+
+/// Run common factor GWAS.
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, sumstats_path, gc="standard"))]
+fn commonfactor_gwas(covstruc_json: &str, sumstats_path: &str, gc: &str) -> PyResult<String> {
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+
+    let k = ldsc_result.s.nrows();
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
+    let mut i_ld = ldsc_result.i_mat.to_owned();
+    for i in 0..k { if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; } }
+
+    let results = gsem::gwas::common_factor::run_common_factor_gwas(
+        &merged.trait_names, &ldsc_result.s, &ldsc_result.v, &i_ld,
+        &beta_snp, &se_snp, &var_snp, gc_mode,
+    );
+    Ok(snp_results_to_json(&results, &merged.snps))
+}
+
+/// Run user-specified GWAS.
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, sumstats_path, model, estimation="DWLS", gc="standard"))]
+fn user_gwas(covstruc_json: &str, sumstats_path: &str, model: &str, estimation: &str, gc: &str) -> PyResult<String> {
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+
+    let k = ldsc_result.s.nrows();
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
+    let mut i_ld = ldsc_result.i_mat.to_owned();
+    for i in 0..k { if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; } }
+
+    let config = gsem::gwas::user_gwas::UserGwasConfig {
+        model: model.to_string(),
+        estimation: estimation.to_string(),
+        gc: gc_mode,
+        ..Default::default()
+    };
+    let results = gsem::gwas::user_gwas::run_user_gwas(
+        &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
+        &beta_snp, &se_snp, &var_snp,
+    );
+    Ok(snp_results_to_json(&results, &merged.snps))
+}
+
+/// Parallel analysis to determine number of factors.
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, n_sim=500))]
+fn parallel_analysis(covstruc_json: &str, n_sim: usize) -> PyResult<String> {
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+    let result = gsem::stats::parallel_analysis::parallel_analysis(
+        &ldsc_result.s, &ldsc_result.v, n_sim,
+    );
+    let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
+    let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
+    Ok(format!(
+        "{{\"observed\":[{}],\"simulated_95\":[{}],\"n_factors\":{}}}",
+        obs.join(","), sim.join(","), result.n_factors
+    ))
+}
+
+/// Auto-generate model syntax from factor loadings.
+#[pyfunction]
+#[pyo3(signature = (loadings, names, cutoff=0.3, fix_resid=false, bifactor=false))]
+fn write_model(
+    loadings: Vec<Vec<f64>>,
+    names: Vec<String>,
+    cutoff: f64,
+    fix_resid: bool,
+    bifactor: bool,
+) -> String {
+    let n_rows = loadings.len();
+    let n_cols = if n_rows > 0 { loadings[0].len() } else { 0 };
+    let mat = faer::Mat::from_fn(n_rows, n_cols, |i, j| loadings[i][j]);
+    gsem_sem::write_model::write_model(&mat, &names, cutoff, fix_resid, bifactor)
+}
+
+/// Compute model-implied genetic correlation matrix.
+#[pyfunction]
+#[pyo3(signature = (covstruc_json, estimation="DWLS"))]
+fn rgmodel(covstruc_json: &str, estimation: &str) -> PyResult<String> {
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+    let result = gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    let k = result.r.nrows();
+    let kstar = k * (k + 1) / 2;
+    let r_rows: Vec<String> = (0..k).map(|i| {
+        let row: Vec<String> = (0..k).map(|j| format!("{:.6}", result.r[(i, j)])).collect();
+        format!("[{}]", row.join(","))
+    }).collect();
+    let v_rows: Vec<String> = (0..kstar).map(|i| {
+        let row: Vec<String> = (0..kstar).map(|j| format!("{:.6}", result.v_r[(i, j)])).collect();
+        format!("[{}]", row.join(","))
+    }).collect();
+    Ok(format!("{{\"R\":[{}],\"V_R\":[{}]}}", r_rows.join(","), v_rows.join(",")))
+}
+
+/// Helper: serialize GWAS results to JSON.
+fn snp_results_to_json(
+    results: &[gsem::gwas::user_gwas::SnpResult],
+    snps: &[gsem::io::sumstats_reader::MergedSnp],
+) -> String {
+    let entries: Vec<String> = results.iter().map(|r| {
+        let snp_name = &snps[r.snp_idx].snp;
+        let params: Vec<String> = r.params.iter().map(|p| {
+            format!(
+                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+            )
+        }).collect();
+        format!(
+            "{{\"SNP\":\"{}\",\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]}}",
+            snp_name, r.chisq, r.chisq_df, r.converged, params.join(",")
+        )
+    }).collect();
+    format!("[{}]", entries.join(","))
+}
+
 /// Python module definition.
 #[pymodule]
 fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -231,5 +407,12 @@ fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ldsc, m)?)?;
     m.add_function(wrap_pyfunction!(usermodel, m)?)?;
     m.add_function(wrap_pyfunction!(munge, m)?)?;
+    m.add_function(wrap_pyfunction!(commonfactor, m)?)?;
+    m.add_function(wrap_pyfunction!(sumstats, m)?)?;
+    m.add_function(wrap_pyfunction!(commonfactor_gwas, m)?)?;
+    m.add_function(wrap_pyfunction!(user_gwas, m)?)?;
+    m.add_function(wrap_pyfunction!(parallel_analysis, m)?)?;
+    m.add_function(wrap_pyfunction!(write_model, m)?)?;
+    m.add_function(wrap_pyfunction!(rgmodel, m)?)?;
     Ok(())
 }

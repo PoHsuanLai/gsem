@@ -163,6 +163,7 @@ fn munge_rust(
         info_filter,
         maf_filter,
         n_override: None,
+        column_overrides: None,
     };
 
     let mut output_paths = Vec::new();
@@ -183,9 +184,207 @@ fn munge_rust(
     output_paths
 }
 
+/// Fit common factor model.
+#[extendr]
+fn commonfactor_rust(covstruc_json: &str, estimation: &str) -> String {
+    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
+        Some(r) => r,
+        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    };
+
+    match gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, estimation) {
+        Ok(result) => {
+            let params: Vec<String> = result.parameters.iter().map(|p| {
+                format!(
+                    "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                    p.lhs, p.op, p.rhs, p.est, p.se, p.z, p.p
+                )
+            }).collect();
+            format!(
+                "{{\"parameters\":[{}],\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"cfi\":{:.4},\"srmr\":{:.4}}}",
+                params.join(","), result.fit.chisq, result.fit.df, result.fit.p_chisq,
+                result.fit.aic, result.fit.cfi, result.fit.srmr
+            )
+        }
+        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+    }
+}
+
+/// Merge GWAS summary statistics.
+#[extendr]
+fn sumstats_rust(
+    files: Vec<String>,
+    ref_dir: &str,
+    trait_names: Vec<String>,
+    info_filter: f64,
+    maf_filter: f64,
+    keep_indel: bool,
+    out: &str,
+) -> String {
+    let config = gsem::sumstats::SumstatsConfig {
+        info_filter,
+        maf_filter,
+        keep_indel,
+        ..Default::default()
+    };
+    let file_refs: Vec<&std::path::Path> = files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
+    let out_path = std::path::Path::new(out);
+    match gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &trait_names, &config, out_path) {
+        Ok(n) => format!("{{\"path\":\"{}\",\"n_snps\":{}}}", out, n),
+        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+    }
+}
+
+/// Run common factor GWAS.
+#[extendr]
+fn commonfactor_gwas_rust(covstruc_json: &str, sumstats_path: &str, gc: &str) -> String {
+    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
+        Some(r) => r,
+        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    };
+
+    let merged = match gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path)) {
+        Ok(m) => m,
+        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+    };
+
+    let k = ldsc_result.s.nrows();
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
+
+    let mut i_ld = ldsc_result.i_mat.to_owned();
+    for i in 0..k {
+        if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; }
+    }
+
+    let results = gsem::gwas::common_factor::run_common_factor_gwas(
+        &merged.trait_names, &ldsc_result.s, &ldsc_result.v, &i_ld,
+        &beta_snp, &se_snp, &var_snp, gc_mode,
+    );
+
+    conversions::snp_results_to_json(&results, &merged.snps)
+}
+
+/// Run user-specified GWAS.
+#[extendr]
+fn user_gwas_rust(
+    covstruc_json: &str,
+    sumstats_path: &str,
+    model: &str,
+    estimation: &str,
+    gc: &str,
+) -> String {
+    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
+        Some(r) => r,
+        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    };
+
+    let merged = match gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path)) {
+        Ok(m) => m,
+        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+    };
+
+    let k = ldsc_result.s.nrows();
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
+
+    let mut i_ld = ldsc_result.i_mat.to_owned();
+    for i in 0..k {
+        if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; }
+    }
+
+    let config = gsem::gwas::user_gwas::UserGwasConfig {
+        model: model.to_string(),
+        estimation: estimation.to_string(),
+        gc: gc_mode,
+        ..Default::default()
+    };
+
+    let results = gsem::gwas::user_gwas::run_user_gwas(
+        &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
+        &beta_snp, &se_snp, &var_snp,
+    );
+
+    conversions::snp_results_to_json(&results, &merged.snps)
+}
+
+/// Parallel analysis to determine number of factors.
+#[extendr]
+fn pa_ldsc_rust(covstruc_json: &str, n_sim: i32) -> String {
+    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
+        Some(r) => r,
+        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    };
+
+    let result = gsem::stats::parallel_analysis::parallel_analysis(
+        &ldsc_result.s, &ldsc_result.v, n_sim as usize,
+    );
+
+    let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
+    let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
+    format!(
+        "{{\"observed\":[{}],\"simulated_95\":[{}],\"n_factors\":{}}}",
+        obs.join(","), sim.join(","), result.n_factors
+    )
+}
+
+/// Auto-generate model syntax from factor loadings.
+#[extendr]
+fn write_model_rust(
+    loadings_flat: Vec<f64>,
+    n_rows: i32,
+    n_cols: i32,
+    names: Vec<String>,
+    cutoff: f64,
+    fix_resid: bool,
+    bifactor: bool,
+) -> String {
+    let loadings = faer::Mat::from_fn(n_rows as usize, n_cols as usize, |i, j| {
+        loadings_flat[i * n_cols as usize + j]
+    });
+    gsem_sem::write_model::write_model(&loadings, &names, cutoff, fix_resid, bifactor)
+}
+
+/// Compute model-implied genetic correlation matrix.
+#[extendr]
+fn rgmodel_rust(covstruc_json: &str, estimation: &str) -> String {
+    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
+        Some(r) => r,
+        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    };
+
+    match gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation) {
+        Ok(result) => {
+            let k = result.r.nrows();
+            let r_rows: Vec<String> = (0..k).map(|i| {
+                let row: Vec<String> = (0..k).map(|j| format!("{:.6}", result.r[(i, j)])).collect();
+                format!("[{}]", row.join(","))
+            }).collect();
+            let kstar = k * (k + 1) / 2;
+            let v_rows: Vec<String> = (0..kstar).map(|i| {
+                let row: Vec<String> = (0..kstar).map(|j| format!("{:.6}", result.v_r[(i, j)])).collect();
+                format!("[{}]", row.join(","))
+            }).collect();
+            format!("{{\"R\":[{}],\"V_R\":[{}]}}", r_rows.join(","), v_rows.join(","))
+        }
+        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+    }
+}
+
 extendr_module! {
     mod gsemr;
     fn ldsc_rust;
     fn usermodel_rust;
     fn munge_rust;
+    fn commonfactor_rust;
+    fn sumstats_rust;
+    fn commonfactor_gwas_rust;
+    fn user_gwas_rust;
+    fn pa_ldsc_rust;
+    fn write_model_rust;
+    fn rgmodel_rust;
 }
