@@ -491,7 +491,7 @@ fn user_gwas(
         fix_measurement,
     };
     if !printwarn {
-        log::info!("printwarn=False — warning suppression is not yet supported");
+        log::set_max_level(log::LevelFilter::Error);
     }
     if toler {
         log::info!("toler — convergence tolerance is controlled by the L-BFGS optimizer internally");

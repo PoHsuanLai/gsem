@@ -26,9 +26,10 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
                      parallel=TRUE, GC="standard", MPI=FALSE, smooth_check=FALSE,
                      TWAS=FALSE, std.lv=FALSE, fix_measurement=TRUE, Q_SNP=FALSE) {
 
-  # Ignored params (truly not applicable to Rust backend)
+  # Suppress warnings if requested
+  old_rust_log <- Sys.getenv("RUST_LOG", unset = NA)
   if (!identical(printwarn, TRUE)) {
-    message("Note: 'printwarn' is ignored in gsemr -- warnings are always printed")
+    Sys.setenv(RUST_LOG = "error")
   }
   if (!identical(parallel, TRUE)) {
     message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
@@ -68,5 +69,13 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
     as.character(model), as.character(estimation), as.character(GC),
     as.character(sub_str), snp_se_val, as.logical(smooth_check), as.logical(std.lv),
     as.logical(fix_measurement), as.logical(Q_SNP))
+
+  # Restore RUST_LOG
+  if (is.na(old_rust_log)) {
+    Sys.unsetenv("RUST_LOG")
+  } else {
+    Sys.setenv(RUST_LOG = old_rust_log)
+  }
+
   jsonlite::fromJSON(json)
 }
