@@ -13,6 +13,7 @@ statrs = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }

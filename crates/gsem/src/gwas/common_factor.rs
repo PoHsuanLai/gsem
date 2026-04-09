@@ -34,6 +34,7 @@ pub fn run_common_factor_gwas(
         gc,
         max_iter: 500,
         std_lv: false,
+        smooth_check: false,
         snp_se: None,
     };
 

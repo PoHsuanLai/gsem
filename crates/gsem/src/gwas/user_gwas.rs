@@ -41,6 +41,8 @@ pub struct UserGwasConfig {
     pub gc: GcMode,
     pub max_iter: usize,
     pub std_lv: bool,
+    /// Log warnings when covariance matrix requires smoothing.
+    pub smooth_check: bool,
     /// Override for SNP SE (default: 0.0005, treating MAF as fixed).
     /// Matches R's `SNPSE` parameter.
     pub snp_se: Option<f64>,
@@ -54,6 +56,7 @@ impl Default for UserGwasConfig {
             gc: GcMode::Standard,
             max_iter: 500,
             std_lv: false,
+            smooth_check: false,
             snp_se: None,
         }
     }
@@ -131,8 +134,16 @@ fn process_single_snp(
     let mut v_full = add_snps::build_v_full(v_ld, se_snp, var_snp, var_snp_se2, i_ld, config.gc, k);
 
     // Smooth if needed
-    smooth::smooth_if_needed(&mut s_full);
-    smooth::smooth_if_needed(&mut v_full);
+    let s_smoothed = smooth::smooth_if_needed(&mut s_full);
+    let v_smoothed = smooth::smooth_if_needed(&mut v_full);
+    if config.smooth_check && (s_smoothed || v_smoothed) {
+        log::warn!(
+            "SNP {}: covariance matrix required smoothing (S={}, V={})",
+            snp_idx,
+            s_smoothed,
+            v_smoothed,
+        );
+    }
 
     // Build model
     let mut obs_names = vec!["SNP".to_string()];

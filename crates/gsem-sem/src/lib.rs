@@ -11,6 +11,7 @@
 //! - [`sandwich`] -- Corrected standard errors
 //! - [`fit_indices`] -- Chi-square, CFI, AIC, SRMR
 
+pub mod commonfactor;
 pub mod delta;
 pub mod error;
 pub mod estimator;

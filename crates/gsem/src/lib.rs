@@ -13,3 +13,4 @@ pub mod gwas;
 pub mod io;
 pub mod munge;
 pub mod stats;
+pub mod sumstats;

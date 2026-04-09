@@ -9,12 +9,14 @@
 //! Use [`ldsc()`] to run the full pipeline. Results are returned as
 //! [`LdscResult`], which supports JSON serialization.
 
+pub mod annot_reader;
 pub mod covariance;
 pub mod error;
 pub mod heritability;
 pub mod jackknife;
 pub mod liability;
 pub mod regression;
+pub mod stratified;
 pub mod weights;
 
 use std::collections::HashMap;

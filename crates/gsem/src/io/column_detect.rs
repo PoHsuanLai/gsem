@@ -176,8 +176,30 @@ impl DetectedColumns {
 /// Case-insensitive matching against known aliases. Returns a mapping
 /// of canonical names to column indices.
 pub fn detect_columns(headers: &[String]) -> DetectedColumns {
+    detect_columns_with_overrides(headers, None)
+}
+
+/// Detect columns with optional user overrides.
+///
+/// Overrides map canonical names (e.g., "SNP", "P", "effect") to actual header names.
+/// User overrides take priority over alias matching.
+pub fn detect_columns_with_overrides(
+    headers: &[String],
+    overrides: Option<&HashMap<String, String>>,
+) -> DetectedColumns {
     let mut columns = HashMap::new();
 
+    // Apply user overrides first
+    if let Some(ovr) = overrides {
+        for (canonical, header_name) in ovr {
+            let upper_header = header_name.to_uppercase();
+            if let Some(idx) = headers.iter().position(|h| h.to_uppercase() == upper_header) {
+                columns.insert(canonical.to_string(), idx);
+            }
+        }
+    }
+
+    // Then fill remaining from alias map
     for (idx, header) in headers.iter().enumerate() {
         let upper = header.to_uppercase();
         if let Some(&canonical) = ALIAS_TO_CANONICAL.get(upper.as_str()) {
@@ -250,5 +272,56 @@ mod tests {
         assert!(detected.has("P"));
         assert!(!detected.has("A1"));
         assert!(!detected.has("effect"));
+    }
+
+    #[test]
+    fn test_overrides() {
+        // Headers that would NOT be auto-detected for SNP and P
+        let headers: Vec<String> = vec!["MY_VARIANT", "MY_PVAL", "BETA", "N"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        // Without overrides, SNP and P are not detected
+        let detected = detect_columns(&headers);
+        assert!(!detected.has("SNP"));
+        assert!(!detected.has("P"));
+        assert!(detected.has("effect")); // BETA is auto-detected
+        assert!(detected.has("N"));
+
+        // With overrides, SNP and P are detected
+        let mut overrides = HashMap::new();
+        overrides.insert("SNP".to_string(), "MY_VARIANT".to_string());
+        overrides.insert("P".to_string(), "MY_PVAL".to_string());
+
+        let detected = detect_columns_with_overrides(&headers, Some(&overrides));
+        assert_eq!(detected.get("SNP"), Some(0));
+        assert_eq!(detected.get("P"), Some(1));
+        assert_eq!(detected.get("effect"), Some(2)); // BETA still auto-detected
+        assert_eq!(detected.get("N"), Some(3));
+    }
+
+    #[test]
+    fn test_overrides_take_priority() {
+        // BETA would normally map to "effect", but override maps it to "SNP"
+        let headers: Vec<String> = vec!["BETA", "P", "N"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let mut overrides = HashMap::new();
+        overrides.insert("SNP".to_string(), "BETA".to_string());
+
+        let detected = detect_columns_with_overrides(&headers, Some(&overrides));
+        // Override wins: BETA -> SNP
+        assert_eq!(detected.get("SNP"), Some(0));
+        // BETA would normally also map to "effect" via alias, but since
+        // column 0 is already claimed by SNP override, alias still inserts
+        // "effect" -> 0 via or_insert (but override for SNP already has idx 0).
+        // The alias for BETA maps canonical "effect" -> 0, which is allowed
+        // since "effect" key doesn't exist yet.
+        assert_eq!(detected.get("effect"), Some(0));
+        assert_eq!(detected.get("P"), Some(1));
+        assert_eq!(detected.get("N"), Some(2));
     }
 }

@@ -15,6 +15,7 @@ pub struct MungeConfig {
     pub info_filter: f64,
     pub maf_filter: f64,
     pub n_override: Option<f64>,
+    pub column_overrides: Option<HashMap<String, String>>,
 }
 
 impl Default for MungeConfig {
@@ -23,6 +24,7 @@ impl Default for MungeConfig {
             info_filter: 0.9,
             maf_filter: 0.01,
             n_override: None,
+            column_overrides: None,
         }
     }
 }
@@ -77,7 +79,7 @@ pub fn munge_file(
     reference: &HashMap<String, RefSnp>,
     config: &MungeConfig,
 ) -> Result<Vec<MungedRecord>> {
-    let data = gwas_reader::read_gwas_file(gwas_path)?;
+    let data = gwas_reader::read_gwas_file_with_overrides(gwas_path, config.column_overrides.as_ref())?;
     let n_input = data.records.len();
     log::info!("Read {n_input} SNPs from {}", gwas_path.display());
 

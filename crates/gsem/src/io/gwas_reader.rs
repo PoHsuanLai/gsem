@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -5,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 
-use super::column_detect::{DetectedColumns, detect_columns};
+use super::column_detect::{self, DetectedColumns};
 
 /// A single row of raw GWAS summary statistics.
 #[derive(Debug, Clone)]
@@ -44,6 +45,17 @@ pub struct MungedRecord {
 /// Supports tab/space-delimited, optionally gzipped (.gz extension).
 /// Auto-detects columns using the alias map.
 pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
+    read_gwas_file_with_overrides(path, None)
+}
+
+/// Read a raw GWAS summary statistics file with optional column name overrides.
+///
+/// Overrides map canonical names (e.g., "SNP", "P", "effect") to actual header names.
+/// User overrides take priority over alias matching.
+pub fn read_gwas_file_with_overrides(
+    path: &Path,
+    column_overrides: Option<&HashMap<String, String>>,
+) -> Result<GwasData> {
     let reader = open_file_reader(path)?;
     let mut lines = reader.lines();
 
@@ -53,7 +65,7 @@ pub fn read_gwas_file(path: &Path) -> Result<GwasData> {
         .into_iter()
         .map(|s| s.to_owned())
         .collect();
-    let detected = detect_columns(&headers);
+    let detected = column_detect::detect_columns_with_overrides(&headers, column_overrides);
 
     let snp_idx = detected.get("SNP").context("SNP column not found")?;
 
