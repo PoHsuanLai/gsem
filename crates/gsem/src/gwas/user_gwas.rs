@@ -57,6 +57,9 @@ pub struct UserGwasConfig {
     pub snp_label: String,
     /// Compute Q_SNP heterogeneity statistic.
     pub q_snp: bool,
+    /// Fix measurement parameters at baseline estimates (fit without SNP first).
+    /// Dramatically speeds up per-SNP fitting.
+    pub fix_measurement: bool,
 }
 
 impl Default for UserGwasConfig {
@@ -71,6 +74,7 @@ impl Default for UserGwasConfig {
             snp_se: None,
             snp_label: "SNP".to_string(),
             q_snp: false,
+            fix_measurement: false,
         }
     }
 }
@@ -91,7 +95,7 @@ pub fn run_user_gwas(
     let k = s_ld.nrows();
 
     // Parse model once
-    let pt = match syntax::parse_model(&config.model, config.std_lv) {
+    let mut pt = match syntax::parse_model(&config.model, config.std_lv) {
         Ok(pt) => pt,
         Err(e) => {
             return vec![SnpResult {
@@ -107,6 +111,62 @@ pub fn run_user_gwas(
             }];
         }
     };
+
+    // fix_measurement: fit baseline model on S_LD (without SNP),
+    // then fix all non-SNP parameters at baseline estimates
+    if config.fix_measurement {
+        // Build a baseline model using only the trait-trait portion of the model
+        // (parameters that don't involve the SNP label)
+        let snp_label = &config.snp_label;
+        let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+        // Extract only non-SNP rows from the partable
+        let baseline_rows: Vec<_> = pt
+            .rows
+            .iter()
+            .filter(|r| r.lhs != *snp_label && r.rhs != *snp_label)
+            .cloned()
+            .collect();
+        if !baseline_rows.is_empty() {
+            let baseline_pt = ParTable { rows: baseline_rows };
+            let mut baseline_model = Model::from_partable(&baseline_pt, &obs_names);
+            let kstar_ld = k * (k + 1) / 2;
+            let v_diag: Vec<f64> = (0..kstar_ld).map(|i| v_ld[(i, i)]).collect();
+            let baseline_fit = if config.estimation.to_uppercase() == "ML" {
+                estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter)
+            } else {
+                estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter)
+            };
+            if baseline_fit.converged {
+                // Fix baseline parameters in the full model
+                let mut free_idx = 0;
+                for row in &baseline_pt.rows {
+                    if row.free > 0 {
+                        if let Some(&est) = baseline_fit.params.get(free_idx) {
+                            // Find matching row in full pt and fix it
+                            for full_row in &mut pt.rows {
+                                if full_row.lhs == row.lhs
+                                    && full_row.op == row.op
+                                    && full_row.rhs == row.rhs
+                                    && full_row.free > 0
+                                {
+                                    full_row.free = 0;
+                                    full_row.value = est;
+                                }
+                            }
+                        }
+                        free_idx += 1;
+                    }
+                }
+                log::info!(
+                    "fix_measurement: fixed {} baseline params, {} remain free",
+                    free_idx,
+                    pt.rows.iter().filter(|r| r.free > 0).count()
+                );
+            } else {
+                log::warn!("fix_measurement: baseline model did not converge, using unfixed params");
+            }
+        }
+    }
 
     // Process SNPs in parallel
     (0..n_snps)

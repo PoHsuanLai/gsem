@@ -7,6 +7,57 @@ pub fn ldsc_result_to_json(result: &LdscResult) -> String {
     result.to_json_string().unwrap_or_default()
 }
 
+/// JSON with additional S_Stand and V_Stand fields (when stand=TRUE).
+pub fn ldsc_result_to_json_stand(result: &LdscResult) -> String {
+    let s_stand = gsem_matrix::smooth::cov_to_cor(&result.s);
+
+    // Rescale V: V_Stand = diag(scale) * cov2cor(V) * diag(scale)
+    // where scale = sqrt(diag(V)) * (vech(S_Stand) / vech(S))
+    let k = result.s.nrows();
+    let kstar = k * (k + 1) / 2;
+    let s_vec = gsem_matrix::vech::vech(&result.s);
+    let s_stand_vec = gsem_matrix::vech::vech(&s_stand);
+    let scale: Vec<f64> = s_stand_vec
+        .iter()
+        .zip(s_vec.iter())
+        .enumerate()
+        .map(|(i, (&st, &orig))| {
+            let ratio = if orig.abs() > 1e-30 { st / orig } else { 0.0 };
+            result.v[(i, i)].sqrt() * ratio
+        })
+        .collect();
+    let v_cor = gsem_matrix::smooth::cov_to_cor(&result.v);
+    let v_stand = Mat::from_fn(kstar, kstar, |i, j| scale[i] * v_cor[(i, j)] * scale[j]);
+
+    // Build JSON with extra fields
+    let base = result.to_json_string().unwrap_or_default();
+    // Insert S_Stand and V_Stand before the closing }
+    if let Some(pos) = base.rfind('}') {
+        let s_stand_json = mat_to_json_2d(&s_stand);
+        let v_stand_json = mat_to_json_2d(&v_stand);
+        format!(
+            "{},\"s_stand\":{},\"v_stand\":{}}}",
+            &base[..pos],
+            s_stand_json,
+            v_stand_json
+        )
+    } else {
+        base
+    }
+}
+
+fn mat_to_json_2d(mat: &Mat<f64>) -> String {
+    let rows: Vec<String> = (0..mat.nrows())
+        .map(|i| {
+            let vals: Vec<String> = (0..mat.ncols())
+                .map(|j| format!("{:.15e}", mat[(i, j)]))
+                .collect();
+            format!("[{}]", vals.join(","))
+        })
+        .collect();
+    format!("[{}]", rows.join(","))
+}
+
 pub fn json_to_ldsc_result(json: &str) -> Option<LdscResult> {
     LdscResult::from_json_string(json).ok()
 }

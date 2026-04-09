@@ -1275,9 +1275,7 @@ fn run_gwas_snp(
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
 
-    // TODO: --fix-measurement: fit baseline model without SNP, then fix non-SNP params
-    // per SNP. This requires pre-fitting, identifying measurement params, and constraining
-    // them in the per-SNP loop. Not yet implemented.
+    // fix_measurement is handled inside run_user_gwas when config.fix_measurement is true
 
     let config = gsem::gwas::user_gwas::UserGwasConfig {
         model: model_str.to_string(),
@@ -1289,6 +1287,7 @@ fn run_gwas_snp(
         snp_se: None,
         snp_label: "SNP".to_string(),
         q_snp: false,
+        fix_measurement: false,
     };
 
     eprintln!("Running GWAS across {n_snps} SNPs...");
@@ -1399,6 +1398,7 @@ fn run_gwas_twas(
         snp_se: None,
         snp_label: "Gene".to_string(),
         q_snp: false,
+        fix_measurement: false,
     };
 
     eprintln!("Running TWAS across {n_genes} genes...");
@@ -1551,6 +1551,10 @@ fn run_commonfactor_gwas(
     }
 
     eprintln!("Running common factor GWAS across {n_snps} SNPs...");
+    let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
+        gc: gc_mode,
+        ..Default::default()
+    };
     let results = gsem::gwas::common_factor::run_common_factor_gwas(
         &merged.trait_names,
         &ldsc_result.s,
@@ -1559,7 +1563,7 @@ fn run_commonfactor_gwas(
         &beta_snp,
         &se_snp,
         &var_snp,
-        gc_mode,
+        &cf_config,
     );
 
     // Write TSV output (same format as user GWAS)
@@ -1761,8 +1765,9 @@ fn run_rgmodel_cmd(
 
     eprintln!("Fitting rgmodel (estimation={estimation})...");
 
-    let result =
-        gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation, model, std_lv)?;
+    let result = gsem_sem::rgmodel::run_rgmodel_with_model(
+        &ldsc_result.s, &ldsc_result.v, estimation, model, std_lv,
+    )?;
 
     let k = result.r.nrows();
     eprintln!(

@@ -232,3 +232,80 @@ fn read_m_annot_file(path: &Path) -> Result<Vec<f64>> {
         })
         .collect()
 }
+
+/// Read PLINK `.frq` files for the given chromosomes.
+///
+/// Expects files at `{frq_dir}/{chr}.frq` with columns: CHR, SNP, A1, A2, MAF, NCHROBS.
+/// Returns a map of SNP → MAF for SNPs with MAF in (0.05, 0.95).
+pub fn read_frq_files(
+    frq_dir: &Path,
+    chromosomes: &[usize],
+) -> Result<HashMap<String, f64>> {
+    let mut snp_maf = HashMap::new();
+
+    for &chr in chromosomes {
+        let path = frq_dir.join(format!("{chr}.frq"));
+        if !path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot open {}", path.display()))?;
+        let mut lines = content.lines();
+
+        // Parse header to find SNP and MAF columns
+        let header = match lines.next() {
+            Some(h) => h,
+            None => continue,
+        };
+        let fields: Vec<&str> = header.split_whitespace().collect();
+        let snp_idx = fields.iter().position(|&h| h == "SNP")
+            .context("SNP column not found in .frq file")?;
+        let maf_idx = fields.iter().position(|&h| h == "MAF")
+            .context("MAF column not found in .frq file")?;
+
+        for line in lines {
+            let flds: Vec<&str> = line.split_whitespace().collect();
+            if flds.len() <= snp_idx.max(maf_idx) {
+                continue;
+            }
+            let maf: f64 = match flds[maf_idx].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            // R filters: MAF > 0.05 & MAF < 0.95
+            if maf > 0.05 && maf < 0.95 {
+                snp_maf.insert(flds[snp_idx].to_string(), maf);
+            }
+        }
+    }
+
+    Ok(snp_maf)
+}
+
+/// Filter annotation LD score data to only SNPs present in the frq map.
+pub fn filter_annot_by_frq(annot: &mut AnnotLdScores, frq_snps: &HashMap<String, f64>) {
+    let keep: Vec<bool> = annot.snps.iter().map(|s| frq_snps.contains_key(s)).collect();
+    let n_keep = keep.iter().filter(|&&k| k).count();
+    if n_keep == annot.snps.len() {
+        return; // nothing to filter
+    }
+
+    let n_annot = annot.annot_ld.ncols();
+    let mut new_snps = Vec::with_capacity(n_keep);
+    let mut new_w_ld = Vec::with_capacity(n_keep);
+    let mut new_rows: Vec<Vec<f64>> = Vec::with_capacity(n_keep);
+
+    for (i, &kept) in keep.iter().enumerate() {
+        if kept {
+            new_snps.push(annot.snps[i].clone());
+            new_w_ld.push(annot.w_ld[i]);
+            new_rows.push((0..n_annot).map(|j| annot.annot_ld[(i, j)]).collect());
+        }
+    }
+
+    annot.snps = new_snps;
+    annot.w_ld = new_w_ld;
+    let n_new = new_rows.len();
+    annot.annot_ld = Mat::from_fn(n_new, n_annot, |i, j| new_rows[i][j]);
+}

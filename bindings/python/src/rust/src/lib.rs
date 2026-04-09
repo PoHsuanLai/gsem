@@ -16,6 +16,11 @@ struct PyLdscResult {
     i_shape: (usize, usize),
     n_vec: Vec<f64>,
     m: f64,
+    // Optional standardized matrices (populated when stand=True)
+    s_stand_data: Option<Vec<f64>>,
+    s_stand_shape: Option<(usize, usize)>,
+    v_stand_data: Option<Vec<f64>>,
+    v_stand_shape: Option<(usize, usize)>,
 }
 
 #[pymethods]
@@ -56,6 +61,24 @@ impl PyLdscResult {
         self.m
     }
 
+    /// Standardized genetic correlation matrix (only when stand=True).
+    #[getter]
+    fn s_stand<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
+        self.s_stand_data.as_ref().map(|data| {
+            let shape = self.s_stand_shape.unwrap();
+            Array2::from_shape_vec(shape, data.clone()).expect("S_Stand shape").into_pyarray(py)
+        })
+    }
+
+    /// Standardized sampling covariance (only when stand=True).
+    #[getter]
+    fn v_stand<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
+        self.v_stand_data.as_ref().map(|data| {
+            let shape = self.v_stand_shape.unwrap();
+            Array2::from_shape_vec(shape, data.clone()).expect("V_Stand shape").into_pyarray(py)
+        })
+    }
+
     /// Serialize to JSON string.
     fn to_json(&self) -> String {
         self.json.clone()
@@ -66,14 +89,33 @@ impl PyLdscResult {
     fn from_json(json: &str) -> PyResult<Self> {
         let result = conversions::json_to_ldsc(json)
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid JSON"))?;
-        Ok(ldsc_result_to_py(&result))
+        Ok(ldsc_result_to_py(&result, false))
     }
 }
 
-fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult) -> PyLdscResult {
+fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResult {
     let (s_data, s_rows, s_cols) = conversions::mat_to_flat(&result.s);
     let (v_data, v_rows, v_cols) = conversions::mat_to_flat(&result.v);
     let (i_data, i_rows, i_cols) = conversions::mat_to_flat(&result.i_mat);
+
+    let (s_stand_data, s_stand_shape, v_stand_data, v_stand_shape) = if stand {
+        let s_stand = gsem_matrix::smooth::cov_to_cor(&result.s);
+        let k = result.s.nrows();
+        let kstar = k * (k + 1) / 2;
+        let s_vec = gsem_matrix::vech::vech(&result.s);
+        let ss_vec = gsem_matrix::vech::vech(&s_stand);
+        let scale: Vec<f64> = ss_vec.iter().zip(s_vec.iter()).enumerate().map(|(i, (&st, &orig))| {
+            let ratio = if orig.abs() > 1e-30 { st / orig } else { 0.0 };
+            result.v[(i, i)].sqrt() * ratio
+        }).collect();
+        let v_cor = gsem_matrix::smooth::cov_to_cor(&result.v);
+        let v_stand = faer::Mat::from_fn(kstar, kstar, |i, j| scale[i] * v_cor[(i, j)] * scale[j]);
+        let (ss_data, ss_r, ss_c) = conversions::mat_to_flat(&s_stand);
+        let (vs_data, vs_r, vs_c) = conversions::mat_to_flat(&v_stand);
+        (Some(ss_data), Some((ss_r, ss_c)), Some(vs_data), Some((vs_r, vs_c)))
+    } else {
+        (None, None, None, None)
+    };
 
     PyLdscResult {
         json: result.to_json_string().unwrap_or_default(),
@@ -85,12 +127,16 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult) -> PyLdscResult {
         i_shape: (i_rows, i_cols),
         n_vec: result.n_vec.clone(),
         m: result.m,
+        s_stand_data,
+        s_stand_shape,
+        v_stand_data,
+        v_stand_shape,
     }
 }
 
 /// Run multivariate LDSC.
 #[pyfunction]
-#[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=false, chisq_max=None))]
+#[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=None, chisq_max=None))]
 #[allow(unused_variables)]
 fn ldsc(
     traits: Vec<String>,
@@ -100,13 +146,14 @@ fn ldsc(
     wld: &str,
     trait_names: Option<Vec<String>>,
     sep_weights: bool,       // ignored
-    chr: usize,              // threaded
+    chr: usize,
     n_blocks: usize,
     ldsc_log: Option<String>, // ignored
-    stand: bool,             // threaded (not yet used in library)
-    select: bool,            // threaded (not yet used in library)
-    chisq_max: Option<f64>,  // threaded
+    stand: bool,
+    select: Option<String>,
+    chisq_max: Option<f64>,
 ) -> PyResult<PyLdscResult> {
+    let _ = (sep_weights, ldsc_log);
     let wld_dir = if wld.is_empty() { ld } else { wld };
 
     let mut trait_data = Vec::new();
@@ -125,7 +172,12 @@ fn ldsc(
 
     let ld_path = std::path::Path::new(ld);
     let wld_path = std::path::Path::new(wld_dir);
-    let chromosomes: Vec<usize> = (1..=chr).collect();
+    let chromosomes: Vec<usize> = match select.as_deref() {
+        None | Some("") | Some("FALSE") | Some("false") => (1..=chr).collect(),
+        Some("ODD") | Some("odd") => (1..=chr).filter(|c| c % 2 == 1).collect(),
+        Some("EVEN") | Some("even") => (1..=chr).filter(|c| c % 2 == 0).collect(),
+        Some(other) => other.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
+    };
     let ld_data = gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
@@ -149,7 +201,7 @@ fn ldsc(
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
-    Ok(ldsc_result_to_py(&result))
+    Ok(ldsc_result_to_py(&result, stand))
 }
 
 /// Munge GWAS summary statistics files.
@@ -372,6 +424,7 @@ fn commonfactor_gwas(
         snp_se: snp_se_val,
         snp_label: "SNP".to_string(),
         q_snp: false,
+        fix_measurement: false,
     };
 
     let results = gsem::gwas::user_gwas::run_user_gwas(
@@ -383,26 +436,26 @@ fn commonfactor_gwas(
 
 /// Run user-specified GWAS.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=false, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
+#[pyo3(signature = (covstruc_json, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=None, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
 #[allow(unused_variables)]
 fn user_gwas(
     covstruc_json: &str,
     sumstats_path: &str,
     model: &str,
     estimation: &str,
-    printwarn: bool,           // ignored
-    sub: bool,                 // threaded (not yet used in library)
-    cores: Option<usize>,      // ignored
-    toler: bool,               // ignored
-    snpse: bool,               // threaded (as snp_se)
-    parallel: bool,            // ignored
+    printwarn: bool,
+    sub: Option<Vec<String>>,
+    cores: Option<usize>,
+    toler: bool,
+    snpse: bool,
+    parallel: bool,
     gc: &str,
-    mpi: bool,                 // ignored
-    smooth_check: bool,        // threaded
-    twas: bool,                // ignored
-    std_lv: bool,              // threaded
-    fix_measurement: bool,     // ignored
-    q_snp: bool,               // ignored
+    mpi: bool,
+    smooth_check: bool,
+    twas: bool,
+    std_lv: bool,
+    fix_measurement: bool,
+    q_snp: bool,
 ) -> PyResult<String> {
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
@@ -429,12 +482,31 @@ fn user_gwas(
         smooth_check,
         snp_se: snp_se_val,
         snp_label,
-        q_snp: q_snp,
+        q_snp,
+        fix_measurement,
     };
-    let results = gsem::gwas::user_gwas::run_user_gwas(
+    let _ = (printwarn, cores, toler, parallel, mpi);
+
+    let mut results = gsem::gwas::user_gwas::run_user_gwas(
         &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
         &beta_snp, &se_snp, &var_snp,
     );
+
+    if let Some(ref patterns) = sub {
+        let pats: Vec<String> = patterns.iter()
+            .map(|s| s.trim().replace(' ', ""))
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !pats.is_empty() {
+            for snp_result in &mut results {
+                snp_result.params.retain(|p| {
+                    let key = format!("{}{}{}", p.lhs, p.op, p.rhs).replace(' ', "");
+                    pats.iter().any(|pat| key == *pat)
+                });
+            }
+        }
+    }
+
     Ok(snp_results_to_json(&results, &merged.snps))
 }
 
@@ -500,11 +572,24 @@ fn rgmodel(
     sub: Option<Vec<String>>,  // not yet used
 ) -> PyResult<String> {
     let est_str = if estimation { "DWLS" } else { "ML" };
+    let model_opt = if model.is_empty() { None } else { Some(model) };
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
-    let model_opt = if model.is_empty() { None } else { Some(model) };
-    let result = gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, est_str, model_opt, std_lv)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    let result = if let Some(ref sub_names) = sub {
+        let k = ldsc_result.s.nrows();
+        let all_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+        let sub_indices: Vec<usize> = sub_names.iter()
+            .filter_map(|name| all_names.iter().position(|n| n == name))
+            .collect();
+        gsem_sem::rgmodel::run_rgmodel_sub(
+            &ldsc_result.s, &ldsc_result.v, est_str, model_opt, std_lv, &sub_indices,
+        )
+    } else {
+        gsem_sem::rgmodel::run_rgmodel_with_model(
+            &ldsc_result.s, &ldsc_result.v, est_str, model_opt, std_lv,
+        )
+    }
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
     let k = result.r.nrows();
     let kstar = k * (k + 1) / 2;
     let r_rows: Vec<String> = (0..k).map(|i| {
@@ -531,10 +616,137 @@ fn hdl(
     n_ref: f64,
     method: &str,
 ) -> PyResult<String> {
-    // HDL is not yet implemented in the Rust library; return a stub error.
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "hdl() is not yet implemented in the Rust backend. This function signature is provided for API compatibility with R GenomicSEM."
-    ))
+    use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
+    let _ = trait_names;
+
+    let sp: Vec<Option<f64>> = sample_prev.unwrap_or_default();
+    let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();
+
+    // Read trait files
+    let mut trait_data = Vec::new();
+    for path_str in &traits {
+        let path = std::path::Path::new(path_str);
+        let records = gsem::io::gwas_reader::read_sumstats(path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+        trait_data.push(HdlTraitData {
+            snp: records.iter().map(|r| r.snp.clone()).collect(),
+            z: records.iter().map(|r| r.z).collect(),
+            n: records.iter().map(|r| r.n).collect(),
+            a1: records.iter().map(|r| r.a1.clone()).collect(),
+            a2: records.iter().map(|r| r.a2.clone()).collect(),
+        });
+    }
+
+    let hdl_method = match method.to_lowercase().as_str() {
+        "jackknife" => HdlMethod::Jackknife,
+        _ => HdlMethod::Piecewise,
+    };
+
+    let config = HdlConfig {
+        method: hdl_method,
+        n_ref,
+    };
+
+    // Load LD pieces from text format directory
+    let ld_dir = std::path::Path::new(ld_path);
+    let pieces_file = ld_dir.join("pieces.tsv");
+    let pieces_alt = ld_dir.join("pieces.txt");
+    let pieces_path = if pieces_file.exists() {
+        pieces_file
+    } else if pieces_alt.exists() {
+        pieces_alt
+    } else {
+        return Err(pyo3::exceptions::PyIOError::new_err(format!(
+            "HDL LD reference directory missing pieces.tsv at {}",
+            ld_dir.display()
+        )));
+    };
+
+    let pieces_content = std::fs::read_to_string(&pieces_path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("failed to read pieces file: {e}")))?;
+
+    let mut ld_pieces = Vec::new();
+    for line in pieces_content.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with("piece")
+            || line.starts_with("chr")
+        {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 3 {
+            continue;
+        }
+
+        // Try to find piece SNP file with various naming patterns
+        let chr_val = fields[0];
+        let piece_val = fields[1];
+        let snp_file_tsv = ld_dir.join(format!("chr{chr_val}.{piece_val}.snps.tsv"));
+        let snp_file_txt = ld_dir.join(format!("piece.{piece_val}.snps.txt"));
+        let snp_file = if snp_file_tsv.exists() {
+            snp_file_tsv
+        } else if snp_file_txt.exists() {
+            snp_file_txt
+        } else {
+            continue;
+        };
+
+        let snp_content = match std::fs::read_to_string(&snp_file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let mut snps = Vec::new();
+        let mut a1 = Vec::new();
+        let mut a2 = Vec::new();
+        let mut ld_scores = Vec::new();
+
+        for sline in snp_content.lines() {
+            let sline = sline.trim();
+            if sline.is_empty() || sline.starts_with('#') || sline.starts_with("SNP") {
+                continue;
+            }
+            let sf: Vec<&str> = sline.split('\t').collect();
+            if sf.len() < 4 {
+                continue;
+            }
+            snps.push(sf[0].to_string());
+            a1.push(sf[1].to_string());
+            a2.push(sf[2].to_string());
+            if let Ok(ld) = sf[3].parse::<f64>() {
+                ld_scores.push(ld);
+            } else {
+                ld_scores.push(0.0);
+            }
+        }
+
+        let m = snps.len();
+        if m > 0 {
+            ld_pieces.push(LdPiece {
+                snps,
+                a1,
+                a2,
+                ld_scores,
+                m,
+            });
+        }
+    }
+
+    if ld_pieces.is_empty() {
+        return Err(pyo3::exceptions::PyIOError::new_err(format!(
+            "no valid LD pieces loaded from {}",
+            ld_dir.display()
+        )));
+    }
+
+    let result = gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    let ldsc_compat = result.to_ldsc_result();
+    let json = ldsc_compat.to_json_string()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    Ok(json)
 }
 
 /// Run stratified LDSC (s-LDSC).
@@ -553,10 +765,94 @@ fn s_ldsc(
     ldsc_log: Option<String>,
     exclude_cont: bool,
 ) -> PyResult<String> {
-    // s-LDSC is not yet implemented in the Rust library; return a stub error.
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "s_ldsc() is not yet implemented in the Rust backend. This function signature is provided for API compatibility with R GenomicSEM."
-    ))
+    let _ = (trait_names, ldsc_log);
+
+    let sp: Vec<Option<f64>> = sample_prev.unwrap_or_default();
+    let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();
+
+    // Read trait files
+    let mut trait_data = Vec::new();
+    for path_str in &traits {
+        let path = std::path::Path::new(path_str);
+        let records = gsem::io::gwas_reader::read_sumstats(path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+        trait_data.push(gsem_ldsc::TraitSumstats {
+            snp: records.iter().map(|r| r.snp.clone()).collect(),
+            z: records.iter().map(|r| r.z).collect(),
+            n: records.iter().map(|r| r.n).collect(),
+            a1: records.iter().map(|r| r.a1.clone()).collect(),
+            a2: records.iter().map(|r| r.a2.clone()).collect(),
+        });
+    }
+
+    let ld_path = std::path::Path::new(ld);
+    let wld_path = std::path::Path::new(wld);
+    let chromosomes: Vec<usize> = (1..=22).collect();
+
+    // Read annotation LD scores
+    let mut annot_data = gsem_ldsc::annot_reader::read_annot_ld_scores(ld_path, wld_path, &chromosomes)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+
+    // Filter by frq files (MAF 0.05-0.95) if frq dir is provided
+    if !frq.is_empty() {
+        let frq_path = std::path::Path::new(frq);
+        match gsem_ldsc::annot_reader::read_frq_files(frq_path, &chromosomes) {
+            Ok(frq_snps) => {
+                gsem_ldsc::annot_reader::filter_annot_by_frq(&mut annot_data, &frq_snps);
+            }
+            Err(e) => log::warn!("Failed to read frq files: {e}"),
+        }
+    }
+
+    // Filter out continuous annotations if exclude_cont is true
+    if exclude_cont {
+        let n_snps = annot_data.annot_ld.nrows();
+        let n_annot = annot_data.annot_ld.ncols();
+        let mut keep: Vec<bool> = vec![true; n_annot];
+        for j in 0..n_annot {
+            for i in 0..n_snps {
+                let v = annot_data.annot_ld[(i, j)];
+                if v != 0.0 && v != 1.0 {
+                    keep[j] = false;
+                    break;
+                }
+            }
+        }
+        let kept_indices: Vec<usize> = keep.iter().enumerate()
+            .filter(|&(_, &k)| k).map(|(i, _)| i).collect();
+        if kept_indices.len() < n_annot {
+            let new_annot_ld = faer::Mat::from_fn(n_snps, kept_indices.len(), |i, j| {
+                annot_data.annot_ld[(i, kept_indices[j])]
+            });
+            let new_names: Vec<String> = kept_indices.iter()
+                .map(|&i| annot_data.annotation_names[i].clone()).collect();
+            let new_m: Vec<f64> = kept_indices.iter()
+                .map(|&i| annot_data.m_annot[i]).collect();
+            annot_data.annot_ld = new_annot_ld;
+            annot_data.annotation_names = new_names;
+            annot_data.m_annot = new_m;
+        }
+    }
+
+    let config = gsem_ldsc::stratified::StratifiedLdscConfig {
+        n_blocks,
+    };
+
+    let result = gsem_ldsc::stratified::s_ldsc(
+        &trait_data,
+        &sp,
+        &pp,
+        &annot_data.annot_ld,
+        &annot_data.w_ld,
+        &annot_data.snps,
+        &annot_data.annotation_names,
+        &annot_data.m_annot,
+        &config,
+    )
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+
+    result.to_json_string()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
 }
 
 /// Helper: parse a JSON 2D array string into a faer Mat.

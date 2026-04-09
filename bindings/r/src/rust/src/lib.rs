@@ -61,7 +61,16 @@ fn ldsc_rust(
 
     let ld_path = std::path::Path::new(ld_dir);
     let wld_path = std::path::Path::new(wld_dir);
-    let chromosomes: Vec<usize> = (1..=chr_count).collect();
+    // Parse `select` parameter: "FALSE" → all, "ODD" → odd, "EVEN" → even, or comma-separated
+    let chromosomes: Vec<usize> = match select.to_uppercase().as_str() {
+        "FALSE" | "" => (1..=chr_count).collect(),
+        "ODD" => (1..=chr_count).filter(|c| c % 2 == 1).collect(),
+        "EVEN" => (1..=chr_count).filter(|c| c % 2 == 0).collect(),
+        other => other
+            .split(',')
+            .filter_map(|s| s.trim().parse::<usize>().ok())
+            .collect(),
+    };
     let ld_data = match gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes) {
         Ok(d) => d,
         Err(e) => return format!("{{\"error\": \"{e}\"}}"),
@@ -81,11 +90,6 @@ fn ldsc_rust(
         chisq_max: chisq_max_opt,
     };
 
-    // Note: `stand` and `select` are accepted for API compatibility but
-    // the Rust LDSC implementation handles standardization internally.
-    let _ = stand;
-    let _ = select;
-
     match gsem_ldsc::ldsc(
         &trait_data,
         &sp,
@@ -96,7 +100,13 @@ fn ldsc_rust(
         ld_data.total_m,
         &config,
     ) {
-        Ok(result) => conversions::ldsc_result_to_json(&result),
+        Ok(result) => {
+            if stand {
+                conversions::ldsc_result_to_json_stand(&result)
+            } else {
+                conversions::ldsc_result_to_json(&result)
+            }
+        }
         Err(e) => format!("{{\"error\": \"{e}\"}}"),
     }
 }
@@ -373,11 +383,18 @@ fn commonfactor_gwas_rust(
         }
     }
 
-    // Note: estimation, snp_se, and smooth_check are accepted for API
-    // compatibility. The common factor GWAS currently uses DWLS internally.
-    let _ = estimation;
-    let _ = snp_se;
-    let _ = smooth_check;
+    let snp_se_opt = if snp_se.is_na() || snp_se.inner().is_nan() {
+        None
+    } else {
+        Some(snp_se.inner())
+    };
+
+    let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
+        estimation: estimation.to_string(),
+        gc: gc_mode,
+        snp_se: snp_se_opt,
+        smooth_check,
+    };
 
     let results = gsem::gwas::common_factor::run_common_factor_gwas(
         &merged.trait_names,
@@ -387,7 +404,7 @@ fn commonfactor_gwas_rust(
         &beta_snp,
         &se_snp,
         &var_snp,
-        gc_mode,
+        &cf_config,
     );
 
     conversions::snp_results_to_json(&results, &merged.snps)
@@ -452,11 +469,7 @@ fn user_gwas_rust(
         ..Default::default()
     };
 
-    // Note: `sub` is accepted for API compatibility but filtering
-    // is not yet implemented in the Rust backend.
-    let _ = sub;
-
-    let results = gsem::gwas::user_gwas::run_user_gwas(
+    let mut results = gsem::gwas::user_gwas::run_user_gwas(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
@@ -465,6 +478,23 @@ fn user_gwas_rust(
         &se_snp,
         &var_snp,
     );
+
+    // Filter results by `sub` if specified (R's sub parameter)
+    if !sub.is_empty() {
+        let patterns: Vec<String> = sub
+            .split(',')
+            .map(|s| s.trim().replace(' ', ""))
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !patterns.is_empty() {
+            for snp_result in &mut results {
+                snp_result.params.retain(|p| {
+                    let key = format!("{}{}{}", p.lhs, p.op, p.rhs).replace(' ', "");
+                    patterns.iter().any(|pat| key == *pat)
+                });
+            }
+        }
+    }
 
     conversions::snp_results_to_json(&results, &merged.snps)
 }
@@ -530,12 +560,26 @@ fn rgmodel_rust(
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
     };
 
-    // Note: sub is accepted for API compatibility but not yet used.
-    let _ = sub;
-
     let model_opt = if model.is_empty() { None } else { Some(model) };
 
-    match gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation, model_opt, std_lv) {
+    let result = if !sub.is_empty() {
+        // Parse sub as comma-separated phenotype names, map to indices
+        let k = ldsc_result.s.nrows();
+        let all_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+        let sub_names: Vec<&str> = sub.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let sub_indices: Vec<usize> = sub_names.iter()
+            .filter_map(|name| all_names.iter().position(|n| n == name))
+            .collect();
+        gsem_sem::rgmodel::run_rgmodel_sub(
+            &ldsc_result.s, &ldsc_result.v, estimation, model_opt, std_lv, &sub_indices,
+        )
+    } else {
+        gsem_sem::rgmodel::run_rgmodel_with_model(
+            &ldsc_result.s, &ldsc_result.v, estimation, model_opt, std_lv,
+        )
+    };
+
+    match result {
         Ok(result) => {
             let k = result.r.nrows();
             let r_rows: Vec<String> = (0..k)
@@ -761,15 +805,52 @@ fn s_ldsc_rust(
     let wld = std::path::Path::new(wld_dir);
     let chromosomes: Vec<usize> = (1..=22).collect();
 
-    // Note: frq_dir and exclude_cont are accepted for API compatibility.
-    let _ = frq_dir;
-    let _ = exclude_cont;
-
     // Read annotation LD scores
-    let annot_data = match gsem_ldsc::annot_reader::read_annot_ld_scores(ld, wld, &chromosomes) {
+    let mut annot_data = match gsem_ldsc::annot_reader::read_annot_ld_scores(ld, wld, &chromosomes) {
         Ok(d) => d,
         Err(e) => return format!("{{\"error\": \"{e}\"}}"),
     };
+
+    // Filter by frq files (MAF 0.05–0.95) if frq_dir is provided
+    if !frq_dir.is_empty() {
+        let frq_path = std::path::Path::new(frq_dir);
+        match gsem_ldsc::annot_reader::read_frq_files(frq_path, &chromosomes) {
+            Ok(frq_snps) => {
+                gsem_ldsc::annot_reader::filter_annot_by_frq(&mut annot_data, &frq_snps);
+            }
+            Err(e) => log::warn!("Failed to read frq files: {e}"),
+        }
+    }
+
+    // Filter out continuous annotations if exclude_cont is true
+    if exclude_cont {
+        let n_snps = annot_data.annot_ld.nrows();
+        let n_annot = annot_data.annot_ld.ncols();
+        let mut keep: Vec<bool> = vec![true; n_annot];
+        for j in 0..n_annot {
+            for i in 0..n_snps {
+                let v = annot_data.annot_ld[(i, j)];
+                if v != 0.0 && v != 1.0 {
+                    keep[j] = false;
+                    break;
+                }
+            }
+        }
+        let kept_indices: Vec<usize> = keep.iter().enumerate()
+            .filter(|&(_, &k)| k).map(|(i, _)| i).collect();
+        if kept_indices.len() < n_annot {
+            let new_annot_ld = faer::Mat::from_fn(n_snps, kept_indices.len(), |i, j| {
+                annot_data.annot_ld[(i, kept_indices[j])]
+            });
+            let new_names: Vec<String> = kept_indices.iter()
+                .map(|&i| annot_data.annotation_names[i].clone()).collect();
+            let new_m: Vec<f64> = kept_indices.iter()
+                .map(|&i| annot_data.m_annot[i]).collect();
+            annot_data.annot_ld = new_annot_ld;
+            annot_data.annotation_names = new_names;
+            annot_data.m_annot = new_m;
+        }
+    }
 
     let config = gsem_ldsc::stratified::StratifiedLdscConfig {
         n_blocks: n_blocks as usize,

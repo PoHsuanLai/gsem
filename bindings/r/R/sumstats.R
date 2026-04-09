@@ -22,7 +22,8 @@
 #' @export
 sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=NULL,
                      N=NULL, betas=NULL, info.filter=0.6, maf.filter=0.01,
-                     keep.indel=FALSE, parallel=FALSE, cores=NULL, ambig=FALSE, direct.filter=FALSE) {
+                     keep.indel=FALSE, parallel=FALSE, cores=NULL, ambig=FALSE,
+                     direct.filter=FALSE, out="merged_sumstats.tsv") {
 
   # Ignored params
   if (!is.null(betas)) {
@@ -68,8 +69,6 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
   } else {
     jsonlite::toJSON(as.list(N), auto_unbox = TRUE)
   }
-
-  out <- "merged_sumstats.tsv"
 
   json <- .Call("wrap__sumstats_rust",
     as.character(files), as.character(ref), as.character(trait.names),
