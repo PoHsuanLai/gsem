@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use faer::Mat;
 use gsem_matrix::vech;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Result of multivariate LD Score Regression.
@@ -93,6 +94,16 @@ struct MergedData {
     _n_traits: usize,
 }
 
+/// Result from a single trait-pair regression (used internally for parallel collection).
+struct PairResult {
+    j: usize,
+    jj: usize,
+    value: f64,
+    intercept: f64,
+    mean_n: f64,
+    pseudos: Vec<f64>,
+}
+
 /// Configuration for LDSC.
 #[derive(Debug, Clone)]
 pub struct LdscConfig {
@@ -136,18 +147,17 @@ pub fn ldsc(
     log::info!("LDSC: {k} traits, {n_snps} SNPs after merge, {n_blocks} jackknife blocks");
 
     let kstar = vech::vech_size(k);
-    let mut s = Mat::zeros(k, k);
-    let mut i_mat = Mat::zeros(k, k);
-    let mut n_vec = vec![0.0; kstar];
 
-    // Collect all jackknife pseudo-values for V estimation
-    let mut all_pseudos: Vec<Vec<f64>> = Vec::with_capacity(kstar);
+    // Build (j, jj) pairs in vech order for parallel processing
+    let pairs: Vec<(usize, usize)> = (0..k)
+        .flat_map(|j| (j..k).map(move |jj| (j, jj)))
+        .collect();
 
-    let mut vech_idx = 0;
-    for j in 0..k {
-        for jj in j..k {
+    // Run all trait pair regressions in parallel
+    let pair_results: Vec<Result<PairResult>> = pairs
+        .par_iter()
+        .map(|&(j, jj)| {
             if j == jj {
-                // Heritability path (diagonal)
                 let result = heritability::estimate_h2(
                     &merged.z[j],
                     &merged.n[j],
@@ -156,12 +166,15 @@ pub fn ldsc(
                     merged.m,
                     n_blocks,
                 )?;
-                s[(j, j)] = result.h2;
-                i_mat[(j, j)] = result.intercept;
-                n_vec[vech_idx] = result.mean_n;
-                all_pseudos.push(result.pseudo_values);
+                Ok(PairResult {
+                    j,
+                    jj,
+                    value: result.h2,
+                    intercept: result.intercept,
+                    mean_n: result.mean_n,
+                    pseudos: result.pseudo_values,
+                })
             } else {
-                // Genetic covariance path (off-diagonal)
                 let result = covariance::estimate_gcov(
                     &merged.z[j],
                     &merged.z[jj],
@@ -172,15 +185,34 @@ pub fn ldsc(
                     merged.m,
                     n_blocks,
                 )?;
-                s[(j, jj)] = result.gcov;
-                s[(jj, j)] = result.gcov;
-                i_mat[(j, jj)] = result.intercept;
-                i_mat[(jj, j)] = result.intercept;
-                n_vec[vech_idx] = result.mean_n;
-                all_pseudos.push(result.pseudo_values);
+                Ok(PairResult {
+                    j,
+                    jj,
+                    value: result.gcov,
+                    intercept: result.intercept,
+                    mean_n: result.mean_n,
+                    pseudos: result.pseudo_values,
+                })
             }
-            vech_idx += 1;
+        })
+        .collect();
+
+    // Collect results into matrices (sequential, preserves vech order)
+    let mut s = Mat::zeros(k, k);
+    let mut i_mat = Mat::zeros(k, k);
+    let mut n_vec = vec![0.0; kstar];
+    let mut all_pseudos: Vec<Vec<f64>> = Vec::with_capacity(kstar);
+
+    for (vech_idx, pr) in pair_results.into_iter().enumerate() {
+        let r = pr?;
+        s[(r.j, r.jj)] = r.value;
+        i_mat[(r.j, r.jj)] = r.intercept;
+        if r.j != r.jj {
+            s[(r.jj, r.j)] = r.value;
+            i_mat[(r.jj, r.j)] = r.intercept;
         }
+        n_vec[vech_idx] = r.mean_n;
+        all_pseudos.push(r.pseudos);
     }
 
     // Construct V matrix from jackknife pseudo-values.
