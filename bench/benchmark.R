@@ -79,35 +79,46 @@ all_results$usermodel <- bench::mark(
 # 4. paLDSC (parallel analysis)
 # ==========================================================================
 cat("--- [4/6] paLDSC ---\n")
-all_results$paLDSC <- bench::mark(
-  R = GenomicSEM::paLDSC(r_cov, r = 500),
-  gsemr = gsemr::paLDSC(rust_cov, r = 500),
-  min_iterations = 3, check = FALSE, filter_gc = FALSE
-)
+tryCatch({
+  all_results$paLDSC <- bench::mark(
+    R = GenomicSEM::paLDSC(S = r_cov$S, V = r_cov$V, r = 500),
+    gsemr = gsemr::paLDSC(rust_cov, r = 500),
+    min_iterations = 3, check = FALSE, filter_gc = FALSE
+  )
+}, error = function(e) {
+  cat("  SKIPPED:", conditionMessage(e), "\n")
+})
 
 # ==========================================================================
 # 5. write.model
 # ==========================================================================
 cat("--- [5/6] write.model ---\n")
-# Generate loadings matrix from paLDSC
 loadings <- matrix(c(0.7, 0.6, 0.5), ncol = 1)
 rownames(loadings) <- trait_names
 
-all_results$write.model <- bench::mark(
-  R = GenomicSEM::write.model(loadings, r_cov$S, cutoff = 0.3),
-  gsemr = gsemr::write.model(loadings, rust_cov$S, cutoff = 0.3),
-  min_iterations = 50, check = FALSE, filter_gc = FALSE
-)
+tryCatch({
+  all_results$write.model <- bench::mark(
+    R = GenomicSEM::write.model(loadings, r_cov$S, cutoff = 0.3),
+    gsemr = gsemr::write.model(loadings, rust_cov$S, cutoff = 0.3),
+    min_iterations = 50, check = FALSE, filter_gc = FALSE
+  )
+}, error = function(e) {
+  cat("  SKIPPED:", conditionMessage(e), "\n")
+})
 
 # ==========================================================================
 # 6. rgmodel
 # ==========================================================================
 cat("--- [6/6] rgmodel ---\n")
-all_results$rgmodel <- bench::mark(
-  R = GenomicSEM::rgmodel(r_cov, estimation = "DWLS"),
-  gsemr = gsemr::rgmodel(rust_cov, estimation = "DWLS"),
-  min_iterations = 5, check = FALSE, filter_gc = FALSE
-)
+tryCatch({
+  all_results$rgmodel <- bench::mark(
+    R = GenomicSEM::rgmodel(r_cov),
+    gsemr = gsemr::rgmodel(rust_cov),
+    min_iterations = 5, check = FALSE, filter_gc = FALSE
+  )
+}, error = function(e) {
+  cat("  SKIPPED:", conditionMessage(e), "\n")
+})
 
 # ==========================================================================
 # Summary

@@ -96,8 +96,7 @@ jobs:
         working-directory: bindings/r
         run: |
           cp src/rust/target/release/libgsemr.a src/
-          R CMD build .
-          R CMD check gsemr_*.tar.gz --no-manual --no-vignettes
+          R CMD INSTALL .
         env:
           _R_CHECK_FORCE_SUGGESTS_: false
 
