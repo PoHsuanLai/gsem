@@ -29,11 +29,10 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
   if (!is.null(betas)) {
     message("Note: 'betas' is ignored in gsemr -- column detection is automatic")
   }
-  if (!identical(parallel, FALSE)) {
-    message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
-  }
-  if (!is.null(cores)) {
-    message("Note: 'cores' is ignored in gsemr -- Rust uses native parallelism automatically")
+  if (identical(parallel, FALSE)) {
+    Sys.setenv(RAYON_NUM_THREADS = "1")
+  } else if (!is.null(cores)) {
+    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
   }
   if (!identical(ambig, FALSE)) {
     message("Note: 'ambig' is ignored in gsemr -- ambiguous SNPs are always removed")

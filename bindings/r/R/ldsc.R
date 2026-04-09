@@ -28,9 +28,9 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
                  trait.names=NULL, sep_weights=FALSE, chr=22,
                  n.blocks=200, ldsc.log=NULL, stand=FALSE, select=FALSE, chisq.max=NA) {
 
-  # Ignored params
-  if (!identical(sep_weights, FALSE)) {
-    message("Note: sep_weights is always enabled in gsemr -- weight LD scores are read from the wld directory")
+  # sep_weights: when FALSE, use ld directory for weights too (ignore wld)
+  if (identical(sep_weights, FALSE)) {
+    wld <- ld
   }
   # ldsc.log: handled after computation below
 

@@ -19,9 +19,8 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
                              toler=FALSE, SNPSE=FALSE, parallel=TRUE, GC="standard",
                              MPI=FALSE, TWAS=FALSE, smooth_check=FALSE) {
 
-  # Ignored params (truly not applicable to Rust backend)
   if (!identical(parallel, TRUE)) {
-    message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
+    Sys.setenv(RAYON_NUM_THREADS = "1")
   }
   if (!identical(MPI, FALSE)) {
     message("Note: 'MPI' is ignored in gsemr -- not applicable to Rust backend")

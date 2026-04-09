@@ -497,7 +497,10 @@ fn user_gwas(
         log::info!("toler — convergence tolerance is controlled by the L-BFGS optimizer internally");
     }
     if !parallel {
-        log::info!("parallel=False — gsemr always uses native Rust parallelism via rayon");
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build_global()
+            .ok();
     }
     if mpi {
         log::warn!("MPI is not supported in gsemr — use the cores parameter for thread control");

@@ -32,7 +32,7 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
     Sys.setenv(RUST_LOG = "error")
   }
   if (!identical(parallel, TRUE)) {
-    message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
+    Sys.setenv(RAYON_NUM_THREADS = "1")
   }
   if (!identical(MPI, FALSE)) {
     message("Note: 'MPI' is ignored in gsemr -- not applicable to Rust backend")

@@ -20,14 +20,10 @@ munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.fil
                   log.name=NULL, column.names=list(), parallel=FALSE, cores=NULL, overwrite=TRUE) {
 
   # log.name: handled after computation below
-  if (!identical(parallel, FALSE)) {
-    message("Note: Rust backend is always parallel via rayon")
-  }
-  if (!is.null(cores)) {
+  if (identical(parallel, FALSE)) {
+    Sys.setenv(RAYON_NUM_THREADS = "1")
+  } else if (!is.null(cores)) {
     Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
-  }
-  if (!identical(overwrite, TRUE)) {
-    message("Note: gsemr always overwrites existing output files")
   }
 
   if (is.null(trait.names)) {
@@ -47,6 +43,23 @@ munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.fil
   # Output goes to current directory (matching R GenomicSEM behavior)
   out <- "."
   dir.create(out, showWarnings = FALSE, recursive = TRUE)
+
+  # Skip existing files if overwrite=FALSE
+  if (!identical(overwrite, TRUE)) {
+    existing <- sapply(trait.names, function(tn) {
+      file.exists(file.path(out, paste0(tn, ".sumstats.gz")))
+    })
+    if (any(existing)) {
+      skip_names <- trait.names[existing]
+      message("Skipping existing files (overwrite=FALSE): ", paste(skip_names, collapse=", "))
+      files <- files[!existing]
+      trait.names <- trait.names[!existing]
+      if (length(files) == 0) {
+        message("All files already exist, nothing to munge")
+        return(invisible(character(0)))
+      }
+    }
+  }
 
   result <- .Call("wrap__munge_rust",
     as.character(files),
