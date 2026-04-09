@@ -900,6 +900,13 @@ fn run_gwas_snp(
     };
 
     eprintln!("Running GWAS across {n_snps} SNPs...");
+    let pb = indicatif::ProgressBar::new(n_snps as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} SNPs ({eta})",
+        )
+        .unwrap(),
+    );
     let results = gsem::gwas::user_gwas::run_user_gwas(
         &config,
         &ldsc_result.s,
@@ -908,7 +915,9 @@ fn run_gwas_snp(
         &beta_snp,
         &se_snp,
         &var_snp,
+        Some(&|| pb.inc(1)),
     );
+    pb.finish_with_message("complete");
 
     // Write TSV output
     let mut output = String::from("SNP\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
@@ -1012,6 +1021,13 @@ fn run_gwas_twas(
     };
 
     eprintln!("Running TWAS across {n_genes} genes...");
+    let pb = indicatif::ProgressBar::new(n_genes as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} genes ({eta})",
+        )
+        .unwrap(),
+    );
     let results = gsem::gwas::user_gwas::run_user_gwas(
         &config,
         &ldsc_result.s,
@@ -1020,7 +1036,9 @@ fn run_gwas_twas(
         &beta_gene,
         &se_gene,
         &var_gene,
+        Some(&|| pb.inc(1)),
     );
+    pb.finish_with_message("complete");
 
     // Write TSV output with TWAS columns
     let mut output =
@@ -1158,6 +1176,13 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
     }
 
     eprintln!("Running common factor GWAS across {n_snps} SNPs...");
+    let pb = indicatif::ProgressBar::new(n_snps as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} SNPs ({eta})",
+        )
+        .unwrap(),
+    );
     let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
         gc: gc_mode,
         ..Default::default()
@@ -1171,7 +1196,9 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
         &se_snp,
         &var_snp,
         &cf_config,
+        Some(&|| pb.inc(1)),
     );
+    pb.finish_with_message("complete");
 
     // Write TSV output (same format as user GWAS)
     let mut output = String::from("SNP\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
@@ -1269,14 +1296,22 @@ fn run_parallel_analysis(args: ParallelAnalysisArgs) -> Result<()> {
     let k = ldsc_result.s.nrows();
     let n_sim = args.n_sim;
     eprintln!("Running parallel analysis ({k} traits, {n_sim} simulations)...");
-
+    let pb = indicatif::ProgressBar::new(n_sim as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} simulations ({eta})",
+        )
+        .unwrap(),
+    );
     let result = gsem::stats::parallel_analysis::parallel_analysis(
         &ldsc_result.s,
         &ldsc_result.v,
         n_sim,
         0.95,
         false,
+        Some(&|| pb.inc(1)),
     );
+    pb.finish_with_message("complete");
 
     eprintln!("Suggested number of factors: {}", result.n_factors);
 

@@ -201,13 +201,14 @@ fn ldsc(
     };
 
     let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
-    let pb = indicatif::ProgressBar::new(n_pairs as u64);
-    pb.set_style(
-        indicatif::ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
-        )
-        .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar()),
-    );
+    let counter = std::sync::atomic::AtomicUsize::new(0);
+    let interval = if n_pairs <= 20 { 1 } else { (n_pairs / 20).max(1) };
+    let cb = || {
+        let done = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if done == n_pairs || done % interval == 0 {
+            log::info!("LDSC progress: {done}/{n_pairs} trait pairs");
+        }
+    };
 
     let result = gsem_ldsc::ldsc(
         &trait_data,
@@ -218,11 +219,9 @@ fn ldsc(
         &ld_snps,
         ld_data.total_m,
         &config,
-        Some(&|| pb.inc(1)),
+        Some(&cb),
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
-
-    pb.finish_with_message("complete");
     Ok(ldsc_result_to_py(&result, stand))
 }
 
@@ -454,7 +453,7 @@ fn commonfactor_gwas(
 
     let results = gsem::gwas::user_gwas::run_user_gwas(
         &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
-        &beta_snp, &se_snp, &var_snp,
+        &beta_snp, &se_snp, &var_snp, None,
     );
     Ok(snp_results_to_json(&results, &merged.snps))
 }
@@ -535,7 +534,7 @@ fn user_gwas(
 
     let mut results = gsem::gwas::user_gwas::run_user_gwas(
         &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
-        &beta_snp, &se_snp, &var_snp,
+        &beta_snp, &se_snp, &var_snp, None,
     );
 
     if let Some(ref patterns) = sub {
@@ -573,7 +572,7 @@ fn parallel_analysis(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
 
     let percentile = p.unwrap_or(0.95);
-    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, percentile, diag);
+    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, percentile, diag, None);
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(
@@ -1065,7 +1064,7 @@ fn summary_gls(
 /// Python module definition.
 #[pymodule]
 fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let _ = env_logger::try_init();
+    pyo3_log::init();
     m.add_class::<PyLdscResult>()?;
     m.add_function(wrap_pyfunction!(ldsc, m)?)?;
     m.add_function(wrap_pyfunction!(usermodel, m)?)?;

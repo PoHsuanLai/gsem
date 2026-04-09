@@ -1,15 +1,62 @@
 #![allow(clippy::too_many_arguments)]
 
 use extendr_api::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod conversions;
+
+/// Custom log backend that routes messages to R's message stream.
+struct RLogger;
+
+static RLOGGER: RLogger = RLogger;
+
+impl log::Log for RLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            reprintln!("[{}] {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
 
 fn ensure_logger() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = env_logger::try_init();
+        let _ = log::set_logger(&RLOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
     });
+}
+
+/// Progress counter for reporting to R console at reasonable intervals.
+struct RProgress {
+    counter: AtomicUsize,
+    total: usize,
+    interval: usize,
+}
+
+impl RProgress {
+    fn new(total: usize) -> Self {
+        let interval = if total <= 20 { 1 } else { (total / 20).max(1) };
+        Self {
+            counter: AtomicUsize::new(0),
+            total,
+            interval,
+        }
+    }
+
+    fn callback(&self) -> impl Fn() + Sync + '_ {
+        move || {
+            let done = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if done == self.total || done % self.interval == 0 {
+                reprintln!("Progress: {done}/{}", self.total);
+            }
+        }
+    }
 }
 
 /// Convert R nullable floats to Option<f64>, mapping NA to None.
@@ -98,13 +145,8 @@ fn ldsc_rust(
     };
 
     let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
-    let pb = indicatif::ProgressBar::new(n_pairs as u64);
-    pb.set_style(
-        indicatif::ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
-        )
-        .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar()),
-    );
+    let progress = RProgress::new(n_pairs);
+    let cb = progress.callback();
 
     match gsem_ldsc::ldsc(
         &trait_data,
@@ -115,10 +157,9 @@ fn ldsc_rust(
         &ld_snps,
         ld_data.total_m,
         &config,
-        Some(&|| pb.inc(1)),
+        Some(&cb),
     ) {
         Ok(result) => {
-            pb.finish_with_message("complete");
             if stand {
                 conversions::ldsc_result_to_json_stand(&result)
             } else {
@@ -126,7 +167,6 @@ fn ldsc_rust(
             }
         }
         Err(e) => {
-            pb.finish();
             format!("{{\"error\": \"{e}\"}}")
         }
     }
@@ -573,6 +613,9 @@ fn commonfactor_gwas_rust(
         let se_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.se.clone()).collect();
         let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
 
+        let n_genes = var_gene.len();
+        let progress = RProgress::new(n_genes);
+        let cb = progress.callback();
         let results = gsem::gwas::common_factor::run_common_factor_gwas(
             &twas_data.trait_names,
             &ldsc_result.s,
@@ -582,6 +625,7 @@ fn commonfactor_gwas_rust(
             &se_gene,
             &var_gene,
             &cf_config,
+            Some(&cb),
         );
 
         return conversions::twas_results_to_json(&results, &twas_data.genes);
@@ -617,6 +661,9 @@ fn commonfactor_gwas_rust(
     // Remap snp indices: create a new merged.snps with only valid entries
     let valid_merged_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
 
+    let n_snps = var_snp.len();
+    let progress = RProgress::new(n_snps);
+    let cb = progress.callback();
     let results = gsem::gwas::common_factor::run_common_factor_gwas(
         &merged.trait_names,
         &ldsc_result.s,
@@ -626,6 +673,7 @@ fn commonfactor_gwas_rust(
         &se_snp,
         &var_snp,
         &cf_config,
+        Some(&cb),
     );
 
     conversions::snp_results_to_json(&results, &valid_merged_snps)
@@ -698,6 +746,9 @@ fn user_gwas_rust(
             max_iter: 500,
         };
 
+        let n_genes = var_gene.len();
+        let progress = RProgress::new(n_genes);
+        let cb = progress.callback();
         let mut results = gsem::gwas::user_gwas::run_user_gwas(
             &config,
             &ldsc_result.s,
@@ -706,6 +757,7 @@ fn user_gwas_rust(
             &beta_gene,
             &se_gene,
             &var_gene,
+            Some(&cb),
         );
 
         if !sub.is_empty() {
@@ -747,6 +799,9 @@ fn user_gwas_rust(
         q_snp,
     };
 
+    let n_snps = var_snp.len();
+    let progress = RProgress::new(n_snps);
+    let cb = progress.callback();
     let mut results = gsem::gwas::user_gwas::run_user_gwas(
         &config,
         &ldsc_result.s,
@@ -755,6 +810,7 @@ fn user_gwas_rust(
         &beta_snp,
         &se_snp,
         &var_snp,
+        Some(&cb),
     );
 
     if !sub.is_empty() {
@@ -799,8 +855,11 @@ fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32, percentile: Rfloat, diag
         percentile.inner()
     };
 
+    let n = n_sim as usize;
+    let progress = RProgress::new(n);
+    let cb = progress.callback();
     let result =
-        gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, n_sim as usize, p, diag_only);
+        gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, n, p, diag_only, Some(&cb));
 
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result

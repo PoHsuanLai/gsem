@@ -1,6 +1,5 @@
 use faer::{Mat, Side};
 use gsem_matrix::vech;
-use indicatif::{ProgressBar, ProgressStyle};
 use rand::RngExt;
 use rand_distr::StandardNormal;
 use rayon::prelude::*;
@@ -32,6 +31,7 @@ pub fn parallel_analysis(
     n_sim: usize,
     percentile: f64,
     diag_only: bool,
+    on_sim_done: Option<&(dyn Fn() + Sync)>,
 ) -> PaResult {
     let k = s.nrows();
     let kstar = k * (k + 1) / 2;
@@ -58,14 +58,6 @@ pub fn parallel_analysis(
     let chol_l = compute_cholesky_l(&v_sim, kstar);
 
     // Simulate null eigenvalue distributions (parallelized — each iteration is independent)
-    let pb = ProgressBar::new(n_sim as u64);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} simulations ({eta})",
-        )
-        .unwrap(),
-    );
-
     let all_eigs: Vec<Vec<f64>> = (0..n_sim)
         .into_par_iter()
         .map(|_| {
@@ -87,12 +79,12 @@ pub fn parallel_analysis(
             let sim_mat = vech::vech_reverse(&sample, k)
                 .expect("vech_reverse should not fail for valid kstar");
             let eigs = eigenvalues_sorted(&sim_mat);
-            pb.inc(1);
+            if let Some(cb) = on_sim_done {
+                cb();
+            }
             eigs
         })
         .collect();
-
-    pb.finish_with_message("complete");
 
     // Transpose: from n_sim × k to k × n_sim
     let mut sim_eigenvalues: Vec<Vec<f64>> = vec![Vec::with_capacity(n_sim); k];
@@ -176,7 +168,7 @@ mod tests {
         // Identity correlation matrix: all eigenvalues = 1
         let s = Mat::<f64>::identity(3, 3);
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.01 } else { 0.0 });
-        let result = parallel_analysis(&s, &v, 100, 0.95, false);
+        let result = parallel_analysis(&s, &v, 100, 0.95, false, None);
         assert_eq!(result.observed.len(), 3);
         for &eig in &result.observed {
             assert!((eig - 1.0).abs() < 1e-10);
@@ -188,7 +180,7 @@ mod tests {
         // Strong 1-factor structure
         let s = faer::mat![[1.0, 0.8, 0.8], [0.8, 1.0, 0.8], [0.8, 0.8, 1.0],];
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
-        let result = parallel_analysis(&s, &v, 200, 0.95, false);
+        let result = parallel_analysis(&s, &v, 200, 0.95, false, None);
         assert!(result.n_factors >= 1);
     }
 }

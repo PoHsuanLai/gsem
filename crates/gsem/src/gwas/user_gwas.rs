@@ -4,7 +4,6 @@ use gsem_sem::estimator;
 use gsem_sem::model::Model;
 use gsem_sem::sandwich;
 use gsem_sem::syntax::ParTable;
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use statrs::distribution::ContinuousCDF;
 
@@ -108,6 +107,7 @@ pub struct UserGwasConfig {
 /// Run user-specified model GWAS across all SNPs.
 ///
 /// Parallelized via rayon.
+#[allow(clippy::too_many_arguments)]
 pub fn run_user_gwas(
     config: &UserGwasConfig,
     s_ld: &Mat<f64>,
@@ -116,6 +116,7 @@ pub fn run_user_gwas(
     beta_snp: &[Vec<f64>], // n_snps × k
     se_snp: &[Vec<f64>],   // n_snps × k
     var_snp: &[f64],       // n_snps
+    on_snp_done: Option<&(dyn Fn() + Sync)>,
 ) -> Vec<SnpResult> {
     let n_snps = var_snp.len();
     let k = s_ld.nrows();
@@ -208,15 +209,7 @@ pub fn run_user_gwas(
     }
 
     // Process SNPs in parallel
-    let pb = ProgressBar::new(n_snps as u64);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} SNPs ({eta})",
-        )
-        .unwrap(),
-    );
-
-    let results = (0..n_snps)
+    (0..n_snps)
         .into_par_iter()
         .map(|i| {
             let result = process_single_snp(
@@ -231,13 +224,12 @@ pub fn run_user_gwas(
                 var_snp[i],
                 k,
             );
-            pb.inc(1);
+            if let Some(cb) = on_snp_done {
+                cb();
+            }
             result
         })
-        .collect();
-
-    pb.finish_with_message("complete");
-    results
+        .collect()
 }
 
 /// Process a single SNP.

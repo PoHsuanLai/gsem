@@ -45,6 +45,7 @@ pub fn run_common_factor_gwas(
     se_snp: &[Vec<f64>],
     var_snp: &[f64],
     cfg: &CommonFactorGwasConfig,
+    on_snp_done: Option<&(dyn Fn() + Sync)>,
 ) -> Vec<SnpResult> {
     // Auto-generate and parse model
     let loading = std::iter::once(format!("NA*{}", trait_names[0]))
@@ -68,5 +69,5 @@ pub fn run_common_factor_gwas(
         fix_measurement: true,
     };
 
-    user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp)
+    user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp, on_snp_done)
 }
