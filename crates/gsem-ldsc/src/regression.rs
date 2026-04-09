@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 /// Result of block-partitioned weighted least squares regression.
 #[derive(Debug, Clone)]
 pub struct RegressionResult {
@@ -31,34 +33,29 @@ pub fn block_regression(
 
     // Compute block boundaries
     let block_bounds = compute_block_bounds(n, n_blocks);
-    let actual_blocks = block_bounds.len() - 1;
 
-    // Initialize per-block accumulators
-    let mut xtx_blocks = vec![[0.0f64; 4]; actual_blocks];
-    let mut xty_blocks = vec![[0.0f64; 2]; actual_blocks];
-
-    // Accumulate per-block XtX and Xty
-    for b in 0..actual_blocks {
-        let start = block_bounds[b];
-        let end = block_bounds[b + 1];
-
-        for i in start..end {
-            let w = weights[i];
-            let x0 = ld[i] * w; // weighted LD score
-            let x1 = w; // weighted intercept (1 * w)
-            let yi = y[i] * w; // weighted response
-
-            // XtX accumulation (2x2 symmetric)
-            xtx_blocks[b][0] += x0 * x0; // (0,0)
-            xtx_blocks[b][1] += x0 * x1; // (0,1)
-            xtx_blocks[b][2] += x1 * x0; // (1,0)
-            xtx_blocks[b][3] += x1 * x1; // (1,1)
-
-            // Xty accumulation
-            xty_blocks[b][0] += x0 * yi;
-            xty_blocks[b][1] += x1 * yi;
-        }
-    }
+    // Accumulate per-block XtX and Xty in parallel
+    let (xtx_blocks, xty_blocks): (Vec<[f64; 4]>, Vec<[f64; 2]>) = block_bounds
+        .par_windows(2)
+        .map(|w| {
+            let (start, end) = (w[0], w[1]);
+            let mut xtx = [0.0f64; 4];
+            let mut xty = [0.0f64; 2];
+            for i in start..end {
+                let wi = weights[i];
+                let x0 = ld[i] * wi;
+                let x1 = wi;
+                let yi = y[i] * wi;
+                xtx[0] += x0 * x0;
+                xtx[1] += x0 * x1;
+                xtx[2] += x1 * x0;
+                xtx[3] += x1 * x1;
+                xty[0] += x0 * yi;
+                xty[1] += x1 * yi;
+            }
+            (xtx, xty)
+        })
+        .unzip();
 
     // Sum to get totals
     let mut xtx_total = [0.0f64; 4];

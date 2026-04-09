@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
+use rayon::prelude::*;
 
 /// A single LD score record.
 #[derive(Debug, Clone)]
@@ -28,26 +29,37 @@ pub struct LdScores {
 /// Expects files at `{dir}/{chr}.l2.ldscore.gz` with columns: CHR, SNP, BP, L2
 /// and M count files at `{dir}/{chr}.l2.M_5_50`.
 /// Weight files at `{wld_dir}/{chr}.l2.ldscore.gz`.
-pub fn read_ld_scores(ld_dir: &Path, wld_dir: &Path, n_chr: usize) -> Result<LdScores> {
+pub fn read_ld_scores(ld_dir: &Path, wld_dir: &Path, chromosomes: &[usize]) -> Result<LdScores> {
+    // Read all chromosomes in parallel (each decompresses a gzip file)
+    let per_chr: Vec<Result<(Vec<LdScoreRecord>, Vec<f64>, f64)>> = chromosomes
+        .par_iter()
+        .map(|&chr| {
+            let ld_path = ld_dir.join(format!("{chr}.l2.ldscore.gz"));
+            let chr_records = read_ld_score_file(&ld_path)?;
+
+            let wld_path = wld_dir.join(format!("{chr}.l2.ldscore.gz"));
+            let wld_records = read_ld_score_file(&wld_path)?;
+
+            let m_path = ld_dir.join(format!("{chr}.l2.M_5_50"));
+            let m = read_m_file(&m_path)?;
+
+            let w_ld: Vec<f64> = wld_records.iter().map(|r| r.l2).collect();
+            Ok((chr_records, w_ld, m))
+        })
+        .collect();
+
+    // Merge results sequentially (preserves chromosome order)
     let mut records = Vec::new();
     let mut w_ld_all = Vec::new();
-    let mut m_per_chr = Vec::with_capacity(n_chr);
+    let mut m_per_chr = Vec::with_capacity(chromosomes.len());
     let mut total_m = 0.0;
 
-    for chr in 1..=n_chr {
-        let ld_path = ld_dir.join(format!("{chr}.l2.ldscore.gz"));
-        let chr_records = read_ld_score_file(&ld_path)?;
-
-        let wld_path = wld_dir.join(format!("{chr}.l2.ldscore.gz"));
-        let wld_records = read_ld_score_file(&wld_path)?;
-
-        let m_path = ld_dir.join(format!("{chr}.l2.M_5_50"));
-        let m = read_m_file(&m_path)?;
-        total_m += m;
-        m_per_chr.push(m);
-
-        w_ld_all.extend(wld_records.iter().map(|r| r.l2));
+    for result in per_chr {
+        let (chr_records, w_ld, m) = result?;
         records.extend(chr_records);
+        w_ld_all.extend(w_ld);
+        m_per_chr.push(m);
+        total_m += m;
     }
 
     Ok(LdScores {
