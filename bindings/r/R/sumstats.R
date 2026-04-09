@@ -4,7 +4,7 @@
 #' and outputs a merged tab-delimited file for multivariate GWAS.
 #'
 #' @param files Character vector of GWAS file paths
-#' @param ref Path to LD score reference directory
+#' @param ref Path to reference panel file (e.g., w_hm3.snplist)
 #' @param trait.names Character vector of trait names
 #' @param se.logit Logical vector indicating which traits have logistic SEs
 #' @param OLS Logical vector indicating which traits are from OLS regression

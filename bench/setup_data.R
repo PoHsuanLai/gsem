@@ -48,15 +48,13 @@ ensure_bench_data <- function(bench_dir = NULL) {
     cat("HapMap3 SNP list already present.\n")
   }
 
-  # -- Simulated GWAS data (3 traits, N=50k) --
-  gwas_check <- file.path(data_dir, "iter1GWAS1.sumstats.gz")
-  # Also check the dot-separated variant from simLDSC
-  gwas_check2 <- file.path(data_dir, "iter1.GWAS1.sumstats.gz")
-  if (!file.exists(gwas_check) && !file.exists(gwas_check2)) {
-    cat("Generating simulated GWAS data with simLDSC...\n")
+  # -- Real GWAS data (PGC: Anxiety, OCD, PTSD) --
+  anx_file <- file.path(data_dir, "anxiety.meta.full.cc.tbl.gz")
+  if (!file.exists(anx_file)) {
+    cat("Downloading real PGC GWAS data...\n")
     source(file.path(bench_dir, "generate_bench_data.R"))
   } else {
-    cat("Simulated GWAS data already present.\n")
+    cat("Real GWAS data already present.\n")
   }
 
   cat("\nSetup complete.\n")

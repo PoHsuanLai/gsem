@@ -4,6 +4,14 @@ use extendr_api::prelude::*;
 
 mod conversions;
 
+fn ensure_logger() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = env_logger::try_init();
+    });
+}
+
 /// Run LDSC pipeline.
 ///
 /// @param trait_files Character vector of .sumstats.gz file paths
@@ -30,6 +38,7 @@ fn ldsc_rust(
     stand: bool,
     select: &str,
 ) -> String {
+    ensure_logger();
     let n_blocks = n_blocks as usize;
     let chr_count = chr as usize;
 
@@ -90,6 +99,15 @@ fn ldsc_rust(
         chisq_max: chisq_max_opt,
     };
 
+    let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
+    let pb = indicatif::ProgressBar::new(n_pairs as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
+        )
+        .unwrap(),
+    );
+
     match gsem_ldsc::ldsc(
         &trait_data,
         &sp,
@@ -99,15 +117,20 @@ fn ldsc_rust(
         &ld_snps,
         ld_data.total_m,
         &config,
+        Some(&|| pb.inc(1)),
     ) {
         Ok(result) => {
+            pb.finish_with_message("complete");
             if stand {
                 conversions::ldsc_result_to_json_stand(&result)
             } else {
                 conversions::ldsc_result_to_json(&result)
             }
         }
-        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => {
+            pb.finish();
+            format!("{{\"error\": \"{e}\"}}")
+        }
     }
 }
 
@@ -127,6 +150,7 @@ fn usermodel_rust(
     std_lv: bool,
     fix_resid: bool,
 ) -> String {
+    ensure_logger();
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -215,6 +239,7 @@ fn munge_rust(
     n_override: Rfloat,
     column_names_json: &str,
 ) -> Vec<String> {
+    ensure_logger();
     let hm3_path = std::path::Path::new(hm3);
     let reference = match gsem::munge::read_reference(hm3_path) {
         Ok(r) => r,
@@ -265,6 +290,7 @@ fn munge_rust(
 /// Fit common factor model.
 #[extendr]
 fn commonfactor_rust(covstruc_json: &str, estimation: &str) -> String {
+    ensure_logger();
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -303,6 +329,7 @@ fn sumstats_rust(
     linprob: Vec<i32>,
     n_overrides_json: &str,
 ) -> String {
+    ensure_logger();
     let se_logit_bool: Vec<bool> = se_logit.iter().map(|&v| v != 0).collect();
     let ols_bool: Vec<bool> = ols.iter().map(|&v| v != 0).collect();
     let linprob_bool: Vec<bool> = linprob.iter().map(|&v| v != 0).collect();
@@ -353,6 +380,7 @@ fn commonfactor_gwas_rust(
     snp_se: Rfloat,
     smooth_check: bool,
 ) -> String {
+    ensure_logger();
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -423,6 +451,7 @@ fn user_gwas_rust(
     smooth_check: bool,
     std_lv: bool,
 ) -> String {
+    ensure_logger();
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -502,6 +531,7 @@ fn user_gwas_rust(
 /// Parallel analysis to determine number of factors.
 #[extendr]
 fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32) -> String {
+    ensure_logger();
     let s_mat = match conversions::json_to_mat(s_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
@@ -555,6 +585,7 @@ fn rgmodel_rust(
     std_lv: bool,
     sub: &str,
 ) -> String {
+    ensure_logger();
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -618,6 +649,7 @@ fn hdl_rust(
     n_ref: f64,
     method: &str,
 ) -> String {
+    ensure_logger();
     use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
 
     let sp: Vec<Option<f64>> = sample_prev
@@ -774,6 +806,7 @@ fn s_ldsc_rust(
     n_blocks: i32,
     exclude_cont: bool,
 ) -> String {
+    ensure_logger();
     let sp: Vec<Option<f64>> = sample_prev
         .iter()
         .map(|v| if v.is_na() { None } else { Some(v.inner()) })
@@ -885,6 +918,7 @@ fn enrich_rust(
     m_annot: Vec<f64>,
     m_total: f64,
 ) -> String {
+    ensure_logger();
     let s_baseline = match conversions::json_to_mat(s_baseline_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse S_baseline JSON\"}".to_string(),
@@ -948,6 +982,7 @@ fn sim_ldsc_rust(
     ld_scores: Vec<f64>,
     m: f64,
 ) -> String {
+    ensure_logger();
     let s_mat = match conversions::json_to_mat(s_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
@@ -978,6 +1013,7 @@ fn multi_snp_rust(
     ld_matrix_json: &str,
     snp_names: Vec<String>,
 ) -> String {
+    ensure_logger();
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -1041,6 +1077,7 @@ fn multi_gene_rust(
     ld_matrix_json: &str,
     gene_names: Vec<String>,
 ) -> String {
+    ensure_logger();
     // multiGene is the same as multiSNP but with gene-level data
     multi_snp_rust(
         covstruc_json,
@@ -1062,6 +1099,7 @@ fn summary_gls_rust(
     v_json: &str,
     intercept: bool,
 ) -> String {
+    ensure_logger();
     let mut x_mat = match conversions::json_to_mat(x_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse X matrix JSON\"}".to_string(),

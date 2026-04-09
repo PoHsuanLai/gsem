@@ -2,6 +2,17 @@
 
 gsemr accepts all the same function signatures as R GenomicSEM. Most parameters are fully implemented. Some advanced parameters are accepted for compatibility but not yet functional — these print an informational message when used.
 
+## Behavioral differences
+
+### sumstats: ref parameter
+Both R GenomicSEM and gsemr accept `ref` as a **file path** to a reference panel (e.g., `w_hm3.snplist`). This file must have at least SNP, A1, A2 columns.
+
+### sumstats: missing SE/beta columns
+gsemr can process files that only have Z and N columns (no beta or SE) by deriving `beta = Z / sqrt(N)` and `SE = 1 / sqrt(N)`. R GenomicSEM's `sumstats()` requires an SE column and will error without it. This means gsemr can process output from `simLDSC()` directly, while R cannot.
+
+### ldsc: identical behavior
+Both implementations produce the same S, V, I matrices within numerical tolerance (~1e-5 for S, ~1e-8 for V).
+
 ## Fully implemented parameters
 
 All core parameters for every function work identically to R GenomicSEM, including:

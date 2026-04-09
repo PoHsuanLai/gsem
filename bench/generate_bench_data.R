@@ -1,62 +1,67 @@
 #!/usr/bin/env Rscript
-# Generate realistic 3-trait GWAS data using simLDSC.
-# Requires: GenomicSEM, LD scores in data/eur_w_ld_chr/
-
-library(GenomicSEM)
+# Download real PGC GWAS summary statistics for benchmarking.
+# Uses: Anxiety (ANX), OCD, PTSD — 3 psychiatric traits commonly used with GenomicSEM.
+#
+# These files are freely available from PGC via figshare (CC BY 4.0).
 
 args <- commandArgs(trailingOnly = FALSE)
 script_dir <- dirname(sub("--file=", "", args[grep("--file=", args)]))[1]
 if (!is.na(script_dir) && nzchar(script_dir)) setwd(script_dir)
 
-ld_path <- "data/eur_w_ld_chr/"
-if (!dir.exists(ld_path)) stop("LD scores not found. Run setup.sh first.")
+data_dir <- "data"
+dir.create(data_dir, showWarnings = FALSE, recursive = TRUE)
 
-# 3-trait model: F1 =~ 0.7*V1 + 0.6*V2 + 0.5*V3
-# True genetic covariance:
-#   S = Lambda * Psi * Lambda' + Theta
-#   Lambda = (0.7, 0.6, 0.5)', Psi = 0.10, Theta = diag(0.11, 0.14, 0.15)
-Spop <- matrix(c(
-  0.60, 0.42, 0.35,
-  0.42, 0.50, 0.30,
-  0.35, 0.30, 0.40
-), 3, 3, byrow = TRUE)
-
-# Sample sizes: 50k each, 99% overlap
-N_mat <- matrix(50000, 3, 3)
-diag(N_mat) <- 50000
-
-# Phenotypic correlations
-rPheno <- matrix(c(
-  1.0, 0.3, 0.2,
-  0.3, 1.0, 0.25,
-  0.2, 0.25, 1.0
-), 3, 3, byrow = TRUE)
-
-# Intercepts (slight inflation from sample overlap)
-intercepts <- c(1.02, 1.03, 1.01)
-
-cat("Generating simulated GWAS data (3 traits, N=50k)...\n")
-
-# Save ground truth
-saveRDS(Spop, "data/ground_truth_S.rds")
-write.csv(Spop, "data/ground_truth_S.csv", row.names = FALSE)
-
-# Generate simulated data
-simLDSC(
-  covmat = Spop,
-  N = N_mat,
-  rPheno = rPheno,
-  int = intercepts,
-  ld = ld_path,
-  r = 1,
-  seed = 42,
-  gzip_output = TRUE
-)
-
-# Move output files to data/
-for (f in list.files(".", pattern = "iter1\\.GWAS.*\\.sumstats\\.gz")) {
-  file.rename(f, file.path("data", f))
+# --- Trait 1: Anxiety Disorders (ANX) ---
+anx_file <- file.path(data_dir, "anxiety.meta.full.cc.tbl.gz")
+if (!file.exists(anx_file)) {
+  cat("Downloading Anxiety GWAS (PGC, Otowa et al. 2016)...\n")
+  download.file(
+    "https://ndownloader.figshare.com/files/28570812",
+    anx_file, method = "libcurl", mode = "wb"
+  )
+  cat("  -> ", anx_file, "\n")
+} else {
+  cat("Anxiety GWAS already present.\n")
 }
 
-cat("Done. Files:\n")
-cat(paste(" ", list.files("data", pattern = "sumstats")), sep = "\n")
+# --- Trait 2: OCD ---
+ocd_file <- file.path(data_dir, "ocd_aug2017.gz")
+if (!file.exists(ocd_file)) {
+  cat("Downloading OCD GWAS (PGC, IOCDF-GC 2018)...\n")
+  download.file(
+    "https://ndownloader.figshare.com/files/28169544",
+    ocd_file, method = "libcurl", mode = "wb"
+  )
+  cat("  -> ", ocd_file, "\n")
+} else {
+  cat("OCD GWAS already present.\n")
+}
+
+# --- Trait 3: PTSD (European ancestry) ---
+ptsd_zip <- file.path(data_dir, "ptsd_ea.zip")
+ptsd_file <- file.path(data_dir, "pts_all_freeze1_ea.results.gz")
+# Also check for unzipped variant
+ptsd_alt <- Sys.glob(file.path(data_dir, "pts_*ea*"))
+if (length(ptsd_alt) == 0 && !file.exists(ptsd_file)) {
+  cat("Downloading PTSD GWAS (PGC, Duncan et al. 2018)...\n")
+  download.file(
+    "https://ndownloader.figshare.com/files/28169589",
+    ptsd_zip, method = "libcurl", mode = "wb"
+  )
+  unzip(ptsd_zip, exdir = data_dir)
+  file.remove(ptsd_zip)
+  # Find the extracted file
+  ptsd_candidates <- Sys.glob(file.path(data_dir, "pts_*ea*"))
+  if (length(ptsd_candidates) > 0) {
+    ptsd_file <- ptsd_candidates[1]
+  }
+  cat("  -> ", ptsd_file, "\n")
+} else {
+  cat("PTSD GWAS already present.\n")
+}
+
+cat("\nReal GWAS data ready.\n")
+cat("Files:\n")
+for (f in list.files(data_dir, pattern = "\\.gz$")) {
+  cat("  ", f, "\n")
+}

@@ -12,7 +12,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::io::gwas_reader;
-use crate::io::ld_reader;
 use crate::munge::allele::{AlleleMatch, alleles_match};
 
 /// Configuration for the sumstats merge pipeline.
@@ -68,7 +67,7 @@ struct MergedSnpData {
 /// 5. Write merged output
 pub fn merge_sumstats(
     files: &[&Path],
-    ref_dir: &Path,
+    ref_file: &Path,
     trait_names: &[String],
     config: &SumstatsConfig,
     out: &Path,
@@ -78,8 +77,9 @@ pub fn merge_sumstats(
         anyhow::bail!("no input files provided");
     }
 
-    // Read LD score reference for SNP alleles and MAF
-    let ref_snps = read_reference_snps(ref_dir)?;
+    // Read reference panel file (e.g., w_hm3.snplist or reference.1000G.maf.0.005.txt)
+    // Matches R's behavior: ref is a single file with SNP, A1, A2, MAF columns
+    let ref_snps = read_reference_file(ref_file, config.maf_filter)?;
     log::info!("Loaded {} reference SNPs", ref_snps.len());
 
     // Read and QC each GWAS file
@@ -114,16 +114,39 @@ pub fn merge_sumstats(
     Ok(merged.len())
 }
 
-/// Read reference SNP set from LD score directory.
-/// Returns the set of SNPs present in the reference panel.
-fn read_reference_snps(ref_dir: &Path) -> Result<HashMap<String, ()>> {
-    let chromosomes: Vec<usize> = (1..=22).collect();
-    let ld_data = ld_reader::read_ld_scores(ref_dir, ref_dir, &chromosomes)
-        .context("failed to read LD reference")?;
+/// Reference SNP with alleles and MAF.
+struct RefSnpInfo {
+    a1: String,
+    a2: String,
+    maf: Option<f64>,
+}
 
-    let mut map = HashMap::with_capacity(ld_data.records.len());
-    for rec in &ld_data.records {
-        map.insert(rec.snp.clone(), ());
+/// Read reference panel file (like R's `fread(ref)`).
+///
+/// Expects a tab/whitespace-delimited file with at least SNP column.
+/// Optionally A1, A2, MAF columns for allele alignment.
+/// Filters by MAF if provided.
+fn read_reference_file(path: &Path, maf_filter: f64) -> Result<HashMap<String, RefSnpInfo>> {
+    let data = gwas_reader::read_gwas_file(path)
+        .with_context(|| format!("failed to read reference file {}", path.display()))?;
+
+    let mut map = HashMap::with_capacity(data.records.len());
+    for rec in &data.records {
+        // Filter by MAF if available (R: ref <- ref[ref$MAF >= maf.filter, ])
+        if let Some(maf) = rec.maf {
+            if maf < maf_filter {
+                continue;
+            }
+        }
+
+        map.insert(
+            rec.snp.clone(),
+            RefSnpInfo {
+                a1: rec.a1.as_deref().unwrap_or("").to_uppercase(),
+                a2: rec.a2.as_deref().unwrap_or("").to_uppercase(),
+                maf: rec.maf,
+            },
+        );
     }
 
     Ok(map)
@@ -141,7 +164,7 @@ struct QcRecord {
 /// Read a GWAS file and apply QC filters.
 fn read_and_qc_gwas(
     path: &Path,
-    ref_snps: &HashMap<String, ()>,
+    ref_snps: &HashMap<String, RefSnpInfo>,
     config: &SumstatsConfig,
     n_override: Option<f64>,
     trait_idx: usize,
@@ -162,11 +185,13 @@ fn read_and_qc_gwas(
                 if n_val > 0.0 {
                     let beta = z / n_val.sqrt();
                     let se_val = 1.0 / n_val.sqrt();
-                    if let (Some(a1_raw), Some(a2_raw)) = (&rec.a1, &rec.a2) {
-                        let a1 = a1_raw.to_uppercase();
-                        let a2 = a2_raw.to_uppercase();
-                        if valid_allele_pair(&a1, &a2, config.keep_indel)
-                            && (config.keep_ambig || !is_ambiguous_snp(&a1, &a2))
+                    let a1 = rec.a1.as_deref().unwrap_or("").to_uppercase();
+                    let a2 = rec.a2.as_deref().unwrap_or("").to_uppercase();
+                    // Accept even without A2 (common for .sumstats.gz from simLDSC)
+                    if !a1.is_empty() {
+                        if a2.is_empty()
+                            || (valid_allele_pair(&a1, &a2, config.keep_indel)
+                                && (config.keep_ambig || !is_ambiguous_snp(&a1, &a2)))
                         {
                             records.insert(
                                 rec.snp,
@@ -198,20 +223,20 @@ fn read_and_qc_gwas(
             effect
         };
 
-        // Alleles required
-        let (Some(a1_raw), Some(a2_raw)) = (rec.a1.as_ref(), rec.a2.as_ref()) else {
-            continue;
+        // A1 required, A2 optional (munged .sumstats.gz may lack A2)
+        let a1 = match rec.a1.as_ref() {
+            Some(a) if !a.is_empty() => a.to_uppercase(),
+            _ => continue,
         };
-        let a1 = a1_raw.to_uppercase();
-        let a2 = a2_raw.to_uppercase();
+        let a2 = rec.a2.as_deref().unwrap_or("").to_uppercase();
 
-        // Allele validation
-        if !valid_allele_pair(&a1, &a2, config.keep_indel) {
+        // Allele validation (skip if A2 missing — trust the munged file)
+        if !a2.is_empty() && !valid_allele_pair(&a1, &a2, config.keep_indel) {
             continue;
         }
 
-        // Ambiguous strand SNP filtering
-        if !config.keep_ambig && is_ambiguous_snp(&a1, &a2) {
+        // Ambiguous strand SNP filtering (skip check if A2 missing)
+        if !a2.is_empty() && !config.keep_ambig && is_ambiguous_snp(&a1, &a2) {
             continue;
         }
 
@@ -282,79 +307,70 @@ fn is_or_value(effect: f64) -> bool {
 /// Find SNPs present in ALL trait HashMaps and in the reference.
 fn find_common_snps(
     trait_records: &[HashMap<String, QcRecord>],
-    _ref_snps: &HashMap<String, ()>,
+    ref_snps: &HashMap<String, RefSnpInfo>,
 ) -> Vec<String> {
     if trait_records.is_empty() {
         return Vec::new();
     }
 
-    // Start with SNPs from the smallest trait set (for efficiency)
-    let (smallest_idx, _) = trait_records
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, m)| m.len())
-        .unwrap();
-
-    trait_records[smallest_idx]
+    // Start with reference SNPs and filter to those present in all traits
+    ref_snps
         .keys()
-        .filter(|snp| {
-            trait_records
-                .iter()
-                .enumerate()
-                .all(|(i, m)| i == smallest_idx || m.contains_key(snp.as_str()))
-        })
+        .filter(|snp| trait_records.iter().all(|m| m.contains_key(snp.as_str())))
         .cloned()
         .collect()
 }
 
-/// Build merged SNP data, aligning alleles across traits.
-/// Uses the first trait's alleles as the reference.
+/// Build merged SNP data, aligning alleles across traits against the reference panel.
 fn build_merged(
     common_snps: &[String],
     trait_records: &[HashMap<String, QcRecord>],
-    _ref_snps: &HashMap<String, ()>,
+    ref_snps: &HashMap<String, RefSnpInfo>,
     k: usize,
 ) -> Vec<MergedSnpData> {
     let mut merged = Vec::with_capacity(common_snps.len());
 
     for snp in common_snps {
-        // Use first trait as allele reference
-        let ref_rec = &trait_records[0][snp];
-        let ref_a1 = &ref_rec.a1;
-        let ref_a2 = &ref_rec.a2;
+        let ref_info = &ref_snps[snp];
+        let ref_a1 = &ref_info.a1;
+        let ref_a2 = &ref_info.a2;
 
         let mut betas = Vec::with_capacity(k);
         let mut ses = Vec::with_capacity(k);
         let mut skip = false;
-        let mut maf_val = ref_rec.maf.unwrap_or(0.0);
+        let mut maf_val = ref_info.maf.unwrap_or(0.0);
 
-        for (t, records) in trait_records.iter().enumerate() {
+        for records in trait_records.iter() {
             let rec = &records[snp];
 
-            if t == 0 {
+            // Align alleles against reference panel
+            if ref_a1.is_empty() && ref_a2.is_empty() {
+                // No reference alleles — use as-is (trust the munged file)
                 betas.push(rec.beta);
                 ses.push(rec.se);
-                continue;
+            } else if rec.a1.is_empty() && rec.a2.is_empty() {
+                // No trait alleles (e.g., simLDSC output) — use as-is
+                betas.push(rec.beta);
+                ses.push(rec.se);
+            } else {
+                let amatch = alleles_match(&rec.a1, &rec.a2, ref_a1, ref_a2);
+                match amatch {
+                    AlleleMatch::Match => {
+                        betas.push(rec.beta);
+                        ses.push(rec.se);
+                    }
+                    AlleleMatch::Flipped => {
+                        betas.push(-rec.beta);
+                        ses.push(rec.se);
+                    }
+                    AlleleMatch::NoMatch => {
+                        skip = true;
+                        break;
+                    }
+                }
             }
 
-            // Align alleles against reference trait
-            let amatch = alleles_match(&rec.a1, &rec.a2, ref_a1, ref_a2);
-            match amatch {
-                AlleleMatch::Match => {
-                    betas.push(rec.beta);
-                    ses.push(rec.se);
-                }
-                AlleleMatch::Flipped => {
-                    betas.push(-rec.beta);
-                    ses.push(rec.se);
-                }
-                AlleleMatch::NoMatch => {
-                    skip = true;
-                    break;
-                }
-            }
-
-            // Use MAF from whichever trait has it
+            // Use MAF from reference or trait
             if let Some(m) = rec.maf.filter(|_| maf_val == 0.0) {
                 maf_val = m;
             }
@@ -452,7 +468,17 @@ mod tests {
         m2.insert("rs3".into(), rec());
         m2.insert("rs4".into(), rec());
 
-        let ref_snps = HashMap::new();
+        let ref_info = || RefSnpInfo {
+            a1: "A".into(),
+            a2: "G".into(),
+            maf: None,
+        };
+        let mut ref_snps = HashMap::new();
+        ref_snps.insert("rs1".into(), ref_info());
+        ref_snps.insert("rs2".into(), ref_info());
+        ref_snps.insert("rs3".into(), ref_info());
+        ref_snps.insert("rs4".into(), ref_info());
+
         let mut common = find_common_snps(&[m1, m2], &ref_snps);
         common.sort();
         assert_eq!(common, vec!["rs1", "rs3"]);

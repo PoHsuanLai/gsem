@@ -194,6 +194,15 @@ fn ldsc(
         chisq_max,
     };
 
+    let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
+    let pb = indicatif::ProgressBar::new(n_pairs as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
+        )
+        .unwrap(),
+    );
+
     let result = gsem_ldsc::ldsc(
         &trait_data,
         &sample_prev,
@@ -203,9 +212,11 @@ fn ldsc(
         &ld_snps,
         ld_data.total_m,
         &config,
+        Some(&|| pb.inc(1)),
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
+    pb.finish_with_message("complete");
     Ok(ldsc_result_to_py(&result, stand))
 }
 
@@ -1127,6 +1138,7 @@ fn summary_gls(
 /// Python module definition.
 #[pymodule]
 fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let _ = env_logger::try_init();
     m.add_class::<PyLdscResult>()?;
     m.add_function(wrap_pyfunction!(ldsc, m)?)?;
     m.add_function(wrap_pyfunction!(usermodel, m)?)?;

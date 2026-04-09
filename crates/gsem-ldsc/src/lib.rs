@@ -136,6 +136,7 @@ pub fn ldsc(
     ld_snps: &[String],
     m_total: f64,
     config: &LdscConfig,
+    on_pair_done: Option<&(dyn Fn() + Sync)>,
 ) -> Result<LdscResult> {
     let k = traits.len();
     if k == 0 {
@@ -158,7 +159,7 @@ pub fn ldsc(
     let pair_results: Vec<Result<PairResult>> = pairs
         .par_iter()
         .map(|&(j, jj)| {
-            if j == jj {
+            let pair_result = if j == jj {
                 let result = heritability::estimate_h2(
                     &merged.z[j],
                     &merged.n[j],
@@ -194,7 +195,11 @@ pub fn ldsc(
                     mean_n: result.mean_n,
                     pseudos: result.pseudo_values,
                 })
+            };
+            if let Some(cb) = on_pair_done {
+                cb();
             }
+            pair_result
         })
         .collect();
 

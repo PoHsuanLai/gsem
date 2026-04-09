@@ -141,9 +141,9 @@ enum Commands {
         #[arg(short, long, num_args = 1..)]
         files: Vec<PathBuf>,
 
-        /// LD score reference directory (for SNP filtering)
+        /// Reference panel file (e.g., w_hm3.snplist or reference.1000G.maf.0.005.txt)
         #[arg(long, name = "ref")]
-        ref_dir: PathBuf,
+        ref_file: PathBuf,
 
         /// Trait names
         #[arg(long, num_args = 1..)]
@@ -560,7 +560,7 @@ fn main() -> Result<()> {
         ),
         Commands::Sumstats {
             files,
-            ref_dir,
+            ref_file,
             trait_names,
             info_filter,
             maf_filter,
@@ -568,7 +568,7 @@ fn main() -> Result<()> {
             out,
         } => run_sumstats(
             &files,
-            &ref_dir,
+            &ref_file,
             trait_names,
             info_filter,
             maf_filter,
@@ -770,7 +770,7 @@ fn run_munge(
 #[allow(clippy::too_many_arguments)]
 fn run_sumstats(
     files: &[PathBuf],
-    ref_dir: &Path,
+    ref_file: &Path,
     trait_names: Option<Vec<String>>,
     info_filter: f64,
     maf_filter: f64,
@@ -803,7 +803,7 @@ fn run_sumstats(
 
     let file_refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
     eprintln!("Merging {} GWAS files...", k);
-    gsem::sumstats::merge_sumstats(&file_refs, ref_dir, &names, &config, out)?;
+    gsem::sumstats::merge_sumstats(&file_refs, ref_file, &names, &config, out)?;
     eprintln!("Done.");
     Ok(())
 }
@@ -866,7 +866,15 @@ fn run_ldsc(
         chisq_max,
     };
 
-    eprintln!("Running LDSC...");
+    let n_pairs = k * (k + 1) / 2;
+    let pb = indicatif::ProgressBar::new(n_pairs as u64);
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} trait pairs ({eta})",
+        )
+        .unwrap(),
+    );
+
     let result = gsem_ldsc::ldsc(
         &trait_data,
         &sp,
@@ -876,7 +884,9 @@ fn run_ldsc(
         &ld_snps,
         ld_data.total_m,
         &config,
+        Some(&|| pb.inc(1)),
     )?;
+    pb.finish_with_message("complete");
 
     // Write JSON output
     let json = result.to_json_string()?;

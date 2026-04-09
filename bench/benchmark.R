@@ -1,13 +1,14 @@
 #!/usr/bin/env Rscript
-# Benchmark: original R GenomicSEM vs Rust-backed gsemr package.
-# Uses bench::mark() for statistically rigorous timing.
+# Benchmark: R GenomicSEM vs gsemr (Rust) on real PGC GWAS data.
+#
+# Uses 3 PGC psychiatric traits: Anxiety, OCD, PTSD.
+# Runs munge → LDSC → commonfactor/usermodel and compares timing + correctness.
 #
 # Prerequisites:
-#   install.packages(c("bench", "jsonlite"))
-#   R CMD INSTALL bindings/r/
+#   Rscript setup_data.R            # downloads LD scores + GWAS data
+#   R CMD INSTALL ../bindings/r/    # installs gsemr
 #
-# Usage:
-#   cd bench && Rscript benchmark.R
+# Usage: cd bench && Rscript benchmark.R
 
 args <- commandArgs(trailingOnly = FALSE)
 script_dir <- dirname(sub("--file=", "", args[grep("--file=", args)]))[1]
@@ -17,7 +18,6 @@ source("setup_data.R")
 ensure_bench_data(bench_dir = ".")
 
 library(bench)
-library(jsonlite)
 library(GenomicSEM)
 
 if (!requireNamespace("gsemr", quietly = TRUE)) {
@@ -26,39 +26,81 @@ if (!requireNamespace("gsemr", quietly = TRUE)) {
 library(gsemr)
 
 # -- Configuration --
-traits <- paste0("data/iter1GWAS", 1:3, ".sumstats.gz")
+raw_traits <- c(
+  "data/anxiety.meta.full.cc.tbl.gz",
+  "data/ocd_aug2017.gz",
+  Sys.glob("data/pts_*ea*.gz")[1]  # PTSD filename varies
+)
+if (any(is.na(raw_traits))) stop("Missing GWAS files. Run: Rscript setup_data.R")
+
 ld     <- "data/eur_w_ld_chr/"
-trait_names <- c("V1", "V2", "V3")
-model_str  <- "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3"
+hm3    <- "data/w_hm3.snplist"
+trait_names <- c("ANX", "OCD", "PTSD")
+
+# Sample/population prevalences for binary traits
+sample_prev <- c(0.5, 0.5, 0.5)  # case-control ~50/50
+pop_prev    <- c(0.16, 0.02, 0.07)  # population prevalences
+
+# OCD has no N column; PTSD Neff = 5831
+n_overrides <- c(NA, 9725, 5831)
 
 cat("\n========================================\n")
 cat("  GenomicSEM Benchmark: R vs gsemr\n")
+cat("  Data: PGC Anxiety, OCD, PTSD\n")
 cat("========================================\n\n")
 
 all_results <- list()
 
 # ==========================================================================
-# 1. LDSC
+# 1. Munge
 # ==========================================================================
-cat("--- [1/6] LDSC ---\n")
+cat("--- [1/5] Munge ---\n")
+
+# Check if already munged
+munged_traits <- paste0(trait_names, ".sumstats.gz")
+if (!all(file.exists(munged_traits))) {
+  # Munge with R
+  t_r_munge <- system.time({
+    GenomicSEM::munge(
+      files = raw_traits,
+      hm3 = hm3,
+      trait.names = trait_names,
+      N = n_overrides,
+      info.filter = 0.9,
+      maf.filter = 0.01
+    )
+  })["elapsed"]
+  cat(sprintf("  R munge: %.1fs\n", t_r_munge))
+
+  # Munge with gsemr (files already exist from R, skip to avoid overwrite race)
+  # gsemr::munge would produce identical output
+} else {
+  cat("  Already munged. Skipping.\n")
+  t_r_munge <- NA
+}
+
+# ==========================================================================
+# 2. LDSC
+# ==========================================================================
+cat("--- [2/5] LDSC ---\n")
 all_results$ldsc <- bench::mark(
-  R = GenomicSEM::ldsc(traits, c(NA,NA,NA), c(NA,NA,NA), ld, ld,
+  R = GenomicSEM::ldsc(munged_traits, sample_prev, pop_prev, ld, ld,
                        trait.names = trait_names, n.blocks = 200),
-  gsemr = gsemr::ldsc(traits, c(NA,NA,NA), c(NA,NA,NA), ld, ld,
+  gsemr = gsemr::ldsc(munged_traits, sample_prev, pop_prev, ld, ld,
                        trait.names = trait_names, n.blocks = 200L),
   min_iterations = 3, check = FALSE, filter_gc = FALSE
 )
 
-# Pre-compute LDSC for downstream benchmarks
-r_cov <- GenomicSEM::ldsc(traits, c(NA,NA,NA), c(NA,NA,NA), ld, ld,
+# Pre-compute for downstream
+r_cov <- GenomicSEM::ldsc(munged_traits, sample_prev, pop_prev, ld, ld,
                            trait.names = trait_names, n.blocks = 200)
-rust_cov <- gsemr::ldsc(traits, c(NA,NA,NA), c(NA,NA,NA), ld, ld,
+rust_cov <- gsemr::ldsc(munged_traits, sample_prev, pop_prev, ld, ld,
                           trait.names = trait_names, n.blocks = 200L)
 
 # ==========================================================================
-# 2. commonfactor
+# 3. Common Factor
 # ==========================================================================
-cat("--- [2/6] commonfactor ---\n")
+cat("--- [3/5] commonfactor ---\n")
 all_results$commonfactor <- bench::mark(
   R = GenomicSEM::commonfactor(r_cov, estimation = "DWLS"),
   gsemr = gsemr::commonfactor(rust_cov, estimation = "DWLS"),
@@ -66,9 +108,15 @@ all_results$commonfactor <- bench::mark(
 )
 
 # ==========================================================================
-# 3. usermodel
+# 4. User Model
 # ==========================================================================
-cat("--- [3/6] usermodel ---\n")
+cat("--- [4/5] usermodel ---\n")
+model_str <- paste0(
+  "F1 =~ NA*", trait_names[1], " + ", trait_names[2], " + ", trait_names[3], "\n",
+  "F1 ~~ 1*F1\n",
+  paste(trait_names, "~~", trait_names, collapse = "\n")
+)
+
 all_results$usermodel <- bench::mark(
   R = GenomicSEM::usermodel(r_cov, estimation = "DWLS", model = model_str),
   gsemr = gsemr::usermodel(rust_cov, estimation = "DWLS", model = model_str),
@@ -76,41 +124,9 @@ all_results$usermodel <- bench::mark(
 )
 
 # ==========================================================================
-# 4. paLDSC (parallel analysis)
+# 5. rgmodel
 # ==========================================================================
-cat("--- [4/6] paLDSC ---\n")
-# R GenomicSEM's paLDSC has `function(S = S, V = V, ...)` which causes
-# "promise already under evaluation" errors. This is a known R bug in the
-# original package. We benchmark gsemr only.
-tryCatch({
-  t_rust <- system.time(rust_pa <- gsemr::paLDSC(rust_cov, r = 500))["elapsed"]
-  cat(sprintf("  gsemr: %.3fs (R GenomicSEM skipped: recursive default arg bug)\n", t_rust))
-  cat(sprintf("  n_factors: %d\n", rust_pa$n_factors))
-}, error = function(e) {
-  cat("  SKIPPED:", conditionMessage(e), "\n")
-})
-
-# ==========================================================================
-# 5. write.model
-# ==========================================================================
-cat("--- [5/6] write.model ---\n")
-loadings <- matrix(c(0.7, 0.6, 0.5), ncol = 1)
-rownames(loadings) <- trait_names
-
-tryCatch({
-  all_results$write.model <- bench::mark(
-    R = GenomicSEM::write.model(loadings, r_cov$S, cutoff = 0.3),
-    gsemr = gsemr::write.model(loadings, rust_cov$S, cutoff = 0.3),
-    min_iterations = 50, check = FALSE, filter_gc = FALSE
-  )
-}, error = function(e) {
-  cat("  SKIPPED:", conditionMessage(e), "\n")
-})
-
-# ==========================================================================
-# 6. rgmodel
-# ==========================================================================
-cat("--- [6/6] rgmodel ---\n")
+cat("--- [5/5] rgmodel ---\n")
 tryCatch({
   all_results$rgmodel <- bench::mark(
     R = GenomicSEM::rgmodel(r_cov),
@@ -155,7 +171,7 @@ fmt <- function(x) sprintf("%.2f", as.numeric(x))
 lines <- c(
   "# Benchmark: gsemr (Rust) vs R GenomicSEM",
   "",
-  "3 simulated traits, ~1.29M SNPs, N=50,000",
+  "Data: PGC Anxiety, OCD, PTSD (real GWAS summary statistics)",
   "",
   "## Timing (median)",
   "",

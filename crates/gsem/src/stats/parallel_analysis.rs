@@ -1,5 +1,6 @@
 use faer::{Mat, Side};
 use gsem_matrix::vech;
+use indicatif::{ProgressBar, ProgressStyle};
 use rand::RngExt;
 use rand_distr::StandardNormal;
 use rayon::prelude::*;
@@ -41,6 +42,14 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     let chol_l = compute_cholesky_l(v, kstar);
 
     // Simulate null eigenvalue distributions (parallelized — each iteration is independent)
+    let pb = ProgressBar::new(n_sim as u64);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} simulations ({eta})",
+        )
+        .unwrap(),
+    );
+
     let all_eigs: Vec<Vec<f64>> = (0..n_sim)
         .into_par_iter()
         .map(|_| {
@@ -60,9 +69,13 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
             }
 
             let sim_mat = vech::vech_reverse(&sample, k);
-            eigenvalues_sorted(&sim_mat)
+            let eigs = eigenvalues_sorted(&sim_mat);
+            pb.inc(1);
+            eigs
         })
         .collect();
+
+    pb.finish_with_message("complete");
 
     // Transpose: from n_sim × k to k × n_sim
     let mut sim_eigenvalues: Vec<Vec<f64>> = vec![Vec::with_capacity(n_sim); k];

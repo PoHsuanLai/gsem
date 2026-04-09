@@ -4,6 +4,7 @@ use gsem_sem::estimator;
 use gsem_sem::model::Model;
 use gsem_sem::sandwich;
 use gsem_sem::syntax::{self, ParTable};
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use statrs::distribution::ContinuousCDF;
 
@@ -169,10 +170,18 @@ pub fn run_user_gwas(
     }
 
     // Process SNPs in parallel
-    (0..n_snps)
+    let pb = ProgressBar::new(n_snps as u64);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} SNPs ({eta})",
+        )
+        .unwrap(),
+    );
+
+    let results = (0..n_snps)
         .into_par_iter()
         .map(|i| {
-            process_single_snp(
+            let result = process_single_snp(
                 i,
                 &pt,
                 config,
@@ -183,9 +192,14 @@ pub fn run_user_gwas(
                 &se_snp[i],
                 var_snp[i],
                 k,
-            )
+            );
+            pb.inc(1);
+            result
         })
-        .collect()
+        .collect();
+
+    pb.finish_with_message("complete");
+    results
 }
 
 /// Process a single SNP.
