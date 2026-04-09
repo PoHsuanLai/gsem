@@ -36,6 +36,7 @@ pub fn run_common_factor_gwas(
         std_lv: false,
         smooth_check: false,
         snp_se: None,
+        snp_label: "SNP".to_string(),
     };
 
     user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp)

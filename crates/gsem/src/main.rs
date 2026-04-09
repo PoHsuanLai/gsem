@@ -125,6 +125,10 @@ enum Commands {
         #[arg(long)]
         fix_resid: bool,
 
+        /// Compute Q_Factor heterogeneity test for cross-factor indicator pairs
+        #[arg(long)]
+        q_factor: bool,
+
         /// Output file
         #[arg(short, long, default_value = "sem_result.tsv")]
         out: PathBuf,
@@ -225,6 +229,10 @@ enum Commands {
         /// Fix measurement model parameters from baseline fit (estimate only SNP paths)
         #[arg(long)]
         fix_measurement: bool,
+
+        /// Run in TWAS mode (input uses Gene/Panel/HSQ instead of SNP/A1/A2/MAF)
+        #[arg(long)]
+        twas: bool,
 
         /// Output file
         #[arg(short, long, default_value = "gwas_result.tsv")]
@@ -346,6 +354,52 @@ enum Commands {
         out: PathBuf,
     },
 
+    /// Compute model-implied genetic correlation matrix
+    Rgmodel {
+        /// LDSC result JSON file
+        #[arg(long)]
+        covstruc: PathBuf,
+
+        /// Estimation method (DWLS or ML)
+        #[arg(long, default_value = "DWLS")]
+        estimation: String,
+
+        /// Output file
+        #[arg(short, long, default_value = "rgmodel_result.tsv")]
+        out: PathBuf,
+    },
+
+    /// Joint analysis of multiple SNPs with LD
+    MultiSnp {
+        /// LDSC result JSON file
+        #[arg(long)]
+        covstruc: PathBuf,
+
+        /// Tab-delimited file with columns: SNP, A1, A2, MAF, beta.T1, se.T1, ...
+        #[arg(long)]
+        sumstats: PathBuf,
+
+        /// LD matrix file (tab-delimited, symmetric, SNP x SNP correlations)
+        #[arg(long)]
+        ld_matrix: PathBuf,
+
+        /// Model specification
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Model specification file
+        #[arg(long)]
+        model_file: Option<PathBuf>,
+
+        /// Estimation method
+        #[arg(long, default_value = "DWLS")]
+        estimation: String,
+
+        /// Output file
+        #[arg(short, long, default_value = "multi_snp_result.tsv")]
+        out: PathBuf,
+    },
+
     /// Simulate GWAS summary statistics
     Simulate {
         /// LDSC result JSON file
@@ -422,8 +476,18 @@ fn main() -> Result<()> {
             estimation,
             std_lv,
             fix_resid,
+            q_factor,
             out,
-        } => run_sem(&covstruc, model, model_file, &estimation, std_lv, fix_resid, &out),
+        } => run_sem(
+            &covstruc,
+            model,
+            model_file,
+            &estimation,
+            std_lv,
+            fix_resid,
+            q_factor,
+            &out,
+        ),
         Commands::Sumstats {
             files,
             ref_dir,
@@ -432,7 +496,15 @@ fn main() -> Result<()> {
             maf_filter,
             keep_indel,
             out,
-        } => run_sumstats(&files, &ref_dir, trait_names, info_filter, maf_filter, keep_indel, &out),
+        } => run_sumstats(
+            &files,
+            &ref_dir,
+            trait_names,
+            info_filter,
+            maf_filter,
+            keep_indel,
+            &out,
+        ),
         Commands::CommonFactor {
             covstruc,
             estimation,
@@ -451,6 +523,7 @@ fn main() -> Result<()> {
             smooth_check,
             q_snp,
             fix_measurement,
+            twas,
             out,
         } => run_gwas(
             &covstruc,
@@ -465,6 +538,7 @@ fn main() -> Result<()> {
             smooth_check,
             q_snp,
             fix_measurement,
+            twas,
             &out,
         ),
         Commands::CommonfactorGwas {
@@ -509,6 +583,28 @@ fn main() -> Result<()> {
             &out,
         ),
         Commands::Enrich { input, out } => run_enrich(&input, &out),
+        Commands::Rgmodel {
+            covstruc,
+            estimation,
+            out,
+        } => run_rgmodel_cmd(&covstruc, &estimation, &out),
+        Commands::MultiSnp {
+            covstruc,
+            sumstats,
+            ld_matrix,
+            model,
+            model_file,
+            estimation,
+            out,
+        } => run_multi_snp_cmd(
+            &covstruc,
+            &sumstats,
+            &ld_matrix,
+            model,
+            model_file,
+            &estimation,
+            &out,
+        ),
         Commands::Simulate {
             covstruc,
             n_per_trait,
@@ -838,6 +934,7 @@ fn run_sem(
     estimation: &str,
     std_lv: bool,
     fix_resid: bool,
+    q_factor: bool,
     out: &Path,
 ) -> Result<()> {
     // Read LDSC result
@@ -861,21 +958,23 @@ fn run_sem(
         gsem_sem::syntax::parse_model(&model_str, std_lv).map_err(|e| anyhow::anyhow!("{e}"))?;
     let k = ldsc_result.s.nrows();
     let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
-    let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+    let mut sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
 
     let kstar = k * (k + 1) / 2;
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut model, &ldsc_result.s, 1000)
+        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
     } else {
-        gsem_sem::estimator::fit_dwls(&mut model, &ldsc_result.s, &v_diag, 1000)
+        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
     };
 
     // If model failed to converge and fix_resid is set, add lower bounds on
     // residual variances (op == "~~" && lhs == rhs) and retry.
     let fit = if !fit.converged && fix_resid {
-        eprintln!("Model did not converge; retrying with residual variance lower bounds (fix_resid)...");
+        eprintln!(
+            "Model did not converge; retrying with residual variance lower bounds (fix_resid)..."
+        );
         for row in &mut pt.rows {
             if row.op == gsem_sem::syntax::Op::Covariance
                 && row.lhs == row.rhs
@@ -886,11 +985,11 @@ fn run_sem(
             }
         }
         // Rebuild model with updated lower bounds
-        let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+        sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
         if estimation.to_uppercase() == "ML" {
-            gsem_sem::estimator::fit_ml(&mut model, &ldsc_result.s, 1000)
+            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
         } else {
-            gsem_sem::estimator::fit_dwls(&mut model, &ldsc_result.s, &v_diag, 1000)
+            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
         }
     } else {
         fit
@@ -910,6 +1009,37 @@ fn run_sem(
             ));
         }
     }
+
+    // Q_Factor heterogeneity test
+    if q_factor {
+        let sigma_hat = sem_model.implied_cov();
+        let fi = gsem_sem::q_factor::factor_indicators(&pt, &obs_names);
+        if fi.len() >= 2 {
+            let q_results = gsem_sem::q_factor::compute_q_factor(
+                &ldsc_result.s,
+                &sigma_hat,
+                &ldsc_result.v,
+                &fi,
+            );
+            if !q_results.is_empty() {
+                output.push_str("\n# Q_Factor heterogeneity test\n");
+                output.push_str("factor1\tfactor2\tQ_chisq\tQ_df\tQ_pval\n");
+                for qr in &q_results {
+                    output.push_str(&format!(
+                        "{}\t{}\t{:.6}\t{}\t{:.6e}\n",
+                        qr.factor1, qr.factor2, qr.q_chisq, qr.q_df, qr.q_p
+                    ));
+                    eprintln!(
+                        "Q_Factor({}, {}): chisq={:.4}, df={}, p={:.4e}",
+                        qr.factor1, qr.factor2, qr.q_chisq, qr.q_df, qr.q_p
+                    );
+                }
+            }
+        } else {
+            eprintln!("Q_Factor: skipped (fewer than 2 factors in model)");
+        }
+    }
+
     std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Results written to {}", out.display());
@@ -930,6 +1060,7 @@ fn run_gwas(
     smooth_check: bool,
     _q_snp: bool,
     _fix_measurement: bool,
+    twas: bool,
     out: &Path,
 ) -> Result<()> {
     // Set thread count
@@ -958,6 +1089,71 @@ fn run_gwas(
     let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().expect("infallible");
     let k = ldsc_result.s.nrows();
 
+    // Clamp intercept diagonals to >= 1 (matching R)
+    let mut i_ld = ldsc_result.i_mat.to_owned();
+    for i in 0..k {
+        if i_ld[(i, i)] < 1.0 {
+            i_ld[(i, i)] = 1.0;
+        }
+    }
+
+    // Parse --sub filter list
+    let sub_filters: Option<Vec<String>> = sub.map(|s| {
+        s.split(',')
+            .map(|entry| entry.trim().to_string())
+            .filter(|entry| !entry.is_empty())
+            .collect()
+    });
+
+    if twas {
+        run_gwas_twas(
+            sumstats,
+            &model_str,
+            estimation,
+            gc,
+            gc_mode,
+            k,
+            std_lv,
+            smooth_check,
+            &ldsc_result,
+            &i_ld,
+            &sub_filters,
+            out,
+        )
+    } else {
+        run_gwas_snp(
+            sumstats,
+            &model_str,
+            estimation,
+            gc,
+            gc_mode,
+            k,
+            std_lv,
+            smooth_check,
+            &ldsc_result,
+            &i_ld,
+            &sub_filters,
+            out,
+        )
+    }
+}
+
+/// Standard SNP-based GWAS path.
+#[allow(clippy::too_many_arguments)]
+fn run_gwas_snp(
+    sumstats: &Path,
+    model_str: &str,
+    estimation: &str,
+    gc: &str,
+    gc_mode: gsem::gwas::gc_correction::GcMode,
+    k: usize,
+    std_lv: bool,
+    smooth_check: bool,
+    ldsc_result: &gsem_ldsc::LdscResult,
+    i_ld: &Mat<f64>,
+    sub_filters: &Option<Vec<String>>,
+    out: &Path,
+) -> Result<()> {
     // Read merged sumstats
     eprintln!("Reading merged sumstats: {}", sumstats.display());
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(sumstats)
@@ -982,26 +1178,19 @@ fn run_gwas(
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
 
-    // Clamp intercept diagonals to >= 1 (matching R)
-    let mut i_ld = ldsc_result.i_mat.to_owned();
-    for i in 0..k {
-        if i_ld[(i, i)] < 1.0 {
-            i_ld[(i, i)] = 1.0;
-        }
-    }
-
     // TODO: --fix-measurement: fit baseline model without SNP, then fix non-SNP params
     // per SNP. This requires pre-fitting, identifying measurement params, and constraining
     // them in the per-SNP loop. Not yet implemented.
 
     let config = gsem::gwas::user_gwas::UserGwasConfig {
-        model: model_str,
+        model: model_str.to_string(),
         estimation: estimation.to_string(),
         gc: gc_mode,
         max_iter: 500,
         std_lv,
         smooth_check,
         snp_se: None,
+        snp_label: "SNP".to_string(),
     };
 
     eprintln!("Running GWAS across {n_snps} SNPs...");
@@ -1009,19 +1198,11 @@ fn run_gwas(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
-        &i_ld,
+        i_ld,
         &beta_snp,
         &se_snp,
         &var_snp,
     );
-
-    // Parse --sub filter list
-    let sub_filters: Option<Vec<String>> = sub.map(|s| {
-        s.split(',')
-            .map(|entry| entry.trim().to_string())
-            .filter(|entry| !entry.is_empty())
-            .collect()
-    });
 
     // Write TSV output
     let mut output = String::from("SNP\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
@@ -1029,7 +1210,7 @@ fn run_gwas(
         let snp_name = &merged.snps[snp_result.snp_idx].snp;
         for param in &snp_result.params {
             // Apply --sub filter: only include params matching the filter list
-            if let Some(ref filters) = sub_filters {
+            if let Some(filters) = sub_filters {
                 let param_key = format!("{}{}{}", param.lhs, param.op, param.rhs);
                 if !filters.iter().any(|f| f == &param_key) {
                     continue;
@@ -1063,6 +1244,118 @@ fn run_gwas(
     Ok(())
 }
 
+/// TWAS mode: uses Gene/Panel/HSQ instead of SNP/A1/A2/MAF.
+///
+/// Key differences from standard GWAS:
+/// - Reads TWAS-format sumstats (Gene/Panel/HSQ columns)
+/// - Uses HSQ (heritability of expression) as var_snp instead of 2*MAF*(1-MAF)
+/// - Replaces "SNP" with "Gene" in model syntax
+/// - Outputs Gene/Panel/HSQ columns instead of SNP column
+#[allow(clippy::too_many_arguments)]
+fn run_gwas_twas(
+    sumstats: &Path,
+    model_str: &str,
+    estimation: &str,
+    gc: &str,
+    gc_mode: gsem::gwas::gc_correction::GcMode,
+    k: usize,
+    std_lv: bool,
+    smooth_check: bool,
+    ldsc_result: &gsem_ldsc::LdscResult,
+    i_ld: &Mat<f64>,
+    sub_filters: &Option<Vec<String>>,
+    out: &Path,
+) -> Result<()> {
+    // Read TWAS sumstats
+    eprintln!("Reading TWAS sumstats: {}", sumstats.display());
+    let twas_data = gsem::io::twas_reader::read_twas_sumstats(sumstats)
+        .with_context(|| format!("failed to read TWAS sumstats {}", sumstats.display()))?;
+
+    let n_genes = twas_data.genes.len();
+    eprintln!("TWAS: {n_genes} genes, {k} traits, estimation={estimation}, gc={gc}");
+
+    if twas_data.trait_names.len() != k {
+        anyhow::bail!(
+            "trait count mismatch: LDSC has {k} traits, TWAS sumstats has {} (beta.* columns)",
+            twas_data.trait_names.len()
+        );
+    }
+
+    // Extract per-gene arrays
+    let beta_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.beta.clone()).collect();
+    let se_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.se.clone()).collect();
+    // In TWAS mode, var_snp = HSQ (heritability of expression)
+    let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
+
+    // Replace "SNP" with "Gene" in model syntax so that the observed variable
+    // name matches what userGWAS expects in the first position
+    let twas_model = model_str.replace("SNP", "Gene");
+
+    let config = gsem::gwas::user_gwas::UserGwasConfig {
+        model: twas_model,
+        estimation: estimation.to_string(),
+        gc: gc_mode,
+        max_iter: 500,
+        std_lv,
+        smooth_check,
+        snp_se: None,
+        snp_label: "Gene".to_string(),
+    };
+
+    eprintln!("Running TWAS across {n_genes} genes...");
+    let results = gsem::gwas::user_gwas::run_user_gwas(
+        &config,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        i_ld,
+        &beta_gene,
+        &se_gene,
+        &var_gene,
+    );
+
+    // Write TSV output with TWAS columns
+    let mut output =
+        String::from("Gene\tPanel\tHSQ\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
+    for gene_result in &results {
+        let gene = &twas_data.genes[gene_result.snp_idx];
+        for param in &gene_result.params {
+            // Apply --sub filter: only include params matching the filter list
+            if let Some(filters) = sub_filters {
+                let param_key = format!("{}{}{}", param.lhs, param.op, param.rhs);
+                if !filters.iter().any(|f| f == &param_key) {
+                    continue;
+                }
+            }
+
+            output.push_str(&format!(
+                "{}\t{}\t{:.6}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\t{:.4}\t{}\t{}\n",
+                gene.gene,
+                gene.panel,
+                gene.hsq,
+                param.lhs,
+                param.op,
+                param.rhs,
+                param.est,
+                param.se,
+                param.z_stat,
+                param.p_value,
+                gene_result.chisq,
+                gene_result.chisq_df,
+                gene_result.converged,
+            ));
+        }
+    }
+
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+
+    let n_converged = results.iter().filter(|r| r.converged).count();
+    eprintln!(
+        "TWAS complete: {n_genes} genes, {n_converged} converged. Results: {}",
+        out.display()
+    );
+    Ok(())
+}
+
 fn run_commonfactor_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result<()> {
     let json = std::fs::read_to_string(covstruc)
         .with_context(|| format!("failed to read {}", covstruc.display()))?;
@@ -1070,11 +1363,8 @@ fn run_commonfactor_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result
 
     eprintln!("Fitting common factor model (estimation={estimation})...");
 
-    let result = gsem_sem::commonfactor::run_commonfactor(
-        &ldsc_result.s,
-        &ldsc_result.v,
-        estimation,
-    )?;
+    let result =
+        gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, estimation)?;
 
     eprintln!(
         "Converged. Chi-sq={:.4}, df={}, CFI={:.4}, SRMR={:.4}",
@@ -1093,12 +1383,15 @@ fn run_commonfactor_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result
     // Append fit indices
     output.push_str(&format!(
         "\n# Model fit: chisq={:.4} df={} p={:.6e} AIC={:.4} CFI={:.4} SRMR={:.4}\n",
-        result.fit.chisq, result.fit.df, result.fit.p_chisq,
-        result.fit.aic, result.fit.cfi, result.fit.srmr
+        result.fit.chisq,
+        result.fit.df,
+        result.fit.p_chisq,
+        result.fit.aic,
+        result.fit.cfi,
+        result.fit.srmr
     ));
 
-    std::fs::write(out, &output)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Results written to {}", out.display());
     Ok(())
@@ -1353,6 +1646,186 @@ fn run_enrich(input: &Path, out: &Path) -> Result<()> {
     std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Enrichment results written to {}", out.display());
+    Ok(())
+}
+
+fn run_rgmodel_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result<()> {
+    let json = std::fs::read_to_string(covstruc)
+        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
+
+    eprintln!("Fitting rgmodel (estimation={estimation})...");
+
+    let result = gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation)?;
+
+    let k = result.r.nrows();
+    eprintln!(
+        "Converged. R is {k}x{k}. Underlying model chi-sq={:.4}, df={}, CFI={:.4}",
+        result.sem_result.fit.chisq,
+        result.sem_result.fit.df,
+        result.sem_result.fit.cfi
+    );
+
+    // Write output: R matrix, then V_R matrix, then SEM parameters
+    let mut output = String::new();
+    output.push_str("# Model-implied genetic correlation matrix R\n");
+    let col_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
+    output.push_str(&format!("\t{}\n", col_names.join("\t")));
+    for i in 0..k {
+        output.push_str(&format!("V{}", i + 1));
+        for j in 0..k {
+            output.push_str(&format!("\t{:.6}", result.r[(i, j)]));
+        }
+        output.push('\n');
+    }
+
+    output.push_str("\n# Sampling covariance of vech(R) - V_R\n");
+    let kstar = k * (k + 1) / 2;
+    for i in 0..kstar {
+        for j in 0..kstar {
+            if j > 0 {
+                output.push('\t');
+            }
+            output.push_str(&format!("{:.6e}", result.v_r[(i, j)]));
+        }
+        output.push('\n');
+    }
+
+    output.push_str("\n# SEM parameter estimates\n");
+    output.push_str("lhs\top\trhs\test\tse\tz\tp\n");
+    for param in &result.sem_result.parameters {
+        output.push_str(&format!(
+            "{}\t{}\t{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\n",
+            param.lhs, param.op, param.rhs, param.est, param.se, param.z, param.p
+        ));
+    }
+
+    output.push_str(&format!(
+        "\n# Model fit: chisq={:.4} df={} p={:.6e} AIC={:.4} CFI={:.4} SRMR={:.4}\n",
+        result.sem_result.fit.chisq,
+        result.sem_result.fit.df,
+        result.sem_result.fit.p_chisq,
+        result.sem_result.fit.aic,
+        result.sem_result.fit.cfi,
+        result.sem_result.fit.srmr
+    ));
+
+    std::fs::write(out, &output)
+        .with_context(|| format!("failed to write {}", out.display()))?;
+
+    eprintln!("Results written to {}", out.display());
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_multi_snp_cmd(
+    covstruc: &Path,
+    sumstats: &Path,
+    ld_matrix_path: &Path,
+    model: Option<String>,
+    model_file: Option<PathBuf>,
+    estimation: &str,
+    out: &Path,
+) -> Result<()> {
+    // Read LDSC result
+    let json = std::fs::read_to_string(covstruc)
+        .with_context(|| format!("failed to read {}", covstruc.display()))?;
+    let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
+    let k = ldsc_result.s.nrows();
+
+    // Get model string
+    let model_str = if let Some(m) = model {
+        m
+    } else if let Some(f) = model_file {
+        std::fs::read_to_string(&f)
+            .with_context(|| format!("failed to read model file {}", f.display()))?
+    } else {
+        anyhow::bail!("must provide --model or --model-file");
+    };
+
+    // Read merged sumstats
+    eprintln!("Reading merged sumstats: {}", sumstats.display());
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(sumstats)
+        .with_context(|| format!("failed to read {}", sumstats.display()))?;
+
+    if merged.trait_names.len() != k {
+        anyhow::bail!(
+            "trait count mismatch: LDSC has {k} traits, sumstats has {} (beta.* columns)",
+            merged.trait_names.len()
+        );
+    }
+
+    // Read LD matrix
+    eprintln!("Reading LD matrix: {}", ld_matrix_path.display());
+    let (ld_mat, _ld_names) = gsem::gwas::multi_snp::read_ld_matrix(ld_matrix_path)?;
+    let n_snps = ld_mat.nrows();
+    eprintln!("LD matrix: {n_snps} x {n_snps}");
+
+    if n_snps > merged.snps.len() {
+        anyhow::bail!(
+            "LD matrix has {n_snps} SNPs but sumstats only has {} SNPs",
+            merged.snps.len()
+        );
+    }
+
+    // Use the first n_snps from the sumstats
+    let beta_snp: Vec<Vec<f64>> = merged.snps[..n_snps]
+        .iter()
+        .map(|s| s.beta.clone())
+        .collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps[..n_snps]
+        .iter()
+        .map(|s| s.se.clone())
+        .collect();
+    let var_snp: Vec<f64> = merged.snps[..n_snps]
+        .iter()
+        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+        .collect();
+    let snp_names: Vec<String> = merged.snps[..n_snps]
+        .iter()
+        .map(|s| s.snp.clone())
+        .collect();
+
+    let config = gsem::gwas::multi_snp::MultiSnpConfig {
+        model: model_str,
+        estimation: estimation.to_string(),
+        max_iter: 500,
+    };
+
+    eprintln!("Running multi-SNP analysis with {n_snps} SNPs, {k} traits...");
+    let result = gsem::gwas::multi_snp::run_multi_snp(
+        &config,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        &beta_snp,
+        &se_snp,
+        &var_snp,
+        &ld_mat,
+        &snp_names,
+    );
+
+    eprintln!(
+        "Done. converged={}, chisq={:.4}, df={}",
+        result.converged, result.chisq, result.chisq_df
+    );
+
+    // Write TSV output
+    let mut output = String::from("lhs\top\trhs\test\tse\tz\tp\n");
+    for param in &result.params {
+        output.push_str(&format!(
+            "{}\t{}\t{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\n",
+            param.lhs, param.op, param.rhs, param.est, param.se, param.z_stat, param.p_value
+        ));
+    }
+    output.push_str(&format!(
+        "\n# chisq={:.4} df={} converged={}\n",
+        result.chisq, result.chisq_df, result.converged
+    ));
+
+    std::fs::write(out, &output)
+        .with_context(|| format!("failed to write {}", out.display()))?;
+
+    eprintln!("Results written to {}", out.display());
     Ok(())
 }
 

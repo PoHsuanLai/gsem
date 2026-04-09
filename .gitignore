@@ -39,3 +39,5 @@ src/*.dll
 ldsc_result.json
 sem_result.tsv
 gwas_result.tsv
+
+.claude/

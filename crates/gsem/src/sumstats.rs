@@ -77,20 +77,20 @@ pub fn merge_sumstats(
 
     // Read LD score reference for SNP alleles and MAF
     let ref_snps = read_reference_snps(ref_dir)?;
-    eprintln!("Loaded {} reference SNPs", ref_snps.len());
+    log::info!("Loaded {} reference SNPs", ref_snps.len());
 
     // Read and QC each GWAS file
     let mut trait_records: Vec<HashMap<String, QcRecord>> = Vec::with_capacity(k);
     for (i, file) in files.iter().enumerate() {
         let n_override = config.n_overrides.get(i).copied().flatten();
         let records = read_and_qc_gwas(file, &ref_snps, config, n_override)?;
-        eprintln!("  {}: {} SNPs after QC", trait_names[i], records.len());
+        log::info!("  {}: {} SNPs after QC", trait_names[i], records.len());
         trait_records.push(records);
     }
 
     // Inner join: find SNPs present in ALL traits AND in reference
     let common_snps = find_common_snps(&trait_records, &ref_snps);
-    eprintln!("Common SNPs across all traits: {}", common_snps.len());
+    log::info!("Common SNPs across all traits: {}", common_snps.len());
 
     if common_snps.is_empty() {
         anyhow::bail!("no common SNPs found across all traits and reference");
@@ -101,7 +101,7 @@ pub fn merge_sumstats(
 
     // Write output
     write_merged_sumstats(&merged, trait_names, out)?;
-    eprintln!(
+    log::info!(
         "Wrote {} SNPs x {} traits to {}",
         merged.len(),
         k,

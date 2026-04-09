@@ -46,6 +46,9 @@ pub struct UserGwasConfig {
     /// Override for SNP SE (default: 0.0005, treating MAF as fixed).
     /// Matches R's `SNPSE` parameter.
     pub snp_se: Option<f64>,
+    /// Label for the first observed variable in the model.
+    /// "SNP" for standard GWAS, "Gene" for TWAS mode.
+    pub snp_label: String,
 }
 
 impl Default for UserGwasConfig {
@@ -58,6 +61,7 @@ impl Default for UserGwasConfig {
             std_lv: false,
             smooth_check: false,
             snp_se: None,
+            snp_label: "SNP".to_string(),
         }
     }
 }
@@ -146,7 +150,7 @@ fn process_single_snp(
     }
 
     // Build model
-    let mut obs_names = vec!["SNP".to_string()];
+    let mut obs_names = vec![config.snp_label.clone()];
     obs_names.extend((0..k).map(|i| format!("V{}", i + 1)));
 
     let mut model = Model::from_partable(pt, &obs_names);
