@@ -131,6 +131,7 @@ fn usermodel_rust(
     imp_cov: bool,
     q_factor: bool,
     toler: Rfloat,
+    cfi_calc: bool,
 ) -> String {
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
@@ -197,16 +198,63 @@ fn usermodel_rust(
         })
         .collect();
 
-    // Build the fitted model for implied_cov / Q_Factor
+    // Build the fitted model for implied_cov / fit indices / Q_Factor
     let mut fitted_model = gsem_sem::model::Model::from_partable(&final_pt, &obs_names);
     fitted_model.set_param_vec(&fit.params);
+    let sigma_hat = fitted_model.implied_cov();
+
+    // Compute fit indices
+    let n_free = fitted_model.n_free();
+    let df = kstar.saturating_sub(n_free);
+
+    // Null model for CFI (variances only, no covariances)
+    let (q_null, df_null) = if cfi_calc {
+        let null_model_str: String = obs_names
+            .iter()
+            .map(|v| format!("{v} ~~ {v}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Ok(null_pt) = gsem_sem::syntax::parse_model(&null_model_str, false) {
+            let mut null_model = gsem_sem::model::Model::from_partable(&null_pt, &obs_names);
+            if estimation.to_uppercase() == "ML" {
+                gsem_sem::estimator::fit_ml(&mut null_model, &ldsc_result.s, 1000, None);
+            } else {
+                gsem_sem::estimator::fit_dwls(&mut null_model, &ldsc_result.s, &v_diag, 1000, None);
+            }
+            let null_sigma = null_model.implied_cov();
+            let null_df = kstar - k;
+            let null_stats = gsem_sem::fit_indices::compute_fit(
+                &ldsc_result.s, &null_sigma, &ldsc_result.v, null_df, k, None, None,
+            );
+            (Some(null_stats.chisq), Some(null_df))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let model_fit = gsem_sem::fit_indices::compute_fit(
+        &ldsc_result.s, &sigma_hat, &ldsc_result.v, df, n_free, q_null, df_null,
+    );
+
+    let fit_json = if cfi_calc {
+        format!(
+            ",\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"cfi\":{:.4},\"srmr\":{:.4}",
+            model_fit.chisq, model_fit.df, model_fit.p_chisq, model_fit.aic, model_fit.cfi, model_fit.srmr
+        )
+    } else {
+        format!(
+            ",\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"srmr\":{:.4}",
+            model_fit.chisq, model_fit.df, model_fit.p_chisq, model_fit.aic, model_fit.srmr
+        )
+    };
 
     // Model-implied covariance
     let imp_cov_json = if imp_cov {
-        let sigma = fitted_model.implied_cov();
         let rows: Vec<String> = (0..k)
             .map(|i| {
-                let vals: Vec<String> = (0..k).map(|j| format!("{:.6}", sigma[(i, j)])).collect();
+                let vals: Vec<String> = (0..k).map(|j| format!("{:.6}", sigma_hat[(i, j)])).collect();
                 format!("[{}]", vals.join(","))
             })
             .collect();
@@ -217,11 +265,10 @@ fn usermodel_rust(
 
     // Q_Factor heterogeneity
     let q_factor_json = if q_factor {
-        let sigma = fitted_model.implied_cov();
         let factor_inds = gsem_sem::q_factor::factor_indicators(&final_pt, &obs_names);
         let q_results = gsem_sem::q_factor::compute_q_factor(
             &ldsc_result.s,
-            &sigma,
+            &sigma_hat,
             &ldsc_result.v,
             &factor_inds,
         );
@@ -240,10 +287,11 @@ fn usermodel_rust(
     };
 
     format!(
-        "{{\"converged\":{},\"objective\":{:.6},\"parameters\":[{}]{}{}}}",
+        "{{\"converged\":{},\"objective\":{:.6},\"parameters\":[{}]{}{}{}}}",
         fit.converged,
         fit.objective,
         params_json.join(","),
+        fit_json,
         imp_cov_json,
         q_factor_json,
     )

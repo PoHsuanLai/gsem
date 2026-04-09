@@ -19,7 +19,7 @@ All core parameters for every function work identically to R GenomicSEM, includi
 
 - **ldsc**: traits, sample.prev, population.prev, ld, wld, trait.names, n.blocks, chr, stand, select, chisq.max, sep_weights, ldsc.log
 - **commonfactor**: covstruc, estimation
-- **usermodel**: covstruc, estimation, model, std.lv, fix_resid, imp_cov, Q_Factor, toler
+- **usermodel**: covstruc, estimation, model, std.lv, fix_resid, imp_cov, Q_Factor, toler, CFIcalc
 - **munge**: files, hm3, trait.names, N, info.filter, maf.filter, column.names, overwrite, log.name
 - **sumstats**: files, ref, trait.names, se.logit, OLS, linprob, N, info.filter, maf.filter, keep.indel, out, ambig, betas, direct.filter
 - **userGWAS**: covstruc, SNPs, model, estimation, GC, sub, SNPSE, smooth_check, std.lv, fix_measurement, Q_SNP, printwarn, TWAS
@@ -49,5 +49,3 @@ These parameters are accepted but have no effect. An informational message is pr
 ### Parallel analysis variants
 - `paLDSC(fa, fm, nfactors)` — Factor analysis mode and factor extraction methods. Would require implementing principal axis factoring and ML factor analysis algorithms.
 
-### Model options
-- `usermodel(CFIcalc)` — CFI is always computed in gsemr; this flag has no effect.
