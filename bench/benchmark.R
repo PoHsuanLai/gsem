@@ -79,12 +79,13 @@ all_results$usermodel <- bench::mark(
 # 4. paLDSC (parallel analysis)
 # ==========================================================================
 cat("--- [4/6] paLDSC ---\n")
+# R GenomicSEM's paLDSC has `function(S = S, V = V, ...)` which causes
+# "promise already under evaluation" errors. This is a known R bug in the
+# original package. We benchmark gsemr only.
 tryCatch({
-  all_results$paLDSC <- bench::mark(
-    R = GenomicSEM::paLDSC(S = r_cov$S, V = r_cov$V, r = 500),
-    gsemr = gsemr::paLDSC(rust_cov, r = 500),
-    min_iterations = 3, check = FALSE, filter_gc = FALSE
-  )
+  t_rust <- system.time(rust_pa <- gsemr::paLDSC(rust_cov, r = 500))["elapsed"]
+  cat(sprintf("  gsemr: %.3fs (R GenomicSEM skipped: recursive default arg bug)\n", t_rust))
+  cat(sprintf("  n_factors: %d\n", rust_pa$n_factors))
 }, error = function(e) {
   cat("  SKIPPED:", conditionMessage(e), "\n")
 })
@@ -129,12 +130,11 @@ cat("========================================\n\n")
 
 for (name in names(all_results)) {
   res <- all_results[[name]]
-  speedup <- as.numeric(res$median[1]) / as.numeric(res$median[2])
+  t_r <- as.numeric(res$median[1])
+  t_rust <- as.numeric(res$median[2])
+  speedup <- t_r / t_rust
   cat(sprintf("%-15s  R: %8s  gsemr: %8s  speedup: %.1fx\n",
-    name,
-    format(res$median[1]),
-    format(res$median[2]),
-    speedup
+    name, format(res$median[1]), format(res$median[2]), speedup
   ))
 }
 
