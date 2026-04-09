@@ -26,10 +26,12 @@ if (!requireNamespace("gsemr", quietly = TRUE)) {
 library(gsemr)
 
 # -- Configuration --
+ptsd_file <- Sys.glob("data/*PTSD*")[1]
+if (is.na(ptsd_file)) ptsd_file <- Sys.glob("data/pts_*ea*")[1]
 raw_traits <- c(
   "data/anxiety.meta.full.cc.tbl.gz",
   "data/ocd_aug2017.gz",
-  Sys.glob("data/pts_*ea*.gz")[1]  # PTSD filename varies
+  ptsd_file
 )
 if (any(is.na(raw_traits))) stop("Missing GWAS files. Run: Rscript setup_data.R")
 

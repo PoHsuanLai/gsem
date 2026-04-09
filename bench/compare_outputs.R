@@ -15,11 +15,14 @@ library(GenomicSEM)
 library(gsemr)
 
 # -- Configuration --
+ptsd_file <- Sys.glob("data/*PTSD*")[1]
+if (is.na(ptsd_file)) ptsd_file <- Sys.glob("data/pts_*ea*")[1]
 raw_traits <- c(
   "data/anxiety.meta.full.cc.tbl.gz",
   "data/ocd_aug2017.gz",
-  Sys.glob("data/pts_*ea*.gz")[1]
+  ptsd_file
 )
+if (any(is.na(raw_traits))) stop("Missing GWAS files. Run: Rscript setup_data.R")
 ld     <- "data/eur_w_ld_chr/"
 hm3    <- "data/w_hm3.snplist"
 trait_names <- c("ANX", "OCD", "PTSD")
@@ -96,7 +99,7 @@ check("ldsc: S matrix", function() {
   assert_mat_close(r_cov$S, rust_cov$S, 1e-3, "S")
 })
 check("ldsc: V matrix", function() {
-  assert_mat_close(r_cov$V, rust_cov$V, 1e-2, "V")
+  assert_mat_close(r_cov$V, rust_cov$V, 1e-3, "V")
 })
 check("ldsc: I matrix", function() {
   assert_mat_close(r_cov$I, rust_cov$I, 1e-3, "I")
@@ -112,6 +115,7 @@ rust_cf <- gsemr::commonfactor(rust_cov, estimation = "DWLS")
 check("commonfactor: estimates", function() {
   r_est <- r_cf$results$Unstandardized_Estimate[r_cf$results$op == "=~"]
   rust_est <- rust_cf$results$est[rust_cf$results$op == "=~"]
+  # Loading estimates depend on S; with S diff ~0.01, loadings can differ more
   assert_close(r_est, rust_est, 0.05, "loading estimates")
 })
 
