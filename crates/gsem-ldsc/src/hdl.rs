@@ -296,11 +296,7 @@ fn extract_bhat(trait_data: &HdlTraitData, piece: &LdPiece) -> Vec<f64> {
         }
     }
 
-    if found == 0 {
-        Vec::new()
-    } else {
-        bhat
-    }
+    if found == 0 { Vec::new() } else { bhat }
 }
 
 /// Simple OLS regression: y = slope * x + intercept.
@@ -414,8 +410,7 @@ fn optimize_gcov_likelihood(
         for &delta in &[-0.1, -0.01, -0.001, 0.001, 0.01, 0.1] {
             let gcov_try = (best_gcov + delta).clamp(-0.9999, 0.9999);
             let ll = gcov_neg_loglik(
-                bhat_j, bhat_d, ld_scores, gcov_try, best_int, n_j, n_d, n0, m, n_ref, h2_j,
-                h2_d,
+                bhat_j, bhat_d, ld_scores, gcov_try, best_int, n_j, n_d, n0, m, n_ref, h2_j, h2_d,
             );
             if ll < best_ll {
                 best_gcov = gcov_try;
@@ -425,8 +420,7 @@ fn optimize_gcov_likelihood(
         for &delta in &[-0.5, -0.1, -0.01, 0.01, 0.1, 0.5] {
             let int_try = (best_int + delta).clamp(-5.0, 5.0);
             let ll = gcov_neg_loglik(
-                bhat_j, bhat_d, ld_scores, best_gcov, int_try, n_j, n_d, n0, m, n_ref, h2_j,
-                h2_d,
+                bhat_j, bhat_d, ld_scores, best_gcov, int_try, n_j, n_d, n0, m, n_ref, h2_j, h2_d,
             );
             if ll < best_ll {
                 best_int = int_try;

@@ -5,25 +5,21 @@
 //!   F1 ~~ 1*F1
 //!   V1 ~~ V1; V2 ~~ V2; ...; Vk ~~ Vk
 
-use faer::Mat;
 use anyhow::Result;
+use faer::Mat;
 use statrs::distribution::{ChiSquared, ContinuousCDF};
 
-use crate::{SemResult, ParamEstimate};
-use crate::syntax::parse_model;
-use crate::model::Model;
 use crate::estimator;
-use crate::sandwich;
 use crate::fit_indices;
+use crate::model::Model;
+use crate::sandwich;
+use crate::syntax::parse_model;
+use crate::{ParamEstimate, SemResult};
 
 /// Run common factor analysis on LDSC output.
 ///
 /// Equivalent to R GenomicSEM's `commonfactor()`.
-pub fn run_commonfactor(
-    s: &Mat<f64>,
-    v: &Mat<f64>,
-    estimation: &str,
-) -> Result<SemResult> {
+pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<SemResult> {
     let k = s.nrows();
     let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
 
@@ -60,7 +56,11 @@ pub fn run_commonfactor(
     // Sandwich SEs
     let w = Mat::from_fn(kstar, kstar, |i, j| {
         if i == j {
-            if v_diag[i] > 1e-30 { 1.0 / v_diag[i] } else { 0.0 }
+            if v_diag[i] > 1e-30 {
+                1.0 / v_diag[i]
+            } else {
+                0.0
+            }
         } else {
             0.0
         }

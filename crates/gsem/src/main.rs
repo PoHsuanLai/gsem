@@ -650,7 +650,15 @@ fn main() -> Result<()> {
             n_ref,
             method,
             out,
-        } => run_hdl(&traits, sample_prev, pop_prev, &ld_path, n_ref, &method, &out),
+        } => run_hdl(
+            &traits,
+            sample_prev,
+            pop_prev,
+            &ld_path,
+            n_ref,
+            &method,
+            &out,
+        ),
     }
 }
 
@@ -1701,9 +1709,7 @@ fn run_rgmodel_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result<()> 
     let k = result.r.nrows();
     eprintln!(
         "Converged. R is {k}x{k}. Underlying model chi-sq={:.4}, df={}, CFI={:.4}",
-        result.sem_result.fit.chisq,
-        result.sem_result.fit.df,
-        result.sem_result.fit.cfi
+        result.sem_result.fit.chisq, result.sem_result.fit.df, result.sem_result.fit.cfi
     );
 
     // Write output: R matrix, then V_R matrix, then SEM parameters
@@ -1750,8 +1756,7 @@ fn run_rgmodel_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result<()> 
         result.sem_result.fit.srmr
     ));
 
-    std::fs::write(out, &output)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Results written to {}", out.display());
     Ok(())
@@ -1813,10 +1818,7 @@ fn run_multi_snp_cmd(
         .iter()
         .map(|s| s.beta.clone())
         .collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps[..n_snps]
-        .iter()
-        .map(|s| s.se.clone())
-        .collect();
+    let se_snp: Vec<Vec<f64>> = merged.snps[..n_snps].iter().map(|s| s.se.clone()).collect();
     let var_snp: Vec<f64> = merged.snps[..n_snps]
         .iter()
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
@@ -1862,8 +1864,7 @@ fn run_multi_snp_cmd(
         result.chisq, result.chisq_df, result.converged
     ));
 
-    std::fs::write(out, &output)
-        .with_context(|| format!("failed to write {}", out.display()))?;
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
 
     eprintln!("Results written to {}", out.display());
     Ok(())
@@ -2043,9 +2044,9 @@ fn run_hdl(
         if fields.len() < 3 {
             continue;
         }
-        let piece_idx: usize = fields[0].parse().with_context(|| {
-            format!("invalid piece index in pieces.txt: '{}'", fields[0])
-        })?;
+        let piece_idx: usize = fields[0]
+            .parse()
+            .with_context(|| format!("invalid piece index in pieces.txt: '{}'", fields[0]))?;
 
         // Read per-piece SNP file
         let snp_file = ld_path.join(format!("piece.{piece_idx}.snps.txt"));

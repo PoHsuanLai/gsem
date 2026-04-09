@@ -193,7 +193,10 @@ pub fn detect_columns_with_overrides(
     if let Some(ovr) = overrides {
         for (canonical, header_name) in ovr {
             let upper_header = header_name.to_uppercase();
-            if let Some(idx) = headers.iter().position(|h| h.to_uppercase() == upper_header) {
+            if let Some(idx) = headers
+                .iter()
+                .position(|h| h.to_uppercase() == upper_header)
+            {
                 columns.insert(canonical.to_string(), idx);
             }
         }

@@ -79,7 +79,8 @@ pub fn munge_file(
     reference: &HashMap<String, RefSnp>,
     config: &MungeConfig,
 ) -> Result<Vec<MungedRecord>> {
-    let data = gwas_reader::read_gwas_file_with_overrides(gwas_path, config.column_overrides.as_ref())?;
+    let data =
+        gwas_reader::read_gwas_file_with_overrides(gwas_path, config.column_overrides.as_ref())?;
     let n_input = data.records.len();
     log::info!("Read {n_input} SNPs from {}", gwas_path.display());
 

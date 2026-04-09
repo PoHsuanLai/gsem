@@ -152,9 +152,7 @@ pub fn ldsc(
     let kstar = vech::vech_size(k);
 
     // Build (j, jj) pairs in vech order for parallel processing
-    let pairs: Vec<(usize, usize)> = (0..k)
-        .flat_map(|j| (j..k).map(move |jj| (j, jj)))
-        .collect();
+    let pairs: Vec<(usize, usize)> = (0..k).flat_map(|j| (j..k).map(move |jj| (j, jj))).collect();
 
     // Run all trait pair regressions in parallel
     let pair_results: Vec<Result<PairResult>> = pairs

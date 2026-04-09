@@ -6,8 +6,8 @@
 //!
 //! Port of R GenomicSEM's `rgmodel()`.
 
-use faer::Mat;
 use anyhow::Result;
+use faer::Mat;
 use gsem_matrix::vech;
 
 /// Result of rgmodel.
@@ -24,11 +24,7 @@ pub struct RgModelResult {
 /// Compute model-implied genetic correlation matrix and its sampling covariance.
 ///
 /// Port of R GenomicSEM's `rgmodel()`.
-pub fn run_rgmodel(
-    s: &Mat<f64>,
-    v: &Mat<f64>,
-    estimation: &str,
-) -> Result<RgModelResult> {
+pub fn run_rgmodel(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<RgModelResult> {
     // Fit common factor model
     let sem_result = crate::commonfactor::run_commonfactor(s, v, estimation)?;
 

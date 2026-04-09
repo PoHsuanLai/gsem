@@ -131,7 +131,11 @@ pub fn run_multi_snp(
             };
             let idx = vech_index(r, c, total);
             if idx < kstar_full {
-                let se_val = se.get(snp_i).and_then(|s| s.get(t)).copied().unwrap_or(0.01);
+                let se_val = se
+                    .get(snp_i)
+                    .and_then(|s| s.get(t))
+                    .copied()
+                    .unwrap_or(0.01);
                 v_full[(idx, idx)] = (se_val * var_snp[snp_i]).powi(2);
             }
         }
@@ -160,7 +164,7 @@ pub fn run_multi_snp(
                 chisq: f64::NAN,
                 chisq_df: 0,
                 converged: false,
-            }
+            };
         }
     };
 

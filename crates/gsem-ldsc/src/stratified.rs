@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use faer::prelude::Solve;
 use faer::Mat;
+use faer::prelude::Solve;
 
 use crate::weights;
 
@@ -86,9 +86,7 @@ pub fn s_ldsc(
     let n_blocks = config.n_blocks.min(n_snps);
     let m_total: f64 = m_annot.iter().sum();
 
-    log::info!(
-        "s_ldsc: {k} traits, {n_annot} annotations, {n_snps} SNPs, {n_blocks} blocks"
-    );
+    log::info!("s_ldsc: {k} traits, {n_annot} annotations, {n_snps} SNPs, {n_blocks} blocks");
 
     let kstar = k * (k + 1) / 2;
     let mut i_mat = Mat::zeros(k, k);

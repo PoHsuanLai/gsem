@@ -159,7 +159,10 @@ fn read_annot_ld_file(path: &Path) -> Result<(Vec<String>, Vec<Vec<f64>>, Vec<St
         snps.push(flds[snp_idx].to_string());
         let mut row = Vec::with_capacity(n_annot);
         for &(col_idx, _) in &annot_indices {
-            let val: f64 = flds.get(col_idx).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            let val: f64 = flds
+                .get(col_idx)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
             row.push(val);
         }
         data.push(row);
@@ -220,6 +223,9 @@ fn read_m_annot_file(path: &Path) -> Result<Vec<f64>> {
         std::fs::read_to_string(path).with_context(|| format!("cannot open {}", path.display()))?;
     content
         .split_whitespace()
-        .map(|s| s.parse::<f64>().with_context(|| format!("invalid M value: {s}")))
+        .map(|s| {
+            s.parse::<f64>()
+                .with_context(|| format!("invalid M value: {s}"))
+        })
         .collect()
 }
