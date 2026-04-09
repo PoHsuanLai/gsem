@@ -297,6 +297,78 @@ if (!is.null(fit_sem)) {
   cat("Skipping SEM fixtures (lavaan fitting failed)\n")
 }
 
+# ============================================================
+# Test Case 10: 2-factor SEM with multiple fixed rows
+# Tests that parameter indexing is correct when fixed rows
+# appear in various positions in the partable.
+# ============================================================
+cat("=== 2-factor SEM ===\n")
+
+S_2f <- matrix(c(
+  0.60, 0.42, 0.10, 0.05,
+  0.42, 0.50, 0.08, 0.04,
+  0.10, 0.08, 0.45, 0.30,
+  0.05, 0.04, 0.30, 0.55
+), 4, 4, byrow = TRUE)
+colnames(S_2f) <- rownames(S_2f) <- c("V1", "V2", "V3", "V4")
+
+kstar_2f <- 4 * 5 / 2  # = 10
+V_2f <- diag(kstar_2f) * 0.001
+
+# 2 factors, cross-loading fixed to 0, factor variances fixed to 1
+# partable will have: loadings (free), fixed factor variances, fixed zero
+# cross-loadings, free residual variances, free factor covariance
+model_2f <- "
+F1 =~ NA*V1 + V2
+F2 =~ NA*V3 + V4
+F1 ~~ 1*F1
+F2 ~~ 1*F2
+F1 ~~ F2
+V1 ~~ V1
+V2 ~~ V2
+V3 ~~ V3
+V4 ~~ V4
+"
+
+V_diag_2f <- diag(as.numeric(diag(V_2f)), nrow = kstar_2f)
+W_2f <- solve(V_diag_2f)
+
+fit_2f <- tryCatch({
+  sem(model_2f,
+      sample.cov = S_2f,
+      estimator = "DWLS",
+      WLS.V = W_2f,
+      sample.nobs = 200,
+      se = "standard",
+      optim.dx.tol = 0.01)
+}, error = function(e) {
+  cat("2-factor SEM failed:", e$message, "\n")
+  NULL
+})
+
+if (!is.null(fit_2f)) {
+  pe_2f <- parameterEstimates(fit_2f)
+  free_2f <- pe_2f[pe_2f$op %in% c("=~", "~~") & pe_2f$se > 0, ]
+
+  write_fixture(list(
+    s = mat_to_list(S_2f),
+    v = mat_to_list(V_2f),
+    v_diag = as.numeric(diag(V_2f)),
+    model = model_2f,
+    estimates = lapply(1:nrow(free_2f), function(i) {
+      list(
+        lhs = free_2f$lhs[i],
+        op = free_2f$op[i],
+        rhs = free_2f$rhs[i],
+        est = free_2f$est[i],
+        se = free_2f$se[i]
+      )
+    })
+  ), "sem_2factor")
+} else {
+  cat("Skipping 2-factor fixture\n")
+}
+
 cat("\n=== All fixtures generated ===\n")
 cat("Files in", outdir, ":\n")
 cat(paste(" ", list.files(outdir)), sep = "\n")

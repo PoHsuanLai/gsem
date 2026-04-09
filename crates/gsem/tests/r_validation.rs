@@ -316,25 +316,30 @@ fn test_sem_estimates_match_r() {
     let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000, None);
     assert!(fit.converged, "SEM should converge");
 
-    // Compare loading estimates (=~ params) — these should be close
+    // Compare ALL free parameter estimates (not just loadings)
     let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    assert_eq!(
+        free_rows.len(),
+        fit.params.len(),
+        "Number of free rows must match number of fitted params"
+    );
     for (i, row) in free_rows.iter().enumerate() {
-        if row.op == gsem_sem::syntax::Op::Loading {
-            let est = fit.params.get(i).copied().unwrap_or(0.0);
-            if let Some(r_est) = r_estimates
-                .iter()
-                .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
-            {
-                let diff = (est - r_est.3).abs();
-                assert!(
-                    diff < 0.05,
-                    "SEM loading {}.{}.{}: Rust={est:.6} R={:.6} diff={diff:.6}",
-                    row.lhs,
-                    row.op,
-                    row.rhs,
-                    r_est.3
-                );
-            }
+        let est = fit.params[i];
+        if let Some(r_est) = r_estimates
+            .iter()
+            .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
+        {
+            let diff = (est - r_est.3).abs();
+            assert!(
+                diff < 0.05,
+                "SEM param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
+                row.lhs, row.op, row.rhs, r_est.3
+            );
+        } else {
+            panic!(
+                "Free param {} {} {} not found in R reference estimates",
+                row.lhs, row.op, row.rhs
+            );
         }
     }
 
@@ -348,6 +353,80 @@ fn test_sem_estimates_match_r() {
         "SEM objective should be small: {}",
         fit.objective
     );
+}
+
+// ── Test Case 8b: 2-factor SEM with fixed rows in middle of partable ────────
+// This specifically tests that parameter indexing is correct when fixed rows
+// (F1~~1*F1, F2~~1*F2) appear between free rows in the partable.
+
+#[test]
+fn test_sem_2factor_all_params_match_r() {
+    let fix = load_fixture("sem_2factor");
+    let s = json_to_mat(&fix["s"]);
+    let v_diag = json_to_vec(&fix["v_diag"]);
+
+    let r_estimates: Vec<(String, String, String, f64)> = fix["estimates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["lhs"].as_str().unwrap().to_string(),
+                e["op"].as_str().unwrap().to_string(),
+                e["rhs"].as_str().unwrap().to_string(),
+                e["est"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+
+    let model_str = "F1 =~ NA*V1 + V2\nF2 =~ NA*V3 + V4\n\
+                     F1 ~~ 1*F1\nF2 ~~ 1*F2\nF1 ~~ F2\n\
+                     V1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3\nV4 ~~ V4";
+    let pt = gsem_sem::syntax::parse_model(model_str, false).unwrap();
+    let obs_names: Vec<String> = vec!["V1", "V2", "V3", "V4"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+
+    let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000, None);
+    assert!(fit.converged, "2-factor SEM should converge");
+
+    // Verify fixed rows exist in the partable (this is the key invariant)
+    let n_fixed = pt.rows.iter().filter(|r| r.free == 0).count();
+    assert!(
+        n_fixed >= 2,
+        "Partable should have at least 2 fixed rows (F1~~1*F1, F2~~1*F2), got {n_fixed}"
+    );
+
+    // Compare ALL free parameter estimates against R
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    assert_eq!(
+        free_rows.len(),
+        fit.params.len(),
+        "Number of free rows ({}) must match number of fitted params ({})",
+        free_rows.len(),
+        fit.params.len()
+    );
+    for (i, row) in free_rows.iter().enumerate() {
+        let est = fit.params[i];
+        if let Some(r_est) = r_estimates
+            .iter()
+            .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
+        {
+            let diff = (est - r_est.3).abs();
+            assert!(
+                diff < 0.05,
+                "2-factor param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
+                row.lhs, row.op, row.rhs, r_est.3
+            );
+        } else {
+            panic!(
+                "Free param {} {} {} not found in R reference estimates",
+                row.lhs, row.op, row.rhs
+            );
+        }
+    }
 }
 
 // ── Test Case 9: V reorder ──────────────────────────────────────────────────
