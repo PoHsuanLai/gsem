@@ -27,8 +27,11 @@ impl std::fmt::Display for Op {
 /// A single row in the parameter table.
 #[derive(Debug, Clone)]
 pub struct ParRow {
+    /// Left-hand side variable name
     pub lhs: String,
+    /// Operator type
     pub op: Op,
+    /// Right-hand side variable name
     pub rhs: String,
     /// 0 = fixed, 1..n = free parameter index
     pub free: usize,
@@ -45,6 +48,7 @@ pub struct ParRow {
 /// Parsed parameter table from lavaan syntax.
 #[derive(Debug, Clone)]
 pub struct ParTable {
+    /// All parameter rows in the model
     pub rows: Vec<ParRow>,
 }
 

@@ -35,10 +35,14 @@ pub enum MatrixId {
     Beta,
 }
 
+/// Location of a free parameter within a LISREL matrix.
 #[derive(Debug, Clone, Copy)]
 pub struct ParamLocation {
+    /// Which LISREL matrix this parameter belongs to
     pub matrix: MatrixId,
+    /// Row index within the matrix
     pub row: usize,
+    /// Column index within the matrix
     pub col: usize,
 }
 

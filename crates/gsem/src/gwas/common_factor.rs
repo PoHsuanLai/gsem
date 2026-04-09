@@ -3,18 +3,21 @@ use faer::Mat;
 use super::gc_correction::GcMode;
 use super::user_gwas::{self, SnpResult, UserGwasConfig};
 
-/// Run common factor GWAS.
+/// Configuration for common factor GWAS.
 ///
 /// This is a simplified version of userGWAS that auto-generates a 1-factor model:
 ///   F1 =~ NA*V1 + V2 + ... + Vk
 ///   F1 ~ SNP
 ///   F1 ~~ 1*F1
 ///   SNP ~~ SNP
-/// Configuration for common factor GWAS.
 pub struct CommonFactorGwasConfig {
+    /// Estimation method: "DWLS" or "ML"
     pub estimation: String,
+    /// Genomic control correction mode
     pub gc: GcMode,
+    /// Override for SNP SE (default: 0.0005)
     pub snp_se: Option<f64>,
+    /// Log warnings when covariance matrix requires smoothing
     pub smooth_check: bool,
 }
 

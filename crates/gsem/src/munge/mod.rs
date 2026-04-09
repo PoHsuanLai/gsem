@@ -12,9 +12,13 @@ use crate::io::writer;
 /// Configuration for the munge pipeline.
 #[derive(Debug, Clone)]
 pub struct MungeConfig {
+    /// Minimum imputation INFO score (SNPs below this are removed)
     pub info_filter: f64,
+    /// Minimum minor allele frequency (SNPs below this are removed)
     pub maf_filter: f64,
+    /// Override sample size for all SNPs (None = use per-SNP values)
     pub n_override: Option<f64>,
+    /// Map of canonical column names to actual header names in the file
     pub column_overrides: Option<HashMap<String, String>>,
 }
 

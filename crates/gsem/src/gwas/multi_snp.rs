@@ -18,8 +18,11 @@ use gsem_sem::syntax;
 /// Configuration for multi-SNP analysis.
 #[derive(Debug, Clone)]
 pub struct MultiSnpConfig {
+    /// Lavaan-style model syntax string
     pub model: String,
+    /// Estimation method: "DWLS" or "ML"
     pub estimation: String,
+    /// Maximum optimizer iterations
     pub max_iter: usize,
     /// Override for SNP variance SE (default: 0.0005).
     pub snp_var_se: Option<f64>,
@@ -28,9 +31,13 @@ pub struct MultiSnpConfig {
 /// Result of multi-SNP analysis.
 #[derive(Debug, Clone)]
 pub struct MultiSnpResult {
+    /// Parameter estimates from the joint model
     pub params: Vec<super::user_gwas::SnpParamResult>,
+    /// Model chi-square statistic
     pub chisq: f64,
+    /// Model degrees of freedom
     pub chisq_df: usize,
+    /// Whether the optimizer converged
     pub converged: bool,
 }
 

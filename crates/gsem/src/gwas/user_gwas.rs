@@ -14,11 +14,17 @@ use super::gc_correction::GcMode;
 /// Result for a single SNP from userGWAS.
 #[derive(Debug, Clone)]
 pub struct SnpResult {
+    /// Index of this SNP in the input arrays
     pub snp_idx: usize,
+    /// Parameter estimates for this SNP
     pub params: Vec<SnpParamResult>,
+    /// Model chi-square statistic
     pub chisq: f64,
+    /// Model degrees of freedom
     pub chisq_df: usize,
+    /// Whether the optimizer converged
     pub converged: bool,
+    /// Warning message, if any
     pub warning: Option<String>,
     /// Q_SNP heterogeneity statistic (if computed).
     pub q_snp: Option<f64>,
@@ -31,22 +37,34 @@ pub struct SnpResult {
 /// A single parameter result for one SNP.
 #[derive(Debug, Clone)]
 pub struct SnpParamResult {
+    /// Left-hand side variable name
     pub lhs: String,
+    /// Operator (e.g., "=~", "~~", "~")
     pub op: String,
+    /// Right-hand side variable name
     pub rhs: String,
+    /// Point estimate
     pub est: f64,
+    /// Standard error (sandwich-corrected)
     pub se: f64,
+    /// Z-statistic (est / se)
     pub z_stat: f64,
+    /// P-value (two-tailed)
     pub p_value: f64,
 }
 
 /// Configuration for userGWAS.
 #[derive(Debug, Clone)]
 pub struct UserGwasConfig {
+    /// Lavaan-style model syntax string
     pub model: String,
+    /// Estimation method: "DWLS" or "ML"
     pub estimation: String,
+    /// Genomic control correction mode
     pub gc: GcMode,
+    /// Maximum optimizer iterations per SNP
     pub max_iter: usize,
+    /// Standardize latent variables (free all loadings, fix factor variances to 1)
     pub std_lv: bool,
     /// Log warnings when covariance matrix requires smoothing.
     pub smooth_check: bool,

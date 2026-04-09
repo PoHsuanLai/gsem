@@ -8,10 +8,15 @@ use crate::syntax::{Op, ParTable};
 /// Result of Q_Factor test for a pair of factors.
 #[derive(Debug, Clone)]
 pub struct QFactorResult {
+    /// Name of the first factor
     pub factor1: String,
+    /// Name of the second factor
     pub factor2: String,
+    /// Q chi-square test statistic
     pub q_chisq: f64,
+    /// Degrees of freedom for the Q test
     pub q_df: usize,
+    /// P-value for the Q test
     pub q_p: f64,
 }
 

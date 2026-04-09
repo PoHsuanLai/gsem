@@ -41,22 +41,35 @@ pub struct SemResult {
 /// A single parameter estimate.
 #[derive(Debug, Clone)]
 pub struct ParamEstimate {
+    /// Left-hand side variable name
     pub lhs: String,
+    /// Operator (e.g., "=~", "~~", "~")
     pub op: String,
+    /// Right-hand side variable name
     pub rhs: String,
+    /// Point estimate
     pub est: f64,
+    /// Standard error
     pub se: f64,
+    /// Z-statistic (est / se)
     pub z: f64,
+    /// P-value (two-tailed)
     pub p: f64,
 }
 
 /// Model fit statistics.
 #[derive(Debug, Clone)]
 pub struct ModelFit {
+    /// Chi-square test statistic
     pub chisq: f64,
+    /// Degrees of freedom
     pub df: usize,
+    /// P-value for chi-square test
     pub p_chisq: f64,
+    /// Akaike information criterion
     pub aic: f64,
+    /// Comparative fit index
     pub cfi: f64,
+    /// Standardized root mean square residual
     pub srmr: f64,
 }

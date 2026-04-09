@@ -11,32 +11,49 @@ use super::column_detect::{self, DetectedColumns};
 /// A single row of raw GWAS summary statistics.
 #[derive(Debug, Clone)]
 pub struct GwasRecord {
+    /// SNP identifier (e.g., rsID)
     pub snp: String,
+    /// Effect allele
     pub a1: Option<String>,
+    /// Non-effect allele
     pub a2: Option<String>,
+    /// Effect size (beta or OR)
     pub effect: Option<f64>,
+    /// Standard error of the effect
     pub se: Option<f64>,
+    /// P-value
     pub p: Option<f64>,
+    /// Sample size
     pub n: Option<f64>,
+    /// Z-statistic
     pub z: Option<f64>,
+    /// Imputation quality score
     pub info: Option<f64>,
+    /// Minor allele frequency
     pub maf: Option<f64>,
 }
 
 /// Parsed GWAS summary statistics file.
 #[derive(Debug, Clone)]
 pub struct GwasData {
+    /// All parsed SNP records
     pub records: Vec<GwasRecord>,
+    /// Auto-detected column name mappings
     pub detected: DetectedColumns,
 }
 
 /// A munged summary statistics record (SNP, N, Z, A1, A2).
 #[derive(Debug, Clone)]
 pub struct MungedRecord {
+    /// SNP identifier
     pub snp: String,
+    /// Sample size
     pub n: f64,
+    /// Z-statistic
     pub z: f64,
+    /// Effect allele
     pub a1: String,
+    /// Non-effect allele
     pub a2: String,
 }
 
