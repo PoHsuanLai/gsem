@@ -39,6 +39,7 @@ fn bench_fit_dwls(c: &mut Criterion) {
                 black_box(&s),
                 black_box(&v_diag),
                 1000,
+                None,
             )
         })
     });
@@ -66,6 +67,7 @@ fn bench_fit_dwls(c: &mut Criterion) {
                 black_box(&s6),
                 black_box(&v_diag6),
                 1000,
+                None,
             )
         })
     });

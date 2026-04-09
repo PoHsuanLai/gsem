@@ -6,17 +6,11 @@
 #' @param covstruc LDSC result (list with S, V, I components, or JSON string)
 #' @param Genes Data frame of gene summary statistics (with beta, se, var columns per gene)
 #' @param LD LD correlation matrix between genes
-#' @param GeneSE Gene SE flag (ignored in gsemr)
+#' @param GeneSE Gene SE override (default "F" = auto, numeric = override)
 #' @param Genelist Optional gene list to subset (character vector)
 #' @return A list with converged, chisq, df, and params
 #' @export
 multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
-  if (!identical(GeneSE, "F")) {
-    message("Note: 'GeneSE' is ignored in gsemr")
-  }
-  if (!identical(Genelist, "F")) {
-    message("Note: 'Genelist' is ignored in gsemr -- subsetting not yet supported")
-  }
 
   if (is.list(covstruc) && !is.character(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(
@@ -46,9 +40,24 @@ multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
                    "\n", paste0("F1 ~ ", gene_names, collapse = "\n"),
                    "\nF1 ~~ 1*F1")
 
+  # Filter by Genelist if provided
+  if (!identical(Genelist, "F") && !is.null(Genelist)) {
+    keep <- gene_names %in% Genelist
+    if (any(keep)) {
+      gene_names <- gene_names[keep]
+      beta_mat <- beta_mat[keep, , drop = FALSE]
+      se_mat <- se_mat[keep, , drop = FALSE]
+      var_gene <- var_gene[keep]
+      LD <- LD[keep, keep, drop = FALSE]
+    }
+  }
+
   beta_json <- jsonlite::toJSON(beta_mat, digits = 15)
   se_json <- jsonlite::toJSON(se_mat, digits = 15)
   ld_json <- jsonlite::toJSON(as.matrix(LD), digits = 15)
+
+  # Convert GeneSE: "F" means auto (pass NaN), numeric means override
+  gene_se_val <- if (identical(GeneSE, "F")) NaN else as.double(GeneSE)
 
   json <- .Call("wrap__multi_gene_rust",
     as.character(covstruc_json),
@@ -58,7 +67,8 @@ multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
     as.character(se_json),
     as.numeric(var_gene),
     as.character(ld_json),
-    as.character(gene_names)
+    as.character(gene_names),
+    gene_se_val
   )
 
   result <- jsonlite::fromJSON(json)

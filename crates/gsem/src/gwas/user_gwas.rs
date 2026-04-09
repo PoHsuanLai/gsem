@@ -132,9 +132,9 @@ pub fn run_user_gwas(
             let kstar_ld = k * (k + 1) / 2;
             let v_diag: Vec<f64> = (0..kstar_ld).map(|i| v_ld[(i, i)]).collect();
             let baseline_fit = if config.estimation.to_uppercase() == "ML" {
-                estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter)
+                estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter, None)
             } else {
-                estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter)
+                estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter, None)
             };
             if baseline_fit.converged {
                 // Fix baseline parameters in the full model
@@ -233,9 +233,9 @@ fn process_single_snp(
 
     // Fit model
     let fit = if config.estimation.eq_ignore_ascii_case("ML") {
-        estimator::fit_ml(&mut model, &s_full, config.max_iter)
+        estimator::fit_ml(&mut model, &s_full, config.max_iter, None)
     } else {
-        estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter)
+        estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None)
     };
 
     // Compute sandwich SEs

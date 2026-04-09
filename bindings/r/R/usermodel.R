@@ -8,29 +8,22 @@
 #' @param model lavaan-style model syntax string
 #' @param CFIcalc Compute CFI (ignored in gsemr, always computed)
 #' @param std.lv Standardize latent variables (default FALSE)
-#' @param imp_cov Use model-implied covariance (ignored in gsemr)
+#' @param imp_cov Return model-implied covariance matrix (default FALSE)
 #' @param fix_resid Fix residual variances to be positive (default TRUE)
 #' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
-#' @param Q_Factor Compute Q factor (ignored in gsemr)
+#' @param Q_Factor Compute Q factor heterogeneity statistic (default FALSE)
 #' @return A list with components:
 #'   \item{results}{Data frame of parameter estimates}
 #'   \item{modelfit}{Data frame of fit indices}
 #'   \item{converged}{Logical indicating convergence}
+#'   \item{implied_cov}{Model-implied covariance matrix (if imp_cov=TRUE)}
+#'   \item{Q_Factor}{Q factor results (if Q_Factor=TRUE)}
 #' @export
 usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
                       std.lv=FALSE, imp_cov=FALSE, fix_resid=TRUE, toler=NULL, Q_Factor=FALSE) {
 
-  # Ignored params
   if (!identical(CFIcalc, TRUE)) {
     message("Note: 'CFIcalc' is ignored in gsemr -- CFI is always computed")
-  }
-  if (!identical(imp_cov, FALSE)) {
-    message("Note: 'imp_cov' is ignored in gsemr -- not implemented")
-  }
-  # Note: 'toler' is accepted but convergence tolerance is controlled by the
-  # L-BFGS optimizer internally in the Rust backend.
-  if (!identical(Q_Factor, FALSE)) {
-    message("Note: 'Q_Factor' is ignored in gsemr -- not implemented")
   }
 
   # Convert covstruc to JSON for Rust
@@ -42,12 +35,18 @@ usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
     m = covstruc$m
   ), auto_unbox = TRUE, digits = 15)
 
+  # Convert toler: NULL/FALSE means auto (pass NaN), numeric means override
+  toler_val <- if (is.null(toler) || identical(toler, FALSE)) NaN else as.double(toler)
+
   json <- .Call("wrap__usermodel_rust",
     as.character(covstruc_json),
     as.character(model),
     as.character(estimation),
     as.logical(std.lv),
-    as.logical(fix_resid)
+    as.logical(fix_resid),
+    as.logical(imp_cov),
+    as.logical(Q_Factor),
+    toler_val
   )
 
   result <- jsonlite::fromJSON(json)
@@ -61,7 +60,7 @@ usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
     params$est <- as.numeric(params$est)
   }
 
-  list(
+  out <- list(
     results = params,
     modelfit = data.frame(
       objective = result$objective,
@@ -69,6 +68,16 @@ usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
     ),
     converged = result$converged
   )
+
+  if (imp_cov && !is.null(result$implied_cov)) {
+    out$implied_cov <- as.matrix(as.data.frame(result$implied_cov))
+  }
+
+  if (Q_Factor && !is.null(result$Q_Factor)) {
+    out$Q_Factor <- as.data.frame(result$Q_Factor, stringsAsFactors = FALSE)
+  }
+
+  out
 }
 
 #' Fit a Common Factor Model

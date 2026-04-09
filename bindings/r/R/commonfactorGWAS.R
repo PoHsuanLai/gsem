@@ -8,12 +8,12 @@
 #' @param cores Number of cores for Rayon thread pool (NULL = auto-detect)
 #' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
 #' @param SNPSE SNP SE override (default FALSE = auto)
-#' @param parallel Use parallel processing (ignored in gsemr)
+#' @param parallel Use parallel processing (default TRUE; FALSE sets single-threaded)
 #' @param GC Genomic control: "standard" (default), "conservative", or "none"
-#' @param MPI Use MPI (ignored in gsemr)
-#' @param TWAS TWAS mode (ignored in gsemr)
+#' @param MPI Use MPI (ignored in gsemr -- not applicable to Rust backend)
+#' @param TWAS TWAS gene-level analysis mode (default FALSE)
 #' @param smooth_check Check for non-positive-definite matrices (default FALSE)
-#' @return Data frame of per-SNP results
+#' @return Data frame of per-SNP (or per-Gene if TWAS=TRUE) results
 #' @export
 commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=NULL,
                              toler=FALSE, SNPSE=FALSE, parallel=TRUE, GC="standard",
@@ -25,17 +25,11 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
   if (!identical(MPI, FALSE)) {
     message("Note: 'MPI' is ignored in gsemr -- not applicable to Rust backend")
   }
-  if (!identical(TWAS, FALSE)) {
-    message("Note: 'TWAS' is ignored in gsemr -- not implemented")
-  }
 
   # Set rayon thread count if cores is specified
   if (!is.null(cores) && cores > 0) {
     Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
   }
-
-  # Note: 'toler' is accepted but convergence tolerance is controlled by the
-  # L-BFGS optimizer internally in the Rust backend.
 
   if (is.list(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(
@@ -51,6 +45,7 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
 
   json <- .Call("wrap__commonfactor_gwas_rust",
     as.character(covstruc_json), as.character(SNPs), as.character(GC),
-    as.character(estimation), snp_se_val, as.logical(smooth_check))
+    as.character(estimation), snp_se_val, as.logical(smooth_check),
+    as.logical(TWAS))
   jsonlite::fromJSON(json)
 }

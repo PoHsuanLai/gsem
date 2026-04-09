@@ -32,6 +32,12 @@ pub struct SumstatsConfig {
     pub keep_indel: bool,
     /// If false (default), remove ambiguous strand SNPs (A/T and C/G pairs).
     pub keep_ambig: bool,
+    /// Per-trait column name overrides for the effect (beta) column.
+    /// If set, the i-th entry overrides auto-detection for trait i.
+    pub beta_overrides: Vec<Option<String>>,
+    /// If true, apply `maf_filter` directly to each GWAS file's MAF/FRQ column
+    /// (in addition to the reference-based MAF filter).
+    pub direct_filter: bool,
 }
 
 impl Default for SumstatsConfig {
@@ -45,6 +51,8 @@ impl Default for SumstatsConfig {
             linprob: Vec::new(),
             keep_indel: false,
             keep_ambig: false,
+            beta_overrides: Vec::new(),
+            direct_filter: false,
         }
     }
 }
@@ -146,7 +154,17 @@ fn read_and_qc_gwas(
     n_override: Option<f64>,
     trait_idx: usize,
 ) -> Result<HashMap<String, QcRecord>> {
-    let data = gwas_reader::read_gwas_file(path)?;
+    // Build column overrides if beta column name is specified for this trait
+    let col_overrides = config
+        .beta_overrides
+        .get(trait_idx)
+        .and_then(|v| v.as_ref())
+        .map(|beta_name| {
+            let mut m = std::collections::HashMap::new();
+            m.insert("effect".to_string(), beta_name.clone());
+            m
+        });
+    let data = gwas_reader::read_gwas_file_with_overrides(path, col_overrides.as_ref())?;
     let mut records = HashMap::new();
 
     for rec in data.records {

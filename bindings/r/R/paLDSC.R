@@ -6,7 +6,7 @@
 #' @param S Genetic covariance matrix (from LDSC output)
 #' @param V Sampling covariance matrix (from LDSC output)
 #' @param r Number of Monte Carlo simulations (default NULL = 500)
-#' @param p P-value threshold (ignored in gsemr)
+#' @param p Percentile threshold for null distribution (default NULL = 0.95)
 #' @param save.pdf Save plot to PDF (ignored in gsemr)
 #' @param diag Use diagonal of V only (ignored in gsemr)
 #' @param fa Factor analysis method (ignored in gsemr)
@@ -20,10 +20,7 @@
 paLDSC <- function(S=S, V=V, r=NULL, p=NULL, save.pdf=FALSE, diag=FALSE, fa=FALSE,
                    fm=NULL, nfactors=NULL) {
 
-  # Ignored params
-  if (!is.null(p)) {
-    message("Note: 'p' is ignored in gsemr -- uses default 95th percentile threshold")
-  }
+  # p: custom percentile threshold (default 0.95)
   if (!identical(save.pdf, FALSE)) {
     message("Note: 'save.pdf' is ignored in gsemr -- plotting is not supported in Rust backend")
   }
@@ -47,6 +44,9 @@ paLDSC <- function(S=S, V=V, r=NULL, p=NULL, save.pdf=FALSE, diag=FALSE, fa=FALS
   s_json <- jsonlite::toJSON(as.matrix(S), digits = 15)
   v_json <- jsonlite::toJSON(as.matrix(V), digits = 15)
 
-  json <- .Call("wrap__pa_ldsc_rust", as.character(s_json), as.character(v_json), as.integer(r))
+  # Convert p: NULL means default 0.95
+  p_val <- if (is.null(p)) NaN else as.double(p)
+
+  json <- .Call("wrap__pa_ldsc_rust", as.character(s_json), as.character(v_json), as.integer(r), p_val)
   jsonlite::fromJSON(json)
 }

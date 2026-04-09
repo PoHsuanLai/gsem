@@ -10,14 +10,14 @@
 #' @param OLS Logical vector indicating which traits are from OLS regression
 #' @param linprob Logical vector indicating which traits are linear probability
 #' @param N Numeric vector or list of sample size overrides
-#' @param betas Named list of beta column overrides (ignored in gsemr)
+#' @param betas Named list of beta column overrides per trait (default NULL = auto-detect)
 #' @param info.filter INFO score filter (default 0.6)
 #' @param maf.filter MAF filter (default 0.01)
 #' @param keep.indel Keep indels (default FALSE)
-#' @param parallel Use parallel processing (ignored in gsemr)
-#' @param cores Number of cores (ignored in gsemr)
-#' @param ambig Keep ambiguous SNPs (ignored in gsemr)
-#' @param direct.filter Apply direct filter (ignored in gsemr)
+#' @param parallel Use parallel processing (default FALSE; TRUE enables multi-threading)
+#' @param cores Number of cores for parallel processing (default NULL = auto-detect)
+#' @param ambig Keep ambiguous SNPs (default FALSE)
+#' @param direct.filter Apply MAF filter directly to GWAS file frequencies (default FALSE)
 #' @return Path to the merged output file
 #' @export
 sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=NULL,
@@ -25,20 +25,10 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
                      keep.indel=FALSE, parallel=FALSE, cores=NULL, ambig=FALSE,
                      direct.filter=FALSE, out="merged_sumstats.tsv") {
 
-  # Ignored params
-  if (!is.null(betas)) {
-    message("Note: 'betas' is ignored in gsemr -- column detection is automatic")
-  }
   if (identical(parallel, FALSE)) {
     Sys.setenv(RAYON_NUM_THREADS = "1")
   } else if (!is.null(cores)) {
     Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
-  }
-  if (!identical(ambig, FALSE)) {
-    message("Note: 'ambig' is ignored in gsemr -- ambiguous SNPs are always removed")
-  }
-  if (!identical(direct.filter, FALSE)) {
-    message("Note: 'direct.filter' is ignored in gsemr -- not implemented")
   }
 
   if (is.null(trait.names)) {
@@ -69,12 +59,22 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
     jsonlite::toJSON(as.list(N), auto_unbox = TRUE)
   }
 
+  # Handle betas: convert named list to JSON object
+  betas_json <- if (is.null(betas)) {
+    "{}"
+  } else {
+    jsonlite::toJSON(as.list(betas), auto_unbox = TRUE)
+  }
+
   json <- .Call("wrap__sumstats_rust",
     as.character(files), as.character(ref), as.character(trait.names),
     as.double(info.filter), as.double(maf.filter), as.logical(keep.indel),
     as.character(out),
     as.integer(se.logit), as.integer(OLS), as.integer(linprob),
-    as.character(n_overrides_json)
+    as.character(n_overrides_json),
+    as.logical(ambig),
+    as.character(betas_json),
+    as.logical(direct.filter)
   )
   result <- jsonlite::fromJSON(json)
   if (!is.null(result$error)) stop("gsemr::sumstats error: ", result$error)

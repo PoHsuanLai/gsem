@@ -799,6 +799,8 @@ fn run_sumstats(
         linprob: vec![false; k],
         keep_indel,
         keep_ambig: false,
+        beta_overrides: Vec::new(),
+        direct_filter: false,
     };
 
     let file_refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
@@ -1061,9 +1063,9 @@ fn run_sem(
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
+        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
     } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
+        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
     };
 
     // If model failed to converge and fix_resid is set, add lower bounds on
@@ -1084,9 +1086,9 @@ fn run_sem(
         // Rebuild model with updated lower bounds
         sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
         if estimation.to_uppercase() == "ML" {
-            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
+            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
         } else {
-            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
+            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
         }
     } else {
         fit
@@ -1641,7 +1643,7 @@ fn run_write_model(
     );
 
     let model_str =
-        gsem_sem::write_model::write_model(&loadings, names, cutoff, fix_resid, bifactor);
+        gsem_sem::write_model::write_model(&loadings, names, cutoff, fix_resid, bifactor, false, false);
 
     std::fs::write(out, &model_str)
         .with_context(|| format!("failed to write {}", out.display()))?;
@@ -1895,6 +1897,7 @@ fn run_multi_snp_cmd(
         model: model_str,
         estimation: estimation.to_string(),
         max_iter: 500,
+        snp_var_se: None,
     };
 
     eprintln!("Running multi-SNP analysis with {n_snps} SNPs, {k} traits...");

@@ -88,9 +88,55 @@ pub fn snp_results_to_json(results: &[SnpResult], snps: &[MergedSnp]) -> String 
                     )
                 })
                 .collect();
+            let mut extra = String::new();
+            if let Some(q) = r.q_snp {
+                extra.push_str(&format!(",\"Q_chisq\":{:.4}", q));
+            }
+            if let Some(df) = r.q_snp_df {
+                extra.push_str(&format!(",\"Q_df\":{}", df));
+            }
+            if let Some(p) = r.q_snp_p {
+                extra.push_str(&format!(",\"Q_pval\":{:.6e}", p));
+            }
             format!(
-                "{{\"SNP\":\"{}\",\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]}}",
-                snp_name, r.chisq, r.chisq_df, r.converged, params.join(",")
+                "{{\"SNP\":\"{}\",\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]{}}}",
+                snp_name, r.chisq, r.chisq_df, r.converged, params.join(","), extra
+            )
+        })
+        .collect();
+    format!("[{}]", entries.join(","))
+}
+
+use gsem::io::twas_reader::TwasGene;
+
+pub fn twas_results_to_json(results: &[SnpResult], genes: &[TwasGene]) -> String {
+    let entries: Vec<String> = results
+        .iter()
+        .map(|r| {
+            let gene = &genes[r.snp_idx];
+            let params: Vec<String> = r
+                .params
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
+                        p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
+                    )
+                })
+                .collect();
+            let mut extra = String::new();
+            if let Some(q) = r.q_snp {
+                extra.push_str(&format!(",\"Q_chisq\":{:.4}", q));
+            }
+            if let Some(df) = r.q_snp_df {
+                extra.push_str(&format!(",\"Q_df\":{}", df));
+            }
+            if let Some(p) = r.q_snp_p {
+                extra.push_str(&format!(",\"Q_pval\":{:.6e}", p));
+            }
+            format!(
+                "{{\"Gene\":\"{}\",\"Panel\":\"{}\",\"HSQ\":{:.6},\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]{}}}",
+                gene.gene, gene.panel, gene.hsq, r.chisq, r.chisq_df, r.converged, params.join(","), extra
             )
         })
         .collect();

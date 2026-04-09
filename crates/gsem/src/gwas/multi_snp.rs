@@ -21,6 +21,8 @@ pub struct MultiSnpConfig {
     pub model: String,
     pub estimation: String,
     pub max_iter: usize,
+    /// Override for SNP variance SE (default: 0.0005).
+    pub snp_var_se: Option<f64>,
 }
 
 /// Result of multi-SNP analysis.
@@ -106,8 +108,8 @@ pub fn run_multi_snp(
         }
     }
 
-    // SNP variance elements: small fixed value
-    let snp_var_se = 0.0005_f64.powi(2);
+    // SNP variance elements: small fixed value (or user override)
+    let snp_var_se = config.snp_var_se.unwrap_or(0.0005_f64).powi(2);
     for i in 0..n_snps {
         // vech index for diagonal element (i, i) in column-major lower triangle:
         // For column j, offset = sum_{c=0..j-1} (total - c), then row offset = i - j.
@@ -172,9 +174,9 @@ pub fn run_multi_snp(
     let v_diag: Vec<f64> = (0..kstar_full).map(|i| v_full[(i, i)]).collect();
 
     let fit = if config.estimation.eq_ignore_ascii_case("ML") {
-        estimator::fit_ml(&mut model, &s_full, config.max_iter)
+        estimator::fit_ml(&mut model, &s_full, config.max_iter, None)
     } else {
-        estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter)
+        estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None)
     };
 
     // Sandwich SEs
@@ -379,6 +381,7 @@ mod tests {
             model: "F1 =~ NA*V1 + V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nF1 ~ SNP1 + SNP2\nSNP1 ~~ SNP1\nSNP2 ~~ SNP2".to_string(),
             estimation: "DWLS".to_string(),
             max_iter: 500,
+            snp_var_se: None,
         };
 
         let result = run_multi_snp(

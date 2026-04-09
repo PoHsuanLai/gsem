@@ -287,9 +287,9 @@ fn usermodel(
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
+        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
     } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
+        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
     };
 
     let params_json: Vec<String> = pt
@@ -581,7 +581,7 @@ fn write_model(
     let n_rows = loadings.len();
     let n_cols = if n_rows > 0 { loadings[0].len() } else { 0 };
     let mat = faer::Mat::from_fn(n_rows, n_cols, |i, j| loadings[i][j]);
-    gsem_sem::write_model::write_model(&mat, &names, cutoff, fix_resid, bifactor)
+    gsem_sem::write_model::write_model(&mat, &names, cutoff, fix_resid, bifactor, mustload, common)
 }
 
 /// Compute model-implied genetic correlation matrix.
@@ -1025,6 +1025,7 @@ fn multi_snp(
         model: model.to_string(),
         estimation: estimation.to_string(),
         max_iter,
+        snp_var_se: None,
     };
 
     let result = gsem::gwas::multi_snp::run_multi_snp(

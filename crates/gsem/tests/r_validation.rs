@@ -313,7 +313,7 @@ fn test_sem_estimates_match_r() {
         .collect();
     let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
 
-    let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000);
+    let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000, None);
     assert!(fit.converged, "SEM should converge");
 
     // Compare loading estimates (=~ params) — these should be close

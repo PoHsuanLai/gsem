@@ -23,6 +23,13 @@ pub struct PaResult {
 ///
 /// Port of GenomicSEM's `paLDSC()`.
 pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
+    parallel_analysis_p(s, v, n_sim, 0.95)
+}
+
+/// Perform parallel analysis with a custom percentile threshold.
+///
+/// `percentile`: quantile threshold for null distribution (e.g. 0.95 for 95th).
+pub fn parallel_analysis_p(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize, percentile: f64) -> PaResult {
     let k = s.nrows();
     let kstar = k * (k + 1) / 2;
 
@@ -72,8 +79,8 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
         }
     }
 
-    // Compute 95th percentile for each eigenvalue using partial sort
-    let percentile_idx = ((n_sim as f64) * 0.95) as usize;
+    // Compute percentile for each eigenvalue using partial sort
+    let percentile_idx = ((n_sim as f64) * percentile) as usize;
     let simulated_95: Vec<f64> = sim_eigenvalues
         .iter_mut()
         .map(|eigs| {

@@ -197,9 +197,9 @@ fn fit_user_model_on_stand(
     let v_diag: Vec<f64> = (0..kstar).map(|i| v_stand[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        estimator::fit_ml(&mut model, s_stand, 1000)
+        estimator::fit_ml(&mut model, s_stand, 1000, None)
     } else {
-        estimator::fit_dwls(&mut model, s_stand, &v_diag, 1000)
+        estimator::fit_dwls(&mut model, s_stand, &v_diag, 1000, None)
     };
 
     let w = Mat::from_fn(kstar, kstar, |i, j| {
