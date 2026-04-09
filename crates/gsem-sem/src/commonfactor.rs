@@ -133,3 +133,96 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
         implied_cov: sigma_hat,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use faer::Mat;
+
+    fn simple_s_and_v() -> (Mat<f64>, Mat<f64>) {
+        let s = faer::mat![[0.60, 0.42, 0.35], [0.42, 0.50, 0.30], [0.35, 0.30, 0.40],];
+        // V is kstar x kstar where kstar = k*(k+1)/2 = 6
+        let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
+        (s, v)
+    }
+
+    #[test]
+    fn test_commonfactor_dwls_converges() {
+        let (s, v) = simple_s_and_v();
+        let result = run_commonfactor(&s, &v, "DWLS").expect("DWLS should not error");
+        // Should have parameters: 3 loadings + 3 residual variances = 6
+        assert_eq!(result.parameters.len(), 6, "expected 6 free parameters");
+        // Check that estimates are finite
+        for p in &result.parameters {
+            assert!(
+                p.est.is_finite(),
+                "estimate for {} {} {} should be finite",
+                p.lhs,
+                p.op,
+                p.rhs
+            );
+            assert!(
+                p.se.is_finite(),
+                "SE for {} {} {} should be finite",
+                p.lhs,
+                p.op,
+                p.rhs
+            );
+        }
+        // Fit indices should be finite
+        assert!(result.fit.chisq.is_finite(), "chi-square should be finite");
+        assert!(result.fit.cfi.is_finite(), "CFI should be finite");
+    }
+
+    #[test]
+    fn test_commonfactor_ml_converges() {
+        let (s, v) = simple_s_and_v();
+        let result = run_commonfactor(&s, &v, "ML").expect("ML should not error");
+        assert_eq!(result.parameters.len(), 6, "expected 6 free parameters");
+        for p in &result.parameters {
+            assert!(p.est.is_finite(), "estimate should be finite");
+        }
+    }
+
+    #[test]
+    fn test_commonfactor_parameter_structure() {
+        let (s, v) = simple_s_and_v();
+        let result = run_commonfactor(&s, &v, "DWLS").unwrap();
+
+        // First 3 params should be loadings (F1 =~ V1, V2, V3)
+        let loadings: Vec<_> = result.parameters.iter().filter(|p| p.op == "=~").collect();
+        assert_eq!(loadings.len(), 3, "should have 3 loadings");
+
+        // Last 3 params should be residual variances (V1 ~~ V1, etc.)
+        let resid: Vec<_> = result.parameters.iter().filter(|p| p.op == "~~").collect();
+        assert_eq!(resid.len(), 3, "should have 3 residual variances");
+
+        // Loadings should be positive for this well-behaved covariance matrix
+        for l in &loadings {
+            assert!(
+                l.est > 0.0,
+                "loading {} should be positive, got {}",
+                l.rhs,
+                l.est
+            );
+        }
+
+        // Residual variances should be positive
+        for r in &resid {
+            assert!(
+                r.est > 0.0,
+                "residual variance {} should be positive, got {}",
+                r.rhs,
+                r.est
+            );
+        }
+    }
+
+    #[test]
+    fn test_commonfactor_implied_cov_shape() {
+        let (s, v) = simple_s_and_v();
+        let result = run_commonfactor(&s, &v, "DWLS").unwrap();
+        assert_eq!(result.implied_cov.nrows(), 3);
+        assert_eq!(result.implied_cov.ncols(), 3);
+    }
+}

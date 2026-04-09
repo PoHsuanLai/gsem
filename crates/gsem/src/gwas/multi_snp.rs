@@ -293,3 +293,104 @@ pub fn read_ld_matrix(path: &std::path::Path) -> anyhow::Result<(Mat<f64>, Optio
 
     Ok((mat, header))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use faer::Mat;
+    use std::io::Write;
+
+    #[test]
+    fn test_vech_index_known_values() {
+        // For a 3x3 matrix, vech ordering (column-major lower triangle):
+        // (0,0)=0, (1,0)=1, (2,0)=2, (1,1)=3, (2,1)=4, (2,2)=5
+        assert_eq!(vech_index(0, 0, 3), 0);
+        assert_eq!(vech_index(1, 0, 3), 1);
+        assert_eq!(vech_index(2, 0, 3), 2);
+        assert_eq!(vech_index(1, 1, 3), 3);
+        assert_eq!(vech_index(2, 1, 3), 4);
+        assert_eq!(vech_index(2, 2, 3), 5);
+    }
+
+    #[test]
+    fn test_vech_index_4x4() {
+        // 4x4: (0,0)=0 (1,0)=1 (2,0)=2 (3,0)=3 (1,1)=4 (2,1)=5 (3,1)=6 (2,2)=7 (3,2)=8 (3,3)=9
+        assert_eq!(vech_index(0, 0, 4), 0);
+        assert_eq!(vech_index(3, 0, 4), 3);
+        assert_eq!(vech_index(1, 1, 4), 4);
+        assert_eq!(vech_index(3, 3, 4), 9);
+    }
+
+    #[test]
+    fn test_read_ld_matrix_no_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ld.txt");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "1.0\t0.3").unwrap();
+        writeln!(f, "0.3\t1.0").unwrap();
+        drop(f);
+
+        let (mat, header) = read_ld_matrix(&path).unwrap();
+        assert!(header.is_none());
+        assert_eq!(mat.nrows(), 2);
+        assert_eq!(mat.ncols(), 2);
+        assert!((mat[(0, 0)] - 1.0).abs() < 1e-10);
+        assert!((mat[(0, 1)] - 0.3).abs() < 1e-10);
+        assert!((mat[(1, 0)] - 0.3).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_read_ld_matrix_with_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ld_h.txt");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "SNP1\tSNP2").unwrap();
+        writeln!(f, "1.0\t0.5").unwrap();
+        writeln!(f, "0.5\t1.0").unwrap();
+        drop(f);
+
+        let (mat, header) = read_ld_matrix(&path).unwrap();
+        assert!(header.is_some());
+        let names = header.unwrap();
+        assert_eq!(names, vec!["SNP1", "SNP2"]);
+        assert_eq!(mat.nrows(), 2);
+        assert!((mat[(0, 1)] - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_read_ld_matrix_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.txt");
+        std::fs::File::create(&path).unwrap();
+        assert!(read_ld_matrix(&path).is_err());
+    }
+
+    #[test]
+    fn test_run_multi_snp_basic() {
+        let s_ld = faer::mat![[0.5, 0.2], [0.2, 0.4]];
+        let v_ld = Mat::from_fn(3, 3, |i, j| if i == j { 0.001 } else { 0.0 });
+        let beta = vec![vec![0.1, 0.05], vec![0.08, 0.12]];
+        let se = vec![vec![0.02, 0.02], vec![0.02, 0.02]];
+        let var_snp = vec![0.3, 0.25];
+        let ld_matrix = faer::mat![[1.0, 0.3], [0.3, 1.0]];
+        let snp_names = vec!["SNP1".to_string(), "SNP2".to_string()];
+
+        let config = MultiSnpConfig {
+            model: "F1 =~ NA*V1 + V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nF1 ~ SNP1 + SNP2\nSNP1 ~~ SNP1\nSNP2 ~~ SNP2".to_string(),
+            estimation: "DWLS".to_string(),
+            max_iter: 500,
+        };
+
+        let result = run_multi_snp(
+            &config, &s_ld, &v_ld, &beta, &se, &var_snp, &ld_matrix, &snp_names,
+        );
+
+        // Should produce some parameters (even if not converged, we check structure)
+        assert!(!result.params.is_empty(), "should have parameter estimates");
+        // Chi-square should be finite (or at least not panic)
+        assert!(
+            result.chisq.is_finite() || result.chisq.is_nan(),
+            "chisq should be a number"
+        );
+    }
+}

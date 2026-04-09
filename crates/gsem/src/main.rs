@@ -1923,7 +1923,10 @@ fn run_simulate(covstruc: &Path, n_per_trait: &str, ld_dir: &Path, out: &Path) -
     output.push('\n');
     // Rows (one per SNP)
     for s_idx in 0..n_snps {
-        let vals: Vec<String> = z_all.iter().map(|z_t| format!("{:.6}", z_t[s_idx])).collect();
+        let vals: Vec<String> = z_all
+            .iter()
+            .map(|z_t| format!("{:.6}", z_t[s_idx]))
+            .collect();
         output.push_str(&vals.join("\t"));
         output.push('\n');
     }
