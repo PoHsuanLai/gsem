@@ -56,9 +56,12 @@ pub fn estimate_h2(
     // Jackknife for SE and pseudo-values
     let jk = jackknife::jackknife(&reg_result);
 
-    // Scale pseudo-values to h2 scale (multiply by M / N_bar)
     let scale = m / mean_n;
-    let pseudo_values: Vec<f64> = jk.pseudo_slope.iter().map(|p| p * scale).collect();
+
+    // Return RAW pseudo-values (unscaled regression slope).
+    // The V matrix normalization is applied later in lib.rs, matching R's approach:
+    //   v.out = cov(V.hold) / crossprod(N.vec * sqrt(n.blocks) / m)
+    let pseudo_values = jk.pseudo_slope;
 
     Ok(H2Result {
         h2,

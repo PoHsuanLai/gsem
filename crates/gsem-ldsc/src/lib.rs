@@ -183,8 +183,9 @@ pub fn ldsc(
         }
     }
 
-    // Construct V matrix from jackknife pseudo-values
-    let v = jackknife::construct_v_matrix(&all_pseudos, n_blocks);
+    // Construct V matrix from jackknife pseudo-values.
+    // n_vec contains per-element mean N (N_bar for diag, sqrt(N1*N2) for off-diag).
+    let v = jackknife::construct_v_matrix(&all_pseudos, n_blocks, &n_vec, merged.m);
 
     // Apply liability scale conversion if prevalences provided
     let mut result = LdscResult {

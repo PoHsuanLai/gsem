@@ -16,20 +16,14 @@ r_timings <- fromJSON(readLines("out_r/timings.json"))
 # Load Rust outputs (faer serde format: {nrows, ncols, data: [col-major]})
 rust_raw <- fromJSON(readLines("out_rust/ldsc.json"))
 
-faer_to_matrix <- function(obj) {
-  nr <- obj$nrows
-  nc <- obj$ncols
-  matrix(obj$data, nrow = nr, ncol = nc, byrow = FALSE)
-}
+S_r <- as.matrix(r_ldsc$S)
+S_rust <- as.matrix(rust_raw$s)
 
-S_r <- as.matrix(data.frame(r_ldsc$S))
-S_rust <- faer_to_matrix(rust_raw$s)
+V_r <- as.matrix(r_ldsc$V)
+V_rust <- as.matrix(rust_raw$v)
 
-V_r <- as.matrix(data.frame(r_ldsc$V))
-V_rust <- faer_to_matrix(rust_raw$v)
-
-I_r <- as.matrix(data.frame(r_ldsc$I))
-I_rust <- faer_to_matrix(rust_raw$i_mat)
+I_r <- as.matrix(r_ldsc$I)
+I_rust <- as.matrix(rust_raw$i_mat)
 
 # Compute max absolute differences
 s_diff <- max(abs(S_r - S_rust))

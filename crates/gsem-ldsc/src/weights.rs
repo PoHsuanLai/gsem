@@ -33,7 +33,8 @@ pub fn compute_h2_weights(chi2: &[f64], ld: &[f64], w_ld: &[f64], n_bar: f64, m:
         .iter()
         .zip(w_ld.iter())
         .map(|(&l, &wl)| {
-            let het_w = 1.0 / (2.0 * (1.0 + c * l).powi(2));
+            // R: merged$ld <- pmax(merged$L2, 1)  -- clamp LD to min 1
+            let het_w = 1.0 / (2.0 * (1.0 + c * l.max(1.0)).powi(2));
             let oc_w = 1.0 / wl.max(1.0);
             (het_w * oc_w).sqrt()
         })

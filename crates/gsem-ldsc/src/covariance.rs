@@ -63,9 +63,11 @@ pub fn estimate_gcov(
     // Jackknife
     let jk = jackknife::jackknife(&reg_result);
 
-    // Scale pseudo-values
     let scale = m / mean_n;
-    let pseudo_values: Vec<f64> = jk.pseudo_slope.iter().map(|p| p * scale).collect();
+
+    // Return RAW pseudo-values (unscaled regression slope).
+    // V matrix normalization is applied later in lib.rs.
+    let pseudo_values = jk.pseudo_slope;
 
     Ok(GcovResult {
         gcov,

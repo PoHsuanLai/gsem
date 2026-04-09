@@ -76,8 +76,19 @@ pub fn jackknife(result: &RegressionResult) -> JackknifeResult {
 
 /// Construct the V matrix (sampling covariance of vech(S)) from jackknife pseudo-values.
 ///
-/// `V[i,j] = cov(pseudo_i, pseudo_j) / n_blocks`
-pub fn construct_v_matrix(all_pseudos: &[Vec<f64>], n_blocks: usize) -> Mat<f64> {
+/// Matches R's formula (ldsc.R line 469):
+///   `v.out = cov(V.hold) / crossprod(N.vec * sqrt(n.blocks) / m)`
+///
+/// Where `cov()` divides by (n_blocks - 1), and `crossprod` gives:
+///   `scale[i,j] = N_i * N_j * n_blocks / m^2`
+///
+/// So: `V[i,j] = cov(pseudo_i, pseudo_j) / (N_i * N_j * n_blocks / m^2)`
+pub fn construct_v_matrix(
+    all_pseudos: &[Vec<f64>],
+    n_blocks: usize,
+    n_vec: &[f64],
+    m: f64,
+) -> Mat<f64> {
     let kstar = all_pseudos.len();
     let nb = n_blocks as f64;
 
@@ -87,8 +98,13 @@ pub fn construct_v_matrix(all_pseudos: &[Vec<f64>], n_blocks: usize) -> Mat<f64>
         .map(|p| p.iter().sum::<f64>() / nb)
         .collect();
 
-    // Compute covariance matrix
-    let denom = nb * (nb - 1.0);
+    // cov(V.hold): sum of (x-mean)(y-mean) / (n_blocks - 1)
+    let cov_denom = nb - 1.0;
+
+    // Scale factors: N_i * sqrt(n_blocks) / m for each vech element
+    // crossprod gives: scale[i,j] = (N_i * sqrt(nb)/m) * (N_j * sqrt(nb)/m)
+    //                              = N_i * N_j * n_blocks / m^2
+
     let mut v = Mat::zeros(kstar, kstar);
     for i in 0..kstar {
         for j in i..kstar {
@@ -97,9 +113,12 @@ pub fn construct_v_matrix(all_pseudos: &[Vec<f64>], n_blocks: usize) -> Mat<f64>
                 .zip(all_pseudos[j].iter())
                 .map(|(&a, &b)| (a - means[i]) * (b - means[j]))
                 .sum::<f64>()
-                / denom;
-            v[(i, j)] = cov;
-            v[(j, i)] = cov;
+                / cov_denom;
+
+            let scale = n_vec[i] * n_vec[j] * nb / (m * m);
+            let val = if scale > 1e-30 { cov / scale } else { 0.0 };
+            v[(i, j)] = val;
+            v[(j, i)] = val;
         }
     }
     v
@@ -116,7 +135,8 @@ mod tests {
             vec![2.0, 3.0, 4.0, 5.0, 6.0],
             vec![1.5, 2.5, 3.5, 4.5, 5.5],
         ];
-        let v = construct_v_matrix(&pseudos, 5);
+        let n_vec = vec![50000.0; 3];
+        let v = construct_v_matrix(&pseudos, 5, &n_vec, 1000000.0);
         assert_eq!(v.nrows(), 3);
         assert_eq!(v.ncols(), 3);
         for i in 0..3 {

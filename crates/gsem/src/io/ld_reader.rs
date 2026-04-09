@@ -60,7 +60,9 @@ pub fn read_ld_scores(ld_dir: &Path, wld_dir: &Path, n_chr: usize) -> Result<LdS
 
 /// Read a single chromosome LD score file (.l2.ldscore.gz).
 ///
-/// Expected columns: CHR, SNP, BP, L2
+/// Detects L2 column by header name. Common formats:
+/// - `CHR SNP BP L2` (4 columns)
+/// - `CHR SNP BP CM MAF L2` (6 columns)
 fn read_ld_score_file(path: &Path) -> Result<Vec<LdScoreRecord>> {
     let file =
         std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -68,7 +70,36 @@ fn read_ld_score_file(path: &Path) -> Result<Vec<LdScoreRecord>> {
     let mut records = Vec::new();
 
     let mut lines = reader.lines();
-    let _header = lines.next().context("empty LD score file")??;
+    let header = lines.next().context("empty LD score file")??;
+    let header_fields: Vec<&str> = if header.contains('\t') {
+        header.split('\t').collect()
+    } else {
+        header.split_whitespace().collect()
+    };
+
+    // Find column indices by name
+    let chr_idx = header_fields
+        .iter()
+        .position(|&h| h == "CHR")
+        .context("CHR column not found in LD score file")?;
+    let snp_idx = header_fields
+        .iter()
+        .position(|&h| h == "SNP")
+        .context("SNP column not found in LD score file")?;
+    let bp_idx = header_fields
+        .iter()
+        .position(|&h| h == "BP")
+        .context("BP column not found in LD score file")?;
+    let l2_idx = header_fields
+        .iter()
+        .position(|&h| h == "L2")
+        .context("L2 column not found in LD score file")?;
+
+    let min_cols = [chr_idx, snp_idx, bp_idx, l2_idx]
+        .into_iter()
+        .max()
+        .unwrap()
+        + 1;
 
     for line_result in lines {
         let line = line_result?;
@@ -81,14 +112,14 @@ fn read_ld_score_file(path: &Path) -> Result<Vec<LdScoreRecord>> {
             line.split_whitespace().collect()
         };
 
-        if fields.len() < 4 {
+        if fields.len() < min_cols {
             continue;
         }
 
-        let chr: u8 = fields[0].parse().context("invalid CHR")?;
-        let snp = fields[1].to_string();
-        let bp: u64 = fields[2].parse().context("invalid BP")?;
-        let l2: f64 = fields[3].parse().context("invalid L2")?;
+        let chr: u8 = fields[chr_idx].parse().context("invalid CHR")?;
+        let snp = fields[snp_idx].to_string();
+        let bp: u64 = fields[bp_idx].parse().context("invalid BP")?;
+        let l2: f64 = fields[l2_idx].parse().context("invalid L2")?;
 
         records.push(LdScoreRecord { chr, snp, bp, l2 });
     }
