@@ -1,6 +1,8 @@
 # gsem
 
 [![CI](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml/badge.svg)](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/gsem.svg)](https://crates.io/crates/gsem)
+[![PyPI](https://img.shields.io/pypi/v/genomicsem.svg)](https://pypi.org/project/genomicsem/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 Rust implementation of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) — multivariate LD Score Regression and Structural Equation Modeling on GWAS summary statistics.
