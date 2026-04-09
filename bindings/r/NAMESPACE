@@ -1,0 +1,5 @@
+useDynLib(gsemr, .registration = TRUE)
+
+export(ldsc)
+export(usermodel)
+export(munge)

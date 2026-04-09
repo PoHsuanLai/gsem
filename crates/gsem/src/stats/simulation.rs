@@ -1,5 +1,5 @@
 use faer::{Mat, Side};
-use rand::Rng;
+use rand::RngExt;
 use rand_distr::StandardNormal;
 
 /// Simulate GWAS summary statistics under a specified genetic model.

@@ -1,0 +1,17 @@
+Package: gsemr
+Title: Genomic Structural Equation Modeling (Rust Backend)
+Version: 0.1.0
+Authors@R: c(
+    person("Po-Hsuan", "Lai", role = c("aut", "cre"), email = "pohsuanlai0208@gmail.com"),
+    person("Andrew", "Grotzinger", role = "ctb", comment = "Original GenomicSEM R package")
+  )
+Description: A Rust-accelerated implementation of GenomicSEM for multivariate
+    LD Score Regression and Structural Equation Modeling on GWAS summary
+    statistics. Drop-in replacement for the R GenomicSEM package with
+    identical results and significantly faster execution.
+License: GPL-3
+Encoding: UTF-8
+SystemRequirements: Rust (>= 1.70), cargo
+Imports: jsonlite
+Suggests: bench, GenomicSEM
+RoxygenNote: 7.3.0

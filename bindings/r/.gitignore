@@ -1,0 +1,5 @@
+src/*.a
+src/*.o
+src/*.so
+src/*.dylib
+src/rust/target/

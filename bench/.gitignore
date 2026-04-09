@@ -1,7 +1,6 @@
 data/
-out_r/
-out_rust/
 results.md
 *.tar.bz2
+*.tar.gz
 *.bz2
 *.log

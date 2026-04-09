@@ -1,0 +1,39 @@
+#!/usr/bin/env sh
+# Build the Rust staticlib for gsemr.
+
+# Fail on error
+set -e
+
+RUST_SRC_DIR="src/rust"
+
+if [ ! -f "$RUST_SRC_DIR/Cargo.toml" ]; then
+    echo "ERROR: Cannot find $RUST_SRC_DIR/Cargo.toml"
+    exit 1
+fi
+
+# Check for cargo
+if ! command -v cargo > /dev/null 2>&1; then
+    echo "ERROR: cargo not found. Please install Rust: https://rustup.rs"
+    exit 1
+fi
+
+echo "Building Rust library..."
+cd "$RUST_SRC_DIR"
+cargo build --release
+cd ../..
+
+# Copy the static library
+RUST_TARGET_DIR="src/rust/target/release"
+if [ -f "$RUST_TARGET_DIR/libgsemr.a" ]; then
+    cp "$RUST_TARGET_DIR/libgsemr.a" src/
+    echo "Copied libgsemr.a to src/"
+elif [ -f "$RUST_TARGET_DIR/libgsemr.dylib" ]; then
+    cp "$RUST_TARGET_DIR/libgsemr.dylib" src/
+    echo "Copied libgsemr.dylib to src/"
+else
+    echo "ERROR: Could not find compiled Rust library"
+    ls -la "$RUST_TARGET_DIR"/libgsemr* 2>/dev/null || true
+    exit 1
+fi
+
+echo "Rust build complete."

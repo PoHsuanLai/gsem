@@ -1,6 +1,6 @@
 use faer::{Mat, Side};
 use gsem_matrix::vech;
-use rand::Rng;
+use rand::RngExt;
 use rand_distr::StandardNormal;
 use rayon::prelude::*;
 

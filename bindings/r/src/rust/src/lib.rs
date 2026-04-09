@@ -1,26 +1,18 @@
-//! Extendr-exported functions for R.
-//!
-//! Each function matches the original GenomicSEM R API as closely as possible.
-
 use extendr_api::prelude::*;
 
-use crate::conversions;
+mod conversions;
 
-/// Run LDSC via JSON interchange.
+/// Run LDSC pipeline.
 ///
-/// Takes file paths and parameters, runs the full LDSC pipeline in Rust,
-/// and returns the result as a JSON string which the R wrapper converts
-/// to a list with $S, $V, $I, $N, $m.
-///
-/// # Arguments
-/// * `trait_files` - Character vector of .sumstats.gz file paths
-/// * `sample_prev` - Numeric vector of sample prevalences (NA for continuous)
-/// * `pop_prev` - Numeric vector of population prevalences (NA for continuous)
-/// * `ld_dir` - Path to LD score directory
-/// * `wld_dir` - Path to weight LD score directory (or same as ld_dir)
-/// * `n_blocks` - Number of jackknife blocks (default 200)
+/// @param trait_files Character vector of .sumstats.gz file paths
+/// @param sample_prev Numeric vector of sample prevalences (NA for continuous)
+/// @param pop_prev Numeric vector of population prevalences (NA for continuous)
+/// @param ld_dir Path to LD score directory
+/// @param wld_dir Path to weight LD score directory (or same as ld_dir)
+/// @param n_blocks Number of jackknife blocks (default 200)
+/// @return JSON string with S, V, I matrices, N vector, and m
 #[extendr]
-fn ldsc_r(
+fn ldsc_rust(
     trait_files: Vec<String>,
     sample_prev: Vec<Rfloat>,
     pop_prev: Vec<Rfloat>,
@@ -29,9 +21,7 @@ fn ldsc_r(
     n_blocks: i32,
 ) -> String {
     let n_blocks = n_blocks as usize;
-    let k = trait_files.len();
 
-    // Parse prevalences (NA -> None)
     let sp: Vec<Option<f64>> = sample_prev
         .iter()
         .map(|v| if v.is_na() { None } else { Some(v.inner()) })
@@ -41,7 +31,6 @@ fn ldsc_r(
         .map(|v| if v.is_na() { None } else { Some(v.inner()) })
         .collect();
 
-    // Read trait files
     let mut trait_data = Vec::new();
     for path in &trait_files {
         let path = std::path::Path::new(path);
@@ -59,10 +48,10 @@ fn ldsc_r(
         }
     }
 
-    // Read LD scores
     let ld_path = std::path::Path::new(ld_dir);
     let wld_path = std::path::Path::new(wld_dir);
-    let ld_data = match gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, 22) {
+    let chromosomes: Vec<usize> = (1..=22).collect();
+    let ld_data = match gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes) {
         Ok(d) => d,
         Err(e) => return format!("{{\"error\": \"{e}\"}}"),
     };
@@ -92,9 +81,12 @@ fn ldsc_r(
 
 /// Fit a user-specified SEM model.
 ///
-/// Takes LDSC result as JSON, fits the model, and returns results as JSON.
+/// @param covstruc_json LDSC result as JSON string
+/// @param model lavaan-style model syntax
+/// @param estimation Estimation method: "DWLS" or "ML"
+/// @return JSON string with converged, objective, and parameter estimates
 #[extendr]
-fn usermodel_r(covstruc_json: &str, model: &str, estimation: &str) -> String {
+fn usermodel_rust(covstruc_json: &str, model: &str, estimation: &str) -> String {
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
@@ -118,7 +110,6 @@ fn usermodel_r(covstruc_json: &str, model: &str, estimation: &str) -> String {
         gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
     };
 
-    // Build JSON result
     let params_json: Vec<String> = pt
         .rows
         .iter()
@@ -143,9 +134,15 @@ fn usermodel_r(covstruc_json: &str, model: &str, estimation: &str) -> String {
 
 /// Munge GWAS summary statistics files.
 ///
-/// Returns a character vector of output file paths.
+/// @param files Character vector of GWAS file paths
+/// @param hm3 Path to HapMap3 SNP list
+/// @param trait_names Character vector of trait names
+/// @param info_filter INFO score filter threshold
+/// @param maf_filter MAF filter threshold
+/// @param out_dir Output directory
+/// @return Character vector of output file paths
 #[extendr]
-fn munge_r(
+fn munge_rust(
     files: Vec<String>,
     hm3: &str,
     trait_names: Vec<String>,
@@ -186,10 +183,9 @@ fn munge_r(
     output_paths
 }
 
-// Generate extendr module and metadata
 extendr_module! {
     mod gsemr;
-    fn ldsc_r;
-    fn usermodel_r;
-    fn munge_r;
+    fn ldsc_rust;
+    fn usermodel_rust;
+    fn munge_rust;
 }

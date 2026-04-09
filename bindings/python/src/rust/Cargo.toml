@@ -1,0 +1,22 @@
+[package]
+name = "genomicsem"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+name = "genomicsem"
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.28"
+gsem = { path = "../../../../crates/gsem" }
+gsem-matrix = { path = "../../../../crates/gsem-matrix" }
+gsem-ldsc = { path = "../../../../crates/gsem-ldsc" }
+gsem-sem = { path = "../../../../crates/gsem-sem" }
+faer = "0.24"
+serde_json = "1"
+log = "0.4"

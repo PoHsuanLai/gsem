@@ -1,86 +1,67 @@
 #!/usr/bin/env Rscript
-# Compare R and Rust LDSC outputs and generate results.md
-
-library(jsonlite)
+# Standalone correctness validation: R GenomicSEM vs gsemr (Rust).
+# Runs both pipelines once and compares S, V, I matrices.
+#
+# Usage: cd bench && Rscript compare_outputs.R
 
 args <- commandArgs(trailingOnly = FALSE)
 script_dir <- dirname(sub("--file=", "", args[grep("--file=", args)]))[1]
 if (!is.na(script_dir) && nzchar(script_dir)) setwd(script_dir)
 
-cat("=== Comparing R vs Rust outputs ===\n\n")
+source("setup_data.R")
+ensure_bench_data(bench_dir = ".")
 
-# Load R outputs
-r_ldsc <- fromJSON(readLines("out_r/ldsc_result.json"))
-r_timings <- fromJSON(readLines("out_r/timings.json"))
+library(jsonlite)
+library(GenomicSEM)
 
-# Load Rust outputs (faer serde format: {nrows, ncols, data: [col-major]})
-rust_raw <- fromJSON(readLines("out_rust/ldsc.json"))
+if (!requireNamespace("gsemr", quietly = TRUE)) {
+  stop("gsemr package not installed. Install with: R CMD INSTALL ../crates/gsem-r/")
+}
+library(gsemr)
 
-S_r <- as.matrix(r_ldsc$S)
-S_rust <- as.matrix(rust_raw$s)
+traits <- paste0("data/iter1GWAS", 1:3, ".sumstats.gz")
+ld     <- "data/eur_w_ld_chr/"
+trait_names <- c("V1", "V2", "V3")
 
-V_r <- as.matrix(r_ldsc$V)
-V_rust <- as.matrix(rust_raw$v)
+cat("=== Running R GenomicSEM LDSC ===\n")
+r_result <- ldsc(
+  traits = traits,
+  sample.prev = c(NA, NA, NA),
+  population.prev = c(NA, NA, NA),
+  ld = ld, wld = ld,
+  trait.names = trait_names,
+  n.blocks = 200
+)
 
-I_r <- as.matrix(r_ldsc$I)
-I_rust <- as.matrix(rust_raw$i_mat)
+cat("\n=== Running gsemr (Rust) LDSC ===\n")
+rust_json <- ldsc_r(traits, c(NA, NA, NA), c(NA, NA, NA), ld, ld, 200L)
+rust_result <- fromJSON(rust_json)
 
-# Compute max absolute differences
+# Extract matrices
+S_r <- as.matrix(r_result$S)
+V_r <- as.matrix(r_result$V)
+I_r <- as.matrix(r_result$I)
+
+S_rust <- as.matrix(rust_result$s)
+V_rust <- as.matrix(rust_result$v)
+I_rust <- as.matrix(rust_result$i_mat)
+
+# Compare
 s_diff <- max(abs(S_r - S_rust))
 v_diff <- max(abs(V_r - V_rust))
 i_diff <- max(abs(I_r - I_rust))
 
+cat("\n=== Comparison ===\n")
 cat(sprintf("S matrix max diff: %.6e\n", s_diff))
 cat(sprintf("V matrix max diff: %.6e\n", v_diff))
 cat(sprintf("I matrix max diff: %.6e\n", i_diff))
 
-cat("\nS (R):\n")
-print(round(S_r, 4))
-cat("\nS (Rust):\n")
-print(round(S_rust, 4))
-cat("\nI (R):\n")
-print(round(I_r, 4))
-cat("\nI (Rust):\n")
-print(round(I_rust, 4))
+cat("\nS (R):\n"); print(round(S_r, 4))
+cat("\nS (Rust):\n"); print(round(S_rust, 4))
+cat("\nI (R):\n"); print(round(I_r, 4))
+cat("\nI (Rust):\n"); print(round(I_rust, 4))
 
-# Load timings
-rust_timings <- fromJSON(readLines("out_rust/timings.json"))
-
-# Generate results.md
-lines <- c(
-  "# Benchmark Results: Rust vs R GenomicSEM",
-  "",
-  sprintf("Data: 3 simulated traits, ~1.29M SNPs, N=50,000"),
-  "",
-  "## Timing",
-  "",
-  "| Step | R (s) | Rust (s) | Speedup |",
-  "|------|-------|----------|---------|",
-  sprintf("| LDSC | %.2f | %.2f | **%.1fx** |",
-    r_timings$ldsc, rust_timings$ldsc,
-    r_timings$ldsc / rust_timings$ldsc),
-  sprintf("| SEM  | %.2f | %.2f | **%.1fx** |",
-    r_timings$sem, rust_timings$sem,
-    r_timings$sem / rust_timings$sem),
-  "",
-  "## Numerical Accuracy (max element-wise absolute diff)",
-  "",
-  "| Matrix | Max Diff |",
-  "|--------|---------|",
-  sprintf("| S (genetic cov) | %.2e |", s_diff),
-  sprintf("| V (sampling cov) | %.2e |", v_diff),
-  sprintf("| I (intercepts) | %.2e |", i_diff),
-  "",
-  "## S Matrix (R)",
-  "```",
-  capture.output(print(round(S_r, 4))),
-  "```",
-  "",
-  "## S Matrix (Rust)",
-  "```",
-  capture.output(print(round(S_rust, 4))),
-  "```"
-)
-
-writeLines(lines, "results.md")
-cat("\nResults written to bench/results.md\n")
+# Thresholds
+pass <- s_diff < 1e-4 && v_diff < 1e-3 && i_diff < 1e-4
+cat(sprintf("\nOverall: %s\n", if (pass) "PASS" else "FAIL"))
+if (!pass) quit(status = 1)

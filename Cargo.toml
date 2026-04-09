@@ -4,8 +4,6 @@ members = [
     "crates/gsem-ldsc",
     "crates/gsem-sem",
     "crates/gsem",
-    "crates/gsem-r",
-    "crates/gsem-py",
 ]
 resolver = "2"
 
@@ -17,7 +15,7 @@ repository = "https://github.com/PoHsuanLai/gsem"
 
 [workspace.dependencies]
 # Core math
-faer = "0.22"
+faer = "0.24"
 statrs = "0.18"
 
 # Parallelism
@@ -43,18 +41,13 @@ flate2 = "1.1"
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 
-# FFI bindings
-extendr-api = "0.7"
-pyo3 = { version = "0.23", features = ["extension-module"] }
-numpy = "0.23"
-
 # Random
-rand = "0.9"
-rand_distr = "0.5"
+rand = "0.10"
+rand_distr = "0.6"
 
 # Testing & Benchmarking
 approx = "0.5"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 # Internal crates
 gsem-matrix = { path = "crates/gsem-matrix" }

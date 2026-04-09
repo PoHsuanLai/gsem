@@ -1,14 +1,10 @@
-//! PyO3-exported classes and functions for Python.
-
 use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
-use crate::conversions;
+mod conversions;
 
 /// Python wrapper for LDSC result.
-///
-/// Provides `.S`, `.V`, `.I` as NumPy arrays, plus `.to_json()` / `.from_json()`.
 #[pyclass(name = "LdscResult")]
 struct PyLdscResult {
     json: String,
@@ -68,16 +64,16 @@ impl PyLdscResult {
     /// Deserialize from JSON string.
     #[staticmethod]
     fn from_json(json: &str) -> PyResult<Self> {
-        let result = conversions::python_dict_to_ldsc(json)
+        let result = conversions::json_to_ldsc(json)
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid JSON"))?;
         Ok(ldsc_result_to_py(&result))
     }
 }
 
 fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult) -> PyLdscResult {
-    let (s_data, s_rows, s_cols) = conversions::mat_to_numpy_flat(&result.s);
-    let (v_data, v_rows, v_cols) = conversions::mat_to_numpy_flat(&result.v);
-    let (i_data, i_rows, i_cols) = conversions::mat_to_numpy_flat(&result.i_mat);
+    let (s_data, s_rows, s_cols) = conversions::mat_to_flat(&result.s);
+    let (v_data, v_rows, v_cols) = conversions::mat_to_flat(&result.v);
+    let (i_data, i_rows, i_cols) = conversions::mat_to_flat(&result.i_mat);
 
     PyLdscResult {
         json: result.to_json_string().unwrap_or_default(),
@@ -93,17 +89,6 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult) -> PyLdscResult {
 }
 
 /// Run multivariate LDSC.
-///
-/// Args:
-///     traits: List of .sumstats.gz file paths
-///     sample_prev: List of sample prevalences (None for continuous)
-///     pop_prev: List of population prevalences (None for continuous)
-///     ld: Path to LD score directory
-///     wld: Path to weight LD score directory
-///     n_blocks: Number of jackknife blocks (default 200)
-///
-/// Returns:
-///     LdscResult with .S, .V, .I_mat, .n, .m_total properties
 #[pyfunction]
 #[pyo3(signature = (traits, sample_prev, pop_prev, ld, wld="", n_blocks=200))]
 fn ldsc(
@@ -116,7 +101,6 @@ fn ldsc(
 ) -> PyResult<PyLdscResult> {
     let wld_dir = if wld.is_empty() { ld } else { wld };
 
-    // Read trait files
     let mut trait_data = Vec::new();
     for path_str in &traits {
         let path = std::path::Path::new(path_str);
@@ -131,10 +115,10 @@ fn ldsc(
         });
     }
 
-    // Read LD scores
     let ld_path = std::path::Path::new(ld);
     let wld_path = std::path::Path::new(wld_dir);
-    let ld_data = gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, 22)
+    let chromosomes: Vec<usize> = (1..=22).collect();
+    let ld_data = gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
     let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
@@ -161,18 +145,10 @@ fn ldsc(
 }
 
 /// Fit a user-specified SEM model.
-///
-/// Args:
-///     covstruc: LdscResult object or JSON string
-///     model: Lavaan-style model syntax
-///     estimation: "DWLS" or "ML"
-///
-/// Returns:
-///     Dict with "converged", "objective", "parameters" keys
 #[pyfunction]
 #[pyo3(signature = (covstruc_json, model, estimation="DWLS"))]
 fn usermodel(covstruc_json: &str, model: &str, estimation: &str) -> PyResult<String> {
-    let ldsc_result = conversions::python_dict_to_ldsc(covstruc_json)
+    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
 
     let pt = gsem_sem::syntax::parse_model(model, false)
@@ -214,8 +190,6 @@ fn usermodel(covstruc_json: &str, model: &str, estimation: &str) -> PyResult<Str
 }
 
 /// Munge GWAS summary statistics files.
-///
-/// Returns list of output file paths.
 #[pyfunction]
 #[pyo3(signature = (files, hm3, trait_names, info_filter=0.9, maf_filter=0.01, out_dir="."))]
 fn munge(
@@ -234,6 +208,7 @@ fn munge(
         info_filter,
         maf_filter,
         n_override: None,
+        column_overrides: None,
     };
 
     let mut output_paths = Vec::new();
