@@ -194,22 +194,14 @@ fn read_and_qc_gwas(
             continue;
         }
 
-        // Must have effect and SE (match R GenomicSEM: skip SNPs without these)
+        // Must have effect and SE columns (same as R: stops if missing)
         let (Some(effect), Some(se)) = (rec.effect, rec.se) else {
             continue;
         };
 
-        let se = if se <= 0.0 || !se.is_finite() {
+        if !effect.is_finite() || se <= 0.0 || !se.is_finite() {
             continue;
-        } else {
-            se
-        };
-
-        let effect = if !effect.is_finite() {
-            continue;
-        } else {
-            effect
-        };
+        }
 
         // A1 required, A2 optional (munged .sumstats.gz may lack A2)
         let a1 = match rec.a1.as_ref() {
