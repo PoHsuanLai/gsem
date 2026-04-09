@@ -1,11 +1,10 @@
 //! Conversion utilities between Python/NumPy and Rust types.
 //!
-//! When PyO3+numpy are enabled, these convert:
-//! - `faer::Mat<f64>` <-> numpy.ndarray
-//! - LdscResult <-> Python LdscResult class with NumPy arrays
-//! - SemResult -> pandas DataFrame
+//! - `faer::Mat<f64>` <-> flat row-major Vec (for NumPy array construction)
+//! - `LdscResult` <-> JSON (matrices as row-major 2D arrays)
 //!
-//! For now, provides the JSON-based interchange layer.
+//! The PyO3-exported functions in `py_exports.rs` use these for
+//! converting between Rust and Python data structures.
 
 use faer::Mat;
 use gsem_ldsc::LdscResult;

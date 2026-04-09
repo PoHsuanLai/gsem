@@ -1,0 +1,6 @@
+data/
+out_r/
+out_rust/
+results.md
+*.tar.bz2
+*.bz2

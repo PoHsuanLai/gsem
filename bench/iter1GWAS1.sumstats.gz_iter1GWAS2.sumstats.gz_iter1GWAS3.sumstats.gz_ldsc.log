@@ -1,0 +1,78 @@
+Multivariate ld-score regression of 3 traits (data/iter1GWAS1.sumstats.gz data/iter1GWAS2.sumstats.gz data/iter1GWAS3.sumstats.gz) began at: 2026-04-09 06:07:46.394349
+Reading in LD scores
+Read in summary statistics [1/3] from: data/iter1GWAS1.sumstats.gz
+Out of 1290028 SNPs, 1290028 remain after merging with LD-score files
+Removing 1 SNPs with Chi^2 > 80; 1290027 remain
+Read in summary statistics [2/3] from: data/iter1GWAS2.sumstats.gz
+Out of 1290028 SNPs, 1290028 remain after merging with LD-score files
+Removing 0 SNPs with Chi^2 > 80; 1290028 remain
+Read in summary statistics [3/3] from: data/iter1GWAS3.sumstats.gz
+Out of 1290028 SNPs, 1290028 remain after merging with LD-score files
+Removing 0 SNPs with Chi^2 > 80; 1290028 remain
+          
+Estimating heritability [1/6] for: data/iter1GWAS1.sumstats.gz
+Heritability Results for trait: data/iter1GWAS1.sumstats.gz
+Mean Chi^2 across remaining SNPs: 1.6118
+Lambda GC: 1.5434
+Intercept: 1.032 (0.0048)
+Ratio: 0.0524 (0.0078)
+Total Observed Scale h2: 0.5863 (0.0063)
+h2 Z: 93.3
+     
+Calculating genetic covariance [2/6] for traits: data/iter1GWAS1.sumstats.gz and data/iter1GWAS2.sumstats.gz
+1290027 SNPs remain after merging data/iter1GWAS1.sumstats.gz and data/iter1GWAS2.sumstats.gz summary statistics
+Results for genetic covariance between: data/iter1GWAS1.sumstats.gz and data/iter1GWAS2.sumstats.gz
+Mean Z*Z: 0.7139
+Cross trait Intercept: 0.3003 (0.004)
+Total Observed Scale Genetic Covariance (g_cov): 0.4214 (0.005)
+g_cov Z: 84.3
+g_cov P-value: 0
+     
+Calculating genetic covariance [3/6] for traits: data/iter1GWAS1.sumstats.gz and data/iter1GWAS3.sumstats.gz
+1290027 SNPs remain after merging data/iter1GWAS1.sumstats.gz and data/iter1GWAS3.sumstats.gz summary statistics
+Results for genetic covariance between: data/iter1GWAS1.sumstats.gz and data/iter1GWAS3.sumstats.gz
+Mean Z*Z: 0.5447
+Cross trait Intercept: 0.2073 (0.003)
+Total Observed Scale Genetic Covariance (g_cov): 0.3421 (0.0037)
+g_cov Z: 93.1
+g_cov P-value: 0
+          
+Estimating heritability [4/6] for: data/iter1GWAS2.sumstats.gz
+Heritability Results for trait: data/iter1GWAS2.sumstats.gz
+Mean Chi^2 across remaining SNPs: 1.5228
+Lambda GC: 1.4732
+Intercept: 1.0291 (0.0046)
+Ratio: 0.0557 (0.0087)
+Total Observed Scale h2: 0.5035 (0.0056)
+h2 Z: 90.6
+     
+Calculating genetic covariance [5/6] for traits: data/iter1GWAS2.sumstats.gz and data/iter1GWAS3.sumstats.gz
+1290028 SNPs remain after merging data/iter1GWAS2.sumstats.gz and data/iter1GWAS3.sumstats.gz summary statistics
+Results for genetic covariance between: data/iter1GWAS2.sumstats.gz and data/iter1GWAS3.sumstats.gz
+Mean Z*Z: 0.5455
+Cross trait Intercept: 0.2515 (0.003)
+Total Observed Scale Genetic Covariance (g_cov): 0.2999 (0.0036)
+g_cov Z: 84.2
+g_cov P-value: 0
+          
+Estimating heritability [6/6] for: data/iter1GWAS3.sumstats.gz
+Heritability Results for trait: data/iter1GWAS3.sumstats.gz
+Mean Chi^2 across remaining SNPs: 1.4021
+Lambda GC: 1.3678
+Intercept: 1.0045 (0.0043)
+Ratio: 0.0112 (0.0107)
+Total Observed Scale h2: 0.4057 (0.0048)
+h2 Z: 83.8
+     
+      
+Genetic Correlation Results
+Genetic Correlation between V1 and V2: 0.7756 (0.0092)
+     
+Genetic Correlation between V1 and V3: 0.7014 (0.0075)
+     
+Genetic Correlation between V2 and V3: 0.6635 (0.0079)
+     
+     
+LDSC finished running at 2026-04-09 06:07:58.757249
+Running LDSC for all files took 0 minutes and 12 seconds
+     

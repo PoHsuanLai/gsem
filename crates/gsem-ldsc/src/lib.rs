@@ -28,15 +28,40 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LdscResult {
     /// Genetic covariance matrix (k×k)
+    #[serde(serialize_with = "ser_mat", deserialize_with = "de_mat")]
     pub s: Mat<f64>,
     /// Sampling covariance of vech(S) (kstar×kstar where kstar=k*(k+1)/2)
+    #[serde(serialize_with = "ser_mat", deserialize_with = "de_mat")]
     pub v: Mat<f64>,
     /// LDSC intercept matrix (k×k)
+    #[serde(serialize_with = "ser_mat", deserialize_with = "de_mat")]
     pub i_mat: Mat<f64>,
     /// Sample sizes per vech element (kstar×1)
     pub n_vec: Vec<f64>,
     /// Total number of SNPs used
     pub m: f64,
+}
+
+/// Serialize a `Mat<f64>` as a row-major 2D array: `[[1,2],[3,4]]`.
+fn ser_mat<S: serde::Serializer>(mat: &Mat<f64>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+    let mut seq = s.serialize_seq(Some(mat.nrows()))?;
+    for i in 0..mat.nrows() {
+        let row: Vec<f64> = (0..mat.ncols()).map(|j| mat[(i, j)]).collect();
+        seq.serialize_element(&row)?;
+    }
+    seq.end()
+}
+
+/// Deserialize a `Mat<f64>` from a row-major 2D array: `[[1,2],[3,4]]`.
+fn de_mat<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Mat<f64>, D::Error> {
+    let rows: Vec<Vec<f64>> = Deserialize::deserialize(d)?;
+    if rows.is_empty() {
+        return Ok(Mat::zeros(0, 0));
+    }
+    let nrows = rows.len();
+    let ncols = rows[0].len();
+    Ok(Mat::from_fn(nrows, ncols, |i, j| rows[i][j]))
 }
 
 /// Input data for a single trait's summary statistics.

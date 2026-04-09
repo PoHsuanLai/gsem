@@ -152,19 +152,17 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
         .iter()
         .position(|h| h == "Z")
         .context("Z column not found in sumstats")?;
-    let a1_idx = upper
-        .iter()
-        .position(|h| h == "A1")
-        .context("A1 column not found in sumstats")?;
-    let a2_idx = upper
-        .iter()
-        .position(|h| h == "A2")
-        .context("A2 column not found in sumstats")?;
+    let a1_idx = upper.iter().position(|h| h == "A1");
+    let a2_idx = upper.iter().position(|h| h == "A2");
 
-    let max_idx = *[snp_idx, n_idx, z_idx, a1_idx, a2_idx]
-        .iter()
-        .max()
-        .unwrap();
+    let mut required = vec![snp_idx, n_idx, z_idx];
+    if let Some(i) = a1_idx {
+        required.push(i);
+    }
+    if let Some(i) = a2_idx {
+        required.push(i);
+    }
+    let max_idx = *required.iter().max().unwrap();
 
     let mut records = Vec::new();
     for line_result in lines {
@@ -182,8 +180,8 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
             snp: fields[snp_idx].to_owned(),
             n,
             z,
-            a1: fields[a1_idx].to_owned(),
-            a2: fields[a2_idx].to_owned(),
+            a1: a1_idx.map(|i| fields[i].to_owned()).unwrap_or_default(),
+            a2: a2_idx.map(|i| fields[i].to_owned()).unwrap_or_default(),
         });
     }
 

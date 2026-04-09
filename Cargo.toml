@@ -17,7 +17,7 @@ repository = "https://github.com/PoHsuanLai/gsem"
 
 [workspace.dependencies]
 # Core math
-faer = { version = "0.22", features = ["serde"] }
+faer = "0.22"
 statrs = "0.18"
 
 # Parallelism

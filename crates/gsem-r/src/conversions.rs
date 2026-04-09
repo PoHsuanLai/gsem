@@ -1,13 +1,11 @@
 //! Conversion utilities between R data structures and Rust types.
 //!
-//! These functions handle the translation layer:
 //! - R matrix (column-major numeric) <-> `faer::Mat<f64>`
-//! - R list with $S, $V, $I, $N, $m <-> `gsem_ldsc::LdscResult`
-//! - Rust `SemResult` -> R list with $results and $modelfit
-//! - Rust `Vec<SnpResult>` -> R data.frame
+//! - `LdscResult` <-> JSON (matrices serialized as row-major 2D arrays)
+//! - `SemResult` -> tabular format for R data.frame
 //!
-//! When extendr is enabled, these use extendr_api types (Robj, List, RMatrix).
-//! For now, they work with the JSON serialization layer.
+//! The extendr-exported functions in `r_exports.rs` use JSON as the
+//! interchange format between R and Rust.
 
 use faer::Mat;
 use gsem_ldsc::LdscResult;
