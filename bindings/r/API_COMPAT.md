@@ -29,7 +29,7 @@ All core parameters for every function work identically to R GenomicSEM, includi
 - **rgmodel**: LDSCoutput, model, std.lv, estimation, sub
 - **hdl**: traits, sample.prev, population.prev, LD.path, Nref, method
 - **s_ldsc**: traits, sample.prev, population.prev, ld, wld, frq, trait.names, n.blocks, exclude_cont, ldsc.log
-- **enrich**: s_baseline, s_annot, v_annot, model, params, fix, std.lv, toler, fixparam
+- **enrich**: s_baseline, s_annot, v_annot, model, params, fix, std.lv, toler, fixparam, tau
 - **simLDSC**: covmat, N, ld, rPheno, int, N_overlap
 - **multiSNP**: covstruc, model, beta, se, var_snp, ld_matrix, snp_names, SNPSE
 - **multiGene**: covstruc, model, beta, se, var_gene, ld_matrix, gene_names, GeneSE, Genelist
@@ -44,5 +44,4 @@ These parameters are accepted but have no effect. An informational message is pr
 - `userGWAS(MPI=TRUE)` and `commonfactorGWAS(MPI=TRUE)` — MPI distributed computing. Not applicable to the Rust backend which uses shared-memory parallelism via rayon.
 
 ### Enrichment options
-- `enrich(rm_flank)` — Flanking region removal is not yet implemented.
-- `enrich(tau)` — Tau parameterization is not yet implemented.
+- `enrich(rm_flank)` — Flanking region removal requires SNP position data not currently exposed from stratified LDSC output.

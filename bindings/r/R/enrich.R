@@ -48,6 +48,20 @@ enrich <- function(s_covstruc, model = "", params = NULL, fix = "regressions",
   # SEM-based enrichment: fit model per annotation and compare to baseline
   n_annot <- length(s_covstruc$S_annot)
   annotation_names <- as.character(s_covstruc$annotation_names)
+  m_annot <- as.numeric(s_covstruc$m_annot)
+
+  # Tau parameterization: convert S_annot to per-SNP contribution
+  # tau = S_annot / m_annot (removes M scaling, gives per-SNP genetic covariance)
+  s_annot_use <- s_covstruc$S_annot
+  if (tau) {
+    s_annot_use <- lapply(seq_len(n_annot), function(a) {
+      if (m_annot[a] > 0) {
+        as.matrix(s_covstruc$S_annot[[a]]) / m_annot[a]
+      } else {
+        as.matrix(s_covstruc$S_annot[[a]])
+      }
+    })
+  }
 
   # Fit baseline model
   baseline_covstruc <- list(
@@ -93,11 +107,11 @@ enrich <- function(s_covstruc, model = "", params = NULL, fix = "regressions",
   results_list <- list()
   for (a in seq_len(n_annot)) {
     annot_covstruc <- list(
-      S = as.matrix(s_covstruc$S_annot[[a]]),
+      S = as.matrix(s_annot_use[[a]]),
       V = as.matrix(s_covstruc$V_annot[[a]]),
-      I = diag(nrow(as.matrix(s_covstruc$S_annot[[a]]))),
+      I = diag(nrow(as.matrix(s_annot_use[[a]]))),
       N = NULL,
-      m = s_covstruc$m_annot[a]
+      m = if (tau) 1.0 else s_covstruc$m_annot[a]
     )
 
     annot_fit <- tryCatch(
