@@ -43,8 +43,18 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
   # Convert SNPSE: FALSE means auto (pass NaN), numeric means override
   snp_se_val <- if (is.logical(SNPSE) && !SNPSE) NaN else as.double(SNPSE)
 
+  # Accept both data frame (R-compatible) and file path
+  if (is.data.frame(SNPs) || is.matrix(SNPs)) {
+    tmp <- tempfile(fileext = ".tsv")
+    write.table(SNPs, tmp, sep = "\t", row.names = FALSE, quote = FALSE)
+    snp_path <- tmp
+    on.exit(unlink(tmp), add = TRUE)
+  } else {
+    snp_path <- as.character(SNPs)
+  }
+
   json <- .Call("wrap__commonfactor_gwas_rust",
-    as.character(covstruc_json), as.character(SNPs), as.character(GC),
+    as.character(covstruc_json), snp_path, as.character(GC),
     as.character(estimation), snp_se_val, as.logical(smooth_check),
     as.logical(TWAS))
   raw <- jsonlite::fromJSON(json)

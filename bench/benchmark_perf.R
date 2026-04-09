@@ -40,6 +40,7 @@ if (any(is.na(raw_traits))) stop("Missing GWAS files. Run: Rscript setup_data.R"
 
 ld          <- "data/eur_w_ld_chr/"
 hm3         <- "data/w_hm3.snplist"
+ref_1000g   <- "data/reference.1000G.maf.0.005.txt.gz"  # proper ref with MAF column
 trait_names <- c("ANX", "OCD", "PTSD")
 sample_prev <- c(0.5, 0.5, 0.5)
 pop_prev    <- c(0.16, 0.02, 0.07)
@@ -48,12 +49,18 @@ munged_traits <- paste0(trait_names, ".sumstats.gz")
 
 GWAS_SUBSET_N <- 1000L
 
+if (!file.exists(ref_1000g)) {
+  stop("Missing reference file: ", ref_1000g,
+       "\nDownload from: https://utexas.box.com/s/vkd36n197m8klbaio3yzoxsee6sxo11v")
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 # Benchmark a single call: returns list(time_s, peak_mb, error)
 run_bench <- function(expr_fn) {
-  gc(reset = TRUE)
+  gc(full = TRUE, reset = TRUE)
+  mem_before <- sum(gc()[, 2])  # current Mb used (Ncells + Vcells)
   t <- tryCatch(
     system.time({ result <- expr_fn() }),
     error = function(e) e
@@ -61,8 +68,8 @@ run_bench <- function(expr_fn) {
   if (inherits(t, "error")) {
     return(list(time_s = NA_real_, peak_mb = NA_real_, error = conditionMessage(t)))
   }
-  mem <- gc()
-  peak_mb <- mem[2, 6]  # max used Mb (Vcells)
+  mem_after <- gc()
+  peak_mb <- sum(mem_after[, 7])  # max used (Mb) column — Ncells + Vcells
   list(time_s = as.numeric(t["elapsed"]), peak_mb = peak_mb, error = NA_character_)
 }
 
@@ -190,28 +197,32 @@ b <- run_bench(function() gsemr::rgmodel(rust_cov))
 add_result("rgmodel", "Rust", b)
 
 # ---------------------------------------------------------------------------
-# 6. sumstats
+# 6. sumstats (use 1000G reference with MAF column — works for both R and Rust)
 # ---------------------------------------------------------------------------
 cat("[6/12] sumstats\n")
 dir.create("out_bench", showWarnings = FALSE)
 
-# R sumstats — may error on w_hm3.snplist (no MAF column)
+r_ss_path   <- "out_bench/r_merged.rds"
+rust_ss_path <- "out_bench/rust_merged.tsv"
+
+# R sumstats
 b <- run_bench(function() {
-  GenomicSEM::sumstats(
-    files = raw_traits, ref = hm3, trait.names = trait_names,
+  res <- GenomicSEM::sumstats(
+    files = raw_traits, ref = ref_1000g, trait.names = trait_names,
     se.logit = c(FALSE, FALSE, FALSE),
     OLS = c(FALSE, FALSE, FALSE),
     linprob = c(FALSE, FALSE, FALSE),
     info.filter = 0.6, maf.filter = 0.01
   )
+  saveRDS(res, r_ss_path)
+  res
 })
 add_result("sumstats", "R", b)
 
 # Rust sumstats
-rust_ss_path <- "out_bench/rust_merged.tsv"
 b <- run_bench(function() {
   gsemr::sumstats(
-    files = raw_traits, ref = hm3, trait.names = trait_names,
+    files = raw_traits, ref = ref_1000g, trait.names = trait_names,
     info.filter = 0.6, maf.filter = 0.01, out = rust_ss_path
   )
 })
@@ -231,31 +242,49 @@ b <- run_bench(function() gsemr::write.model(loadings, rust_cov$S, cutoff = 0.3)
 add_result("write.model", "Rust", b)
 
 # ---------------------------------------------------------------------------
-# Prepare GWAS subset for commonfactorGWAS / userGWAS
+# Prepare GWAS subsets for commonfactorGWAS / userGWAS
+# Each implementation uses its own sumstats output (fair comparison).
 # ---------------------------------------------------------------------------
-cat("Preparing GWAS subset...\n")
+cat("Preparing GWAS subsets...\n")
+
+# R's sumstats output (data frame saved as RDS)
+if (file.exists(r_ss_path)) {
+  r_snps_full <- readRDS(r_ss_path)
+} else {
+  # Fallback: run R sumstats if not already done
+  r_snps_full <- GenomicSEM::sumstats(
+    files = raw_traits, ref = ref_1000g, trait.names = trait_names,
+    se.logit = c(FALSE, FALSE, FALSE), OLS = c(FALSE, FALSE, FALSE),
+    linprob = c(FALSE, FALSE, FALSE), info.filter = 0.6, maf.filter = 0.01
+  )
+}
+r_snps_df <- head(r_snps_full, GWAS_SUBSET_N)
+cat(sprintf("  R subset: %d SNPs (from R sumstats, %d total)\n", nrow(r_snps_df), nrow(r_snps_full)))
+
+# Rust's sumstats output (TSV file)
 if (!file.exists(rust_ss_path)) {
   gsemr::sumstats(
-    files = raw_traits, ref = hm3, trait.names = trait_names,
+    files = raw_traits, ref = ref_1000g, trait.names = trait_names,
     info.filter = 0.6, maf.filter = 0.01, out = rust_ss_path
   )
 }
-subset_path <- "out_bench/merged_subset.tsv"
-full_snps <- read.delim(rust_ss_path, nrows = GWAS_SUBSET_N)
-write.table(full_snps, subset_path, sep = "\t", row.names = FALSE, quote = FALSE)
-cat(sprintf("  Using %d SNPs for GWAS benchmarks.\n", nrow(full_snps)))
+rust_subset_path <- "out_bench/rust_subset.tsv"
+rust_snps <- read.delim(rust_ss_path, nrows = GWAS_SUBSET_N)
+write.table(rust_snps, rust_subset_path, sep = "\t", row.names = FALSE, quote = FALSE)
+cat(sprintf("  Rust subset: %d SNPs\n", nrow(rust_snps)))
 
 # ---------------------------------------------------------------------------
 # 8. commonfactorGWAS
 # ---------------------------------------------------------------------------
 cat("[8/12] commonfactorGWAS\n")
+
 b <- run_bench(function() {
-  GenomicSEM::commonfactorGWAS(covstruc = r_cov, SNPs = subset_path)
+  GenomicSEM::commonfactorGWAS(covstruc = r_cov, SNPs = r_snps_df, parallel = FALSE)
 })
 add_result("commonfactorGWAS", "R", b)
 
 b <- run_bench(function() {
-  gsemr::commonfactorGWAS(covstruc = rust_cov, SNPs = subset_path)
+  gsemr::commonfactorGWAS(covstruc = rust_cov, SNPs = rust_subset_path, parallel = FALSE)
 })
 add_result("commonfactorGWAS", "Rust", b)
 
@@ -269,12 +298,12 @@ gwas_model <- paste0(
 )
 
 b <- run_bench(function() {
-  GenomicSEM::userGWAS(covstruc = r_cov, SNPs = subset_path, model = gwas_model)
+  GenomicSEM::userGWAS(covstruc = r_cov, SNPs = r_snps_df, model = gwas_model, parallel = TRUE)
 })
 add_result("userGWAS", "R", b)
 
 b <- run_bench(function() {
-  gsemr::userGWAS(covstruc = rust_cov, SNPs = subset_path, model = gwas_model)
+  gsemr::userGWAS(covstruc = rust_cov, SNPs = rust_subset_path, model = gwas_model, parallel = TRUE)
 })
 add_result("userGWAS", "Rust", b)
 
@@ -362,9 +391,9 @@ cat(sprintf("\nResults saved to %s\n", csv_path))
 cat("\n========================================================\n")
 cat("  Summary\n")
 cat("========================================================\n\n")
-cat(sprintf("%-20s %10s %10s %10s %10s %10s\n",
+cat(sprintf("%-20s %10s %10s %10s %12s %12s\n",
             "Function", "R (s)", "Rust (s)", "Speedup", "R (MB)", "Rust (MB)"))
-cat(strrep("-", 72), "\n")
+cat(strrep("-", 78), "\n")
 
 funcs <- unique(results$func)
 for (fn in funcs) {
@@ -383,9 +412,10 @@ for (fn in funcs) {
   r_err <- if (nrow(r_row) && nzchar(r_row$error[1])) r_row$error[1] else ""
   rust_err <- if (nrow(rust_row) && nzchar(rust_row$error[1])) rust_row$error[1] else ""
 
+  fmt_mem <- function(x) if (is.na(x)) "      N/A" else sprintf("%10.1f", x)
   cat(sprintf("%-20s %s %s %s %s %s",
               fn, fmt_val(r_time), fmt_val(rust_time), fmt_spd(speedup),
-              fmt_val(r_mem), fmt_val(rust_mem)))
+              fmt_mem(r_mem), fmt_mem(rust_mem)))
   if (nzchar(r_err)) cat(sprintf("  [R err: %s]", substr(r_err, 1, 40)))
   if (nzchar(rust_err)) cat(sprintf("  [Rust err: %s]", substr(rust_err, 1, 40)))
   cat("\n")

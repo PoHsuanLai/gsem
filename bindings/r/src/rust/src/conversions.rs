@@ -4,7 +4,9 @@ use gsem::io::sumstats_reader::MergedSnp;
 use gsem_ldsc::LdscResult;
 
 pub fn ldsc_result_to_json(result: &LdscResult) -> String {
-    result.to_json_string().unwrap_or_default()
+    result.to_json_string().unwrap_or_else(|e| {
+        panic!("Failed to serialize LDSC result to JSON: {e}")
+    })
 }
 
 /// JSON with additional S_Stand and V_Stand fields (when stand=TRUE).
@@ -30,7 +32,9 @@ pub fn ldsc_result_to_json_stand(result: &LdscResult) -> String {
     let v_stand = Mat::from_fn(kstar, kstar, |i, j| scale[i] * v_cor[(i, j)] * scale[j]);
 
     // Build JSON with extra fields
-    let base = result.to_json_string().unwrap_or_default();
+    let base = result.to_json_string().unwrap_or_else(|e| {
+        panic!("Failed to serialize LDSC result to JSON: {e}")
+    });
     // Insert S_Stand and V_Stand before the closing }
     if let Some(pos) = base.rfind('}') {
         let s_stand_json = mat_to_json_2d(&s_stand);

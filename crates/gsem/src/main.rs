@@ -718,14 +718,13 @@ fn run_sem(args: SemArgs) -> Result<()> {
 
     // Write results
     let mut output = String::from("lhs\top\trhs\test\n");
-    for (i, row) in pt.rows.iter().enumerate() {
-        if row.free > 0 {
-            let est = fit.params.get(i).copied().unwrap_or(0.0);
-            output.push_str(&format!(
-                "{}\t{}\t{}\t{:.6}\n",
-                row.lhs, row.op, row.rhs, est
-            ));
-        }
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    for (i, row) in free_rows.iter().enumerate() {
+        let est = fit.params.get(i).copied().unwrap_or(0.0);
+        output.push_str(&format!(
+            "{}\t{}\t{}\t{:.6}\n",
+            row.lhs, row.op, row.rhs, est
+        ));
     }
 
     // Q_Factor heterogeneity test

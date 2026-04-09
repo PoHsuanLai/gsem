@@ -111,6 +111,17 @@ pub fn merge_sumstats(
     // Build merged data with allele alignment
     let merged = build_merged(&common_snps, &trait_records, &ref_snps, k);
 
+    // Check for missing MAF: if all SNPs have MAF=0 it means neither the reference
+    // nor GWAS files had MAF data. Error instead of silently producing MAF=0.
+    let n_zero_maf = merged.iter().filter(|s| s.maf == 0.0).count();
+    if n_zero_maf == merged.len() && !merged.is_empty() {
+        anyhow::bail!(
+            "All {} SNPs have MAF=0. Neither the reference file nor the GWAS files \
+             contain a MAF column. A reference file with MAF data is required.",
+            merged.len()
+        );
+    }
+
     // Write output
     write_merged_sumstats(&merged, trait_names, out)?;
     log::info!(

@@ -317,8 +317,9 @@ fn test_sem_estimates_match_r() {
     assert!(fit.converged, "SEM should converge");
 
     // Compare loading estimates (=~ params) — these should be close
-    for (i, row) in pt.rows.iter().enumerate() {
-        if row.free > 0 && row.op == gsem_sem::syntax::Op::Loading {
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    for (i, row) in free_rows.iter().enumerate() {
+        if row.op == gsem_sem::syntax::Op::Loading {
             let est = fit.params.get(i).copied().unwrap_or(0.0);
             if let Some(r_est) = r_estimates
                 .iter()

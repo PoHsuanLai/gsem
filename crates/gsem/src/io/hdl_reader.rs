@@ -79,7 +79,10 @@ pub fn load_hdl_pieces(ld_dir: &Path) -> Result<Vec<LdPiece>> {
             snps.push(sf[0].to_string());
             a1.push(sf[1].to_string());
             a2.push(sf[2].to_string());
-            ld_scores.push(sf[3].parse::<f64>().unwrap_or(0.0));
+            let ld_val = sf[3].parse::<f64>().map_err(|_| {
+                anyhow::anyhow!("Non-numeric LD score '{}' in HDL reference", sf[3])
+            })?;
+            ld_scores.push(ld_val);
         }
 
         let m = snps.len();

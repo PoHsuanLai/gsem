@@ -308,11 +308,10 @@ fn usermodel(
         gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
     };
 
-    let params_json: Vec<String> = pt
-        .rows
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    let params_json: Vec<String> = free_rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| row.free > 0)
         .map(|(i, row)| {
             let est = fit.params.get(i).copied().unwrap_or(0.0);
             format!(
@@ -657,7 +656,7 @@ fn hdl(
     n_ref: f64,
     method: &str,
 ) -> PyResult<String> {
-    use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
+    use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData};
     if trait_names.is_some() {
         log::info!("trait_names are used for labeling output in the Python wrapper");
     }

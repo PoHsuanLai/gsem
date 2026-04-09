@@ -24,7 +24,8 @@ raw_traits <- c(
 )
 if (any(is.na(raw_traits))) stop("Missing GWAS files. Run: Rscript setup_data.R")
 ld     <- "data/eur_w_ld_chr/"
-hm3    <- "data/w_hm3.snplist"
+hm3       <- "data/w_hm3.snplist"
+ref_1000g <- "data/reference.1000G.maf.0.005.txt.gz"  # proper ref with MAF column
 trait_names <- c("ANX", "OCD", "PTSD")
 sample_prev <- c(0.5, 0.5, 0.5)
 pop_prev    <- c(0.16, 0.02, 0.07)
@@ -176,11 +177,14 @@ check("sumstats: merge", function() {
   dir.create("out_compare", showWarnings = FALSE)
   rust_ss_path <- "out_compare/rust_merged.tsv"
 
+  # Use 1000G reference (has MAF column) so R sumstats works
+  ref <- if (file.exists(ref_1000g)) ref_1000g else hm3
+
   # R version
   r_ss <- tryCatch(
     GenomicSEM::sumstats(
       files = raw_traits,
-      ref = hm3,
+      ref = ref,
       trait.names = trait_names,
       se.logit = c(FALSE, FALSE, FALSE),
       OLS = c(FALSE, FALSE, FALSE),
@@ -194,7 +198,7 @@ check("sumstats: merge", function() {
   # Rust version
   gsemr::sumstats(
     files = raw_traits,
-    ref = hm3,
+    ref = ref,
     trait.names = trait_names,
     info.filter = 0.6,
     maf.filter = 0.01,
@@ -219,9 +223,10 @@ check("sumstats: merge", function() {
 # ==========================================================================
 cat("\n--- commonfactorGWAS ---\n")
 check("commonfactorGWAS: runs", function() {
+  ref <- if (file.exists(ref_1000g)) ref_1000g else hm3
   merged_path <- "out_compare/rust_merged.tsv"
   if (!file.exists(merged_path)) {
-    gsemr::sumstats(files = raw_traits, ref = hm3, trait.names = trait_names, out = merged_path)
+    gsemr::sumstats(files = raw_traits, ref = ref, trait.names = trait_names, out = merged_path)
   }
   # Use a small subset (500 SNPs) — full GWAS on 1M+ SNPs is too slow for CI
   subset_path <- "out_compare/rust_merged_subset.tsv"
@@ -238,10 +243,11 @@ check("commonfactorGWAS: runs", function() {
 # ==========================================================================
 cat("\n--- userGWAS ---\n")
 check("userGWAS: runs", function() {
+  ref <- if (file.exists(ref_1000g)) ref_1000g else hm3
   merged_path <- "out_compare/rust_merged.tsv"
   if (!file.exists(merged_path)) {
     dir.create("out_compare", showWarnings = FALSE)
-    gsemr::sumstats(files = raw_traits, ref = hm3, trait.names = trait_names, out = merged_path)
+    gsemr::sumstats(files = raw_traits, ref = ref, trait.names = trait_names, out = merged_path)
   }
   subset_path <- "out_compare/rust_merged_subset.tsv"
   if (!file.exists(subset_path)) {
@@ -377,10 +383,11 @@ skip("enrich: runs", "requires stratified LDSC output")
 # ==========================================================================
 cat("\n--- multiSNP ---\n")
 check("multiSNP: runs", function() {
+  ref <- if (file.exists(ref_1000g)) ref_1000g else hm3
   merged_path <- "out_compare/rust_merged.tsv"
   if (!file.exists(merged_path)) {
     dir.create("out_compare", showWarnings = FALSE)
-    gsemr::sumstats(files = raw_traits, ref = hm3, trait.names = trait_names, out = merged_path)
+    gsemr::sumstats(files = raw_traits, ref = ref, trait.names = trait_names, out = merged_path)
   }
   # Read a small set of SNPs and build the expected data frame format
   snp_data <- read.delim(merged_path, nrows = 5)

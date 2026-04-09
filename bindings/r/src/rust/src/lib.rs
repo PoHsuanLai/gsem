@@ -281,11 +281,10 @@ fn usermodel_rust(
         (fit, pt.clone())
     };
 
-    let params_json: Vec<String> = final_pt
-        .rows
+    let free_rows: Vec<_> = final_pt.rows.iter().filter(|r| r.free > 0).collect();
+    let params_json: Vec<String> = free_rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| row.free > 0)
         .map(|(i, row)| {
             let est = fit.params.get(i).copied().unwrap_or(0.0);
             format!(
@@ -517,7 +516,8 @@ fn sumstats_rust(
         vec![None; files.len()]
     } else {
         let parsed: Vec<serde_json::Value> =
-            serde_json::from_str(n_overrides_json).unwrap_or_default();
+            serde_json::from_str(n_overrides_json)
+                .unwrap_or_else(|e| panic!("Invalid N overrides JSON: {e}"));
         parsed
             .iter()
             .map(|v| v.as_f64())
@@ -530,7 +530,8 @@ fn sumstats_rust(
     } else {
         // Parse as map of trait_name -> column_name, then align to trait order
         let betas_map: std::collections::HashMap<String, String> =
-            serde_json::from_str(betas_json).unwrap_or_default();
+            serde_json::from_str(betas_json)
+                .unwrap_or_else(|e| panic!("Invalid betas JSON: {e}"));
         trait_names
             .iter()
             .map(|name| betas_map.get(name).cloned())
@@ -581,7 +582,6 @@ fn commonfactor_gwas_rust(
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
     };
 
-    let k = ldsc_result.s.nrows();
     let gc_mode: gsem::gwas::gc_correction::GcMode =
         gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
 
@@ -701,7 +701,6 @@ fn user_gwas_rust(
         None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
     };
 
-    let k = ldsc_result.s.nrows();
     let gc_mode: gsem::gwas::gc_correction::GcMode =
         gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
 
@@ -970,7 +969,7 @@ fn hdl_rust(
     method: &str,
 ) -> String {
     ensure_logger();
-    use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData, LdPiece};
+    use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData};
 
     let sp = rfloat_to_options(&sample_prev);
     let pp = rfloat_to_options(&pop_prev);
