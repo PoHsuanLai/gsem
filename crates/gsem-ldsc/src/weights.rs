@@ -2,10 +2,10 @@
 ///
 /// From ldsc.R:
 /// - `tot_agg = M * (mean(chi2) - 1) / mean(L2 * N)`, clamped to 0..1
-/// - c[i] = tot_agg * N[i] / M   (per-SNP)
-/// - het_w[i] = 1 / (2 * (1 + c[i] * ld[i])^2)
-/// - oc_w[i] = 1 / max(w_ld[i], 1)
-/// - w = het_w * oc_w, normalized: sqrt(w) / sum(sqrt(w))
+/// - `c[i] = tot_agg * N[i] / M`   (per-SNP)
+/// - `het_w[i] = 1 / (2 * (1 + c[i] * ld[i])^2)`
+/// - `oc_w[i] = 1 / max(w_ld[i], 1)`
+/// - `w = het_w * oc_w`, normalized: `sqrt(w) / sum(sqrt(w))`
 pub fn compute_h2_weights(chi2: &[f64], ld: &[f64], w_ld: &[f64], n: &[f64], m: f64) -> Vec<f64> {
     let n_snps = chi2.len();
     debug_assert_eq!(n_snps, ld.len());

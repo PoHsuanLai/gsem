@@ -142,10 +142,10 @@ fn read_reference_file(path: &Path, maf_filter: f64) -> Result<HashMap<String, R
     let mut map = HashMap::with_capacity(data.records.len());
     for rec in &data.records {
         // Filter by MAF if available (R: ref <- ref[ref$MAF >= maf.filter, ])
-        if let Some(maf) = rec.maf {
-            if maf < maf_filter {
-                continue;
-            }
+        if let Some(maf) = rec.maf
+            && maf < maf_filter
+        {
+            continue;
         }
 
         map.insert(

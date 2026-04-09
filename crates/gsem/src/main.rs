@@ -844,6 +844,7 @@ fn run_gwas(args: GwasArgs) -> Result<()> {
 }
 
 /// Standard SNP-based GWAS path.
+#[allow(clippy::too_many_arguments)]
 fn run_gwas_snp(
     sumstats: &Path,
     model_str: &str,
@@ -956,6 +957,7 @@ fn run_gwas_snp(
 /// - Uses HSQ (heritability of expression) as var_snp instead of 2*MAF*(1-MAF)
 /// - Replaces "SNP" with "Gene" in model syntax
 /// - Outputs Gene/Panel/HSQ columns instead of SNP column
+#[allow(clippy::too_many_arguments)]
 fn run_gwas_twas(
     sumstats: &Path,
     model_str: &str,

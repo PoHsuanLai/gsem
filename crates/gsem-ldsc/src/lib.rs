@@ -267,6 +267,7 @@ pub fn ldsc(
 /// R merges per trait-pair, then sorts by CHR, BP (genomic position).
 /// We iterate over LD SNPs in order (which are already in genomic order,
 /// read chromosome by chromosome) to match R's block structure.
+#[allow(clippy::too_many_arguments)]
 fn merge_pair(
     traits: &[TraitSumstats],
     ld_snps: &[String],

@@ -75,8 +75,8 @@ pub fn write_model(
             lines.push("Common_F ~~ 1*Common_F".to_string());
 
             // Common factor orthogonal to specific factors
-            for f in 0..n_factors {
-                if !factor_indicators[f].is_empty() {
+            for (f, inds) in factor_indicators.iter().enumerate().take(n_factors) {
+                if !inds.is_empty() {
                     lines.push(format!("Common_F ~~ 0*F{}", f + 1));
                 }
             }
@@ -113,11 +113,11 @@ pub fn write_model(
     // Residual variance constraints
     if fix_resid {
         let mut label_idx = 0;
-        for p in 0..n_pheno {
+        for (p, name) in names.iter().enumerate().take(n_pheno) {
             let has_loading = factor_indicators.iter().any(|inds| inds.contains(&p));
             if has_loading {
                 let label = generate_label(label_idx);
-                lines.push(format!("{} ~~ {}*{}", names[p], label, names[p]));
+                lines.push(format!("{} ~~ {}*{}", name, label, name));
                 lines.push(format!("{} > 0.0001", label));
                 label_idx += 1;
             }
