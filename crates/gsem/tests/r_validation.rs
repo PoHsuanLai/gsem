@@ -372,3 +372,64 @@ fn test_v_reorder_matches_r() {
     let result = gsem_sem::reorder::reorder_v(&v, &user_order, &model_order);
     assert_mat_close(&result, &expected, 1e-12, "V reorder");
 }
+
+// ── Test Case 10: commonfactor (full pipeline with SEs) ─────────────────────
+
+#[test]
+fn test_commonfactor_matches_r() {
+    let fix = load_fixture("commonfactor");
+    let s = json_to_mat(&fix["s"]);
+    let v = json_to_mat(&fix["v"]);
+
+    let r_params: Vec<(String, String, String, f64)> = fix["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["lhs"].as_str().unwrap().to_string(),
+                e["op"].as_str().unwrap().to_string(),
+                e["rhs"].as_str().unwrap().to_string(),
+                e["est"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    let r_sandwich_se = json_to_vec(&fix["sandwich_se"]);
+    let r_implied = json_to_mat(&fix["implied_cov"]);
+
+    let result = gsem_sem::commonfactor::run_commonfactor(&s, &v, "DWLS").unwrap();
+
+    // Check parameter estimates match R
+    assert_eq!(
+        result.parameters.len(),
+        r_params.len(),
+        "parameter count mismatch"
+    );
+    for (rust_p, r_p) in result.parameters.iter().zip(r_params.iter()) {
+        assert_eq!(rust_p.lhs, r_p.0, "lhs mismatch");
+        assert_eq!(rust_p.rhs, r_p.2, "rhs mismatch");
+        let diff = (rust_p.est - r_p.3).abs();
+        assert!(
+            diff < 0.02,
+            "commonfactor param {}.{}.{}: Rust={:.6} R={:.6} diff={diff:.6}",
+            rust_p.lhs,
+            rust_p.op,
+            rust_p.rhs,
+            rust_p.est,
+            r_p.3
+        );
+    }
+
+    // Check sandwich SEs match R
+    for (i, (rust_p, &r_se)) in result.parameters.iter().zip(r_sandwich_se.iter()).enumerate() {
+        let diff = (rust_p.se - r_se).abs();
+        assert!(
+            diff < 0.01,
+            "commonfactor SE[{i}]: Rust={:.6} R={r_se:.6} diff={diff:.6}",
+            rust_p.se
+        );
+    }
+
+    // Check implied covariance matches R
+    assert_mat_close(&result.implied_cov, &r_implied, 1e-6, "commonfactor implied cov");
+}

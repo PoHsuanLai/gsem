@@ -90,14 +90,22 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult) -> PyLdscResult {
 
 /// Run multivariate LDSC.
 #[pyfunction]
-#[pyo3(signature = (traits, sample_prev, pop_prev, ld, wld="", n_blocks=200))]
+#[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=false, chisq_max=None))]
+#[allow(unused_variables)]
 fn ldsc(
     traits: Vec<String>,
     sample_prev: Vec<Option<f64>>,
-    pop_prev: Vec<Option<f64>>,
+    population_prev: Vec<Option<f64>>,
     ld: &str,
     wld: &str,
+    trait_names: Option<Vec<String>>,
+    sep_weights: bool,       // ignored
+    chr: usize,              // threaded
     n_blocks: usize,
+    ldsc_log: Option<String>, // ignored
+    stand: bool,             // threaded (not yet used in library)
+    select: bool,            // threaded (not yet used in library)
+    chisq_max: Option<f64>,  // threaded
 ) -> PyResult<PyLdscResult> {
     let wld_dir = if wld.is_empty() { ld } else { wld };
 
@@ -117,7 +125,7 @@ fn ldsc(
 
     let ld_path = std::path::Path::new(ld);
     let wld_path = std::path::Path::new(wld_dir);
-    let chromosomes: Vec<usize> = (1..=22).collect();
+    let chromosomes: Vec<usize> = (1..=chr).collect();
     let ld_data = gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
@@ -126,13 +134,13 @@ fn ldsc(
 
     let config = gsem_ldsc::LdscConfig {
         n_blocks,
-        chisq_max: None,
+        chisq_max,
     };
 
     let result = gsem_ldsc::ldsc(
         &trait_data,
         &sample_prev,
-        &pop_prev,
+        &population_prev,
         &ld_scores,
         &ld_data.w_ld,
         &ld_snps,
@@ -144,14 +152,74 @@ fn ldsc(
     Ok(ldsc_result_to_py(&result))
 }
 
+/// Munge GWAS summary statistics files.
+#[pyfunction]
+#[pyo3(signature = (files, hm3, trait_names=None, n=None, info_filter=0.9, maf_filter=0.01, log_name=None, column_names=None, parallel=false, cores=None, overwrite=true, out="."))]
+#[allow(unused_variables)]
+fn munge(
+    files: Vec<String>,
+    hm3: &str,
+    trait_names: Option<Vec<String>>,
+    n: Option<f64>,                          // threaded (N override)
+    info_filter: f64,
+    maf_filter: f64,
+    log_name: Option<String>,                // ignored
+    column_names: Option<std::collections::HashMap<String, String>>, // threaded
+    parallel: bool,                          // ignored
+    cores: Option<usize>,                    // ignored
+    overwrite: bool,                         // ignored
+    out: &str,
+) -> PyResult<Vec<String>> {
+    let hm3_path = std::path::Path::new(hm3);
+    let reference = gsem::munge::read_reference(hm3_path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+
+    let config = gsem::munge::MungeConfig {
+        info_filter,
+        maf_filter,
+        n_override: n,
+        column_overrides: column_names,
+    };
+
+    let default_names: Vec<String> = files
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("trait{}", i + 1))
+        .collect();
+    let names = trait_names.as_deref().unwrap_or(&default_names);
+
+    let mut output_paths = Vec::new();
+    for (i, file) in files.iter().enumerate() {
+        let name = names.get(i).map(|s| s.as_str()).unwrap_or("trait");
+        let out_path = std::path::Path::new(out).join(format!("{name}.sumstats.gz"));
+
+        gsem::munge::munge_and_write(std::path::Path::new(file), &reference, &config, &out_path)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+
+        output_paths.push(out_path.to_string_lossy().to_string());
+    }
+    Ok(output_paths)
+}
+
 /// Fit a user-specified SEM model.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, model, estimation="DWLS"))]
-fn usermodel(covstruc_json: &str, model: &str, estimation: &str) -> PyResult<String> {
+#[pyo3(signature = (covstruc_json, model="", estimation="DWLS", cfi_calc=true, std_lv=false, imp_cov=false, fix_resid=true, toler=None, q_factor=false))]
+#[allow(unused_variables)]
+fn usermodel(
+    covstruc_json: &str,
+    model: &str,
+    estimation: &str,
+    cfi_calc: bool,         // ignored (CFIcalc)
+    std_lv: bool,           // threaded
+    imp_cov: bool,          // ignored
+    fix_resid: bool,        // threaded
+    toler: Option<f64>,     // ignored
+    q_factor: bool,         // ignored (Q_Factor)
+) -> PyResult<String> {
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
 
-    let pt = gsem_sem::syntax::parse_model(model, false)
+    let pt = gsem_sem::syntax::parse_model(model, std_lv)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
 
     let k = ldsc_result.s.nrows();
@@ -189,41 +257,6 @@ fn usermodel(covstruc_json: &str, model: &str, estimation: &str) -> PyResult<Str
     ))
 }
 
-/// Munge GWAS summary statistics files.
-#[pyfunction]
-#[pyo3(signature = (files, hm3, trait_names, info_filter=0.9, maf_filter=0.01, out_dir="."))]
-fn munge(
-    files: Vec<String>,
-    hm3: &str,
-    trait_names: Vec<String>,
-    info_filter: f64,
-    maf_filter: f64,
-    out_dir: &str,
-) -> PyResult<Vec<String>> {
-    let hm3_path = std::path::Path::new(hm3);
-    let reference = gsem::munge::read_reference(hm3_path)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
-
-    let config = gsem::munge::MungeConfig {
-        info_filter,
-        maf_filter,
-        n_override: None,
-        column_overrides: None,
-    };
-
-    let mut output_paths = Vec::new();
-    for (i, file) in files.iter().enumerate() {
-        let name = trait_names.get(i).map(|s| s.as_str()).unwrap_or("trait");
-        let out_path = std::path::Path::new(out_dir).join(format!("{name}.sumstats.gz"));
-
-        gsem::munge::munge_and_write(std::path::Path::new(file), &reference, &config, &out_path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
-
-        output_paths.push(out_path.to_string_lossy().to_string());
-    }
-    Ok(output_paths)
-}
-
 /// Fit common factor model.
 #[pyfunction]
 #[pyo3(signature = (covstruc_json, estimation="DWLS"))]
@@ -249,32 +282,63 @@ fn commonfactor(covstruc_json: &str, estimation: &str) -> PyResult<String> {
 
 /// Merge GWAS summary statistics.
 #[pyfunction]
-#[pyo3(signature = (files, ref_dir, trait_names, info_filter=0.6, maf_filter=0.01, keep_indel=false, out="merged_sumstats.tsv"))]
+#[pyo3(signature = (files, ref_dir, trait_names=None, se_logit=None, ols=None, linprob=None, n=None, betas=None, info_filter=0.6, maf_filter=0.01, keep_indel=false, parallel=false, cores=None, ambig=false, direct_filter=false, out="merged_sumstats.tsv"))]
+#[allow(unused_variables)]
 fn sumstats(
     files: Vec<String>,
     ref_dir: &str,
-    trait_names: Vec<String>,
+    trait_names: Option<Vec<String>>,
+    se_logit: Option<Vec<bool>>,   // threaded
+    ols: Option<Vec<bool>>,        // threaded (OLS)
+    linprob: Option<Vec<bool>>,    // threaded
+    n: Option<Vec<f64>>,           // threaded (N overrides)
+    betas: Option<Vec<f64>>,       // ignored
     info_filter: f64,
     maf_filter: f64,
     keep_indel: bool,
+    parallel: bool,                // ignored
+    cores: Option<usize>,          // ignored
+    ambig: bool,                   // ignored
+    direct_filter: bool,           // ignored
     out: &str,
 ) -> PyResult<String> {
+    let k = files.len();
+    let default_names: Vec<String> = (0..k).map(|i| format!("trait{}", i + 1)).collect();
+    let names = trait_names.unwrap_or(default_names);
+
     let config = gsem::sumstats::SumstatsConfig {
         info_filter,
         maf_filter,
         keep_indel,
-        ..Default::default()
+        keep_ambig: ambig,
+        se_logit: se_logit.unwrap_or_else(|| vec![false; k]),
+        ols: ols.unwrap_or_else(|| vec![false; k]),
+        linprob: linprob.unwrap_or_else(|| vec![false; k]),
+        n_overrides: n.map(|v| v.into_iter().map(Some).collect()).unwrap_or_else(|| vec![None; k]),
     };
     let file_refs: Vec<&std::path::Path> = files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
-    gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &trait_names, &config, std::path::Path::new(out))
-        .map(|n| format!("{{\"path\":\"{out}\",\"n_snps\":{n}}}"))
+    gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &names, &config, std::path::Path::new(out))
+        .map(|n_snps| format!("{{\"path\":\"{out}\",\"n_snps\":{n_snps}}}"))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
 }
 
 /// Run common factor GWAS.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, sumstats_path, gc="standard"))]
-fn commonfactor_gwas(covstruc_json: &str, sumstats_path: &str, gc: &str) -> PyResult<String> {
+#[pyo3(signature = (covstruc_json, sumstats_path, estimation="DWLS", cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, twas=false, smooth_check=false))]
+#[allow(unused_variables)]
+fn commonfactor_gwas(
+    covstruc_json: &str,
+    sumstats_path: &str,
+    estimation: &str,          // threaded
+    cores: Option<usize>,      // ignored
+    toler: bool,               // ignored
+    snpse: bool,               // threaded (as snp_se)
+    parallel: bool,            // ignored
+    gc: &str,
+    mpi: bool,                 // ignored
+    twas: bool,                // ignored
+    smooth_check: bool,        // threaded
+) -> PyResult<String> {
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
@@ -288,17 +352,58 @@ fn commonfactor_gwas(covstruc_json: &str, sumstats_path: &str, gc: &str) -> PyRe
     let mut i_ld = ldsc_result.i_mat.to_owned();
     for i in 0..k { if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; } }
 
-    let results = gsem::gwas::common_factor::run_common_factor_gwas(
-        &merged.trait_names, &ldsc_result.s, &ldsc_result.v, &i_ld,
-        &beta_snp, &se_snp, &var_snp, gc_mode,
+    let snp_se_val = if snpse { Some(0.0005) } else { None };
+
+    // Common factor GWAS uses the internal user_gwas path with auto-generated model;
+    // we build a UserGwasConfig to thread estimation, snp_se, smooth_check.
+    let loading = std::iter::once(format!("NA*{}", merged.trait_names[0]))
+        .chain(merged.trait_names[1..].iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let model = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
+
+    let config = gsem::gwas::user_gwas::UserGwasConfig {
+        model,
+        estimation: estimation.to_string(),
+        gc: gc_mode,
+        max_iter: 500,
+        std_lv: false,
+        smooth_check,
+        snp_se: snp_se_val,
+        snp_label: "SNP".to_string(),
+        q_snp: false,
+    };
+
+    let results = gsem::gwas::user_gwas::run_user_gwas(
+        &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
+        &beta_snp, &se_snp, &var_snp,
     );
     Ok(snp_results_to_json(&results, &merged.snps))
 }
 
 /// Run user-specified GWAS.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, sumstats_path, model, estimation="DWLS", gc="standard"))]
-fn user_gwas(covstruc_json: &str, sumstats_path: &str, model: &str, estimation: &str, gc: &str) -> PyResult<String> {
+#[pyo3(signature = (covstruc_json, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=false, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
+#[allow(unused_variables)]
+fn user_gwas(
+    covstruc_json: &str,
+    sumstats_path: &str,
+    model: &str,
+    estimation: &str,
+    printwarn: bool,           // ignored
+    sub: bool,                 // threaded (not yet used in library)
+    cores: Option<usize>,      // ignored
+    toler: bool,               // ignored
+    snpse: bool,               // threaded (as snp_se)
+    parallel: bool,            // ignored
+    gc: &str,
+    mpi: bool,                 // ignored
+    smooth_check: bool,        // threaded
+    twas: bool,                // ignored
+    std_lv: bool,              // threaded
+    fix_measurement: bool,     // ignored
+    q_snp: bool,               // ignored
+) -> PyResult<String> {
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
@@ -312,11 +417,19 @@ fn user_gwas(covstruc_json: &str, sumstats_path: &str, model: &str, estimation: 
     let mut i_ld = ldsc_result.i_mat.to_owned();
     for i in 0..k { if i_ld[(i, i)] < 1.0 { i_ld[(i, i)] = 1.0; } }
 
+    let snp_se_val = if snpse { Some(0.0005) } else { None };
+    let snp_label = if twas { "Gene".to_string() } else { "SNP".to_string() };
+
     let config = gsem::gwas::user_gwas::UserGwasConfig {
         model: model.to_string(),
         estimation: estimation.to_string(),
         gc: gc_mode,
-        ..Default::default()
+        max_iter: 500,
+        std_lv,
+        smooth_check,
+        snp_se: snp_se_val,
+        snp_label,
+        q_snp: q_snp,
     };
     let results = gsem::gwas::user_gwas::run_user_gwas(
         &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
@@ -326,14 +439,27 @@ fn user_gwas(covstruc_json: &str, sumstats_path: &str, model: &str, estimation: 
 }
 
 /// Parallel analysis to determine number of factors.
+/// Accepts S and V as JSON strings (2D arrays).
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, n_sim=500))]
-fn parallel_analysis(covstruc_json: &str, n_sim: usize) -> PyResult<String> {
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
-    let result = gsem::stats::parallel_analysis::parallel_analysis(
-        &ldsc_result.s, &ldsc_result.v, n_sim,
-    );
+#[pyo3(signature = (s_json, v_json, r=500, p=None, save_pdf=false, diag=false, fa=false, fm=None, nfactors=None))]
+#[allow(unused_variables)]
+fn parallel_analysis(
+    s_json: &str,
+    v_json: &str,
+    r: usize,
+    p: Option<usize>,              // ignored
+    save_pdf: bool,                // ignored
+    diag: bool,                    // ignored
+    fa: bool,                      // ignored
+    fm: Option<String>,            // ignored
+    nfactors: Option<usize>,       // ignored
+) -> PyResult<String> {
+    let s_mat = json_to_mat(s_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid s_json: {e}")))?;
+    let v_mat = json_to_mat(v_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
+
+    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r);
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(
@@ -344,13 +470,16 @@ fn parallel_analysis(covstruc_json: &str, n_sim: usize) -> PyResult<String> {
 
 /// Auto-generate model syntax from factor loadings.
 #[pyfunction]
-#[pyo3(signature = (loadings, names, cutoff=0.3, fix_resid=false, bifactor=false))]
+#[pyo3(signature = (loadings, names, cutoff=0.3, fix_resid=true, bifactor=false, mustload=false, common=false))]
+#[allow(unused_variables)]
 fn write_model(
     loadings: Vec<Vec<f64>>,
     names: Vec<String>,
     cutoff: f64,
     fix_resid: bool,
     bifactor: bool,
+    mustload: bool,    // ignored
+    common: bool,      // ignored
 ) -> String {
     let n_rows = loadings.len();
     let n_cols = if n_rows > 0 { loadings[0].len() } else { 0 };
@@ -359,12 +488,22 @@ fn write_model(
 }
 
 /// Compute model-implied genetic correlation matrix.
+/// `estimation=True` in R means DWLS; here `estimation=true` maps to "DWLS".
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, estimation="DWLS"))]
-fn rgmodel(covstruc_json: &str, estimation: &str) -> PyResult<String> {
+#[pyo3(signature = (covstruc_json, model, std_lv=true, estimation=true, sub=None))]
+#[allow(unused_variables)]
+fn rgmodel(
+    covstruc_json: &str,
+    model: &str,
+    std_lv: bool,
+    estimation: bool,
+    sub: Option<Vec<String>>,  // not yet used
+) -> PyResult<String> {
+    let est_str = if estimation { "DWLS" } else { "ML" };
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
-    let result = gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation)
+    let model_opt = if model.is_empty() { None } else { Some(model) };
+    let result = gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, est_str, model_opt, std_lv)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
     let k = result.r.nrows();
     let kstar = k * (k + 1) / 2;
@@ -377,6 +516,62 @@ fn rgmodel(covstruc_json: &str, estimation: &str) -> PyResult<String> {
         format!("[{}]", row.join(","))
     }).collect();
     Ok(format!("{{\"R\":[{}],\"V_R\":[{}]}}", r_rows.join(","), v_rows.join(",")))
+}
+
+/// Run HDL (High-Definition Likelihood) estimation.
+#[pyfunction]
+#[pyo3(signature = (traits, sample_prev=None, population_prev=None, trait_names=None, ld_path="", n_ref=335265.0, method="piecewise"))]
+#[allow(unused_variables)]
+fn hdl(
+    traits: Vec<String>,
+    sample_prev: Option<Vec<Option<f64>>>,
+    population_prev: Option<Vec<Option<f64>>>,
+    trait_names: Option<Vec<String>>,
+    ld_path: &str,
+    n_ref: f64,
+    method: &str,
+) -> PyResult<String> {
+    // HDL is not yet implemented in the Rust library; return a stub error.
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "hdl() is not yet implemented in the Rust backend. This function signature is provided for API compatibility with R GenomicSEM."
+    ))
+}
+
+/// Run stratified LDSC (s-LDSC).
+#[pyfunction]
+#[pyo3(signature = (traits, sample_prev=None, population_prev=None, ld="", wld="", frq="", trait_names=None, n_blocks=200, ldsc_log=None, exclude_cont=true))]
+#[allow(unused_variables)]
+fn s_ldsc(
+    traits: Vec<String>,
+    sample_prev: Option<Vec<Option<f64>>>,
+    population_prev: Option<Vec<Option<f64>>>,
+    ld: &str,
+    wld: &str,
+    frq: &str,
+    trait_names: Option<Vec<String>>,
+    n_blocks: usize,
+    ldsc_log: Option<String>,
+    exclude_cont: bool,
+) -> PyResult<String> {
+    // s-LDSC is not yet implemented in the Rust library; return a stub error.
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "s_ldsc() is not yet implemented in the Rust backend. This function signature is provided for API compatibility with R GenomicSEM."
+    ))
+}
+
+/// Helper: parse a JSON 2D array string into a faer Mat.
+fn json_to_mat(json: &str) -> Result<faer::Mat<f64>, String> {
+    let arr: Vec<Vec<f64>> = serde_json::from_str(json)
+        .map_err(|e| format!("JSON parse error: {e}"))?;
+    let nrows = arr.len();
+    if nrows == 0 {
+        return Err("empty matrix".to_string());
+    }
+    let ncols = arr[0].len();
+    if arr.iter().any(|row| row.len() != ncols) {
+        return Err("jagged matrix".to_string());
+    }
+    Ok(faer::Mat::from_fn(nrows, ncols, |i, j| arr[i][j]))
 }
 
 /// Helper: serialize GWAS results to JSON.
@@ -414,5 +609,7 @@ fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parallel_analysis, m)?)?;
     m.add_function(wrap_pyfunction!(write_model, m)?)?;
     m.add_function(wrap_pyfunction!(rgmodel, m)?)?;
+    m.add_function(wrap_pyfunction!(hdl, m)?)?;
+    m.add_function(wrap_pyfunction!(s_ldsc, m)?)?;
     Ok(())
 }

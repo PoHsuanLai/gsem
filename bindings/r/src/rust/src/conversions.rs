@@ -1,3 +1,4 @@
+use faer::Mat;
 use gsem::gwas::user_gwas::SnpResult;
 use gsem::io::sumstats_reader::MergedSnp;
 use gsem_ldsc::LdscResult;
@@ -8,6 +9,17 @@ pub fn ldsc_result_to_json(result: &LdscResult) -> String {
 
 pub fn json_to_ldsc_result(json: &str) -> Option<LdscResult> {
     LdscResult::from_json_string(json).ok()
+}
+
+/// Parse a JSON 2D array (e.g. `[[1,2],[3,4]]`) into a faer Mat.
+pub fn json_to_mat(json: &str) -> Option<Mat<f64>> {
+    let rows: Vec<Vec<f64>> = serde_json::from_str(json).ok()?;
+    if rows.is_empty() {
+        return Some(Mat::zeros(0, 0));
+    }
+    let nrows = rows.len();
+    let ncols = rows[0].len();
+    Some(Mat::from_fn(nrows, ncols, |i, j| rows[i][j]))
 }
 
 pub fn snp_results_to_json(results: &[SnpResult], snps: &[MergedSnp]) -> String {

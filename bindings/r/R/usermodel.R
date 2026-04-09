@@ -6,12 +6,34 @@
 #' @param covstruc Output from \code{\link{ldsc}}
 #' @param estimation Estimation method: \code{"DWLS"} (default) or \code{"ML"}
 #' @param model lavaan-style model syntax string
+#' @param CFIcalc Compute CFI (ignored in gsemr, always computed)
+#' @param std.lv Standardize latent variables (default FALSE)
+#' @param imp_cov Use model-implied covariance (ignored in gsemr)
+#' @param fix_resid Fix residual variances to be positive (default TRUE)
+#' @param toler Tolerance for optimization (ignored in gsemr)
+#' @param Q_Factor Compute Q factor (ignored in gsemr)
 #' @return A list with components:
 #'   \item{results}{Data frame of parameter estimates}
 #'   \item{modelfit}{Data frame of fit indices}
 #'   \item{converged}{Logical indicating convergence}
 #' @export
-usermodel <- function(covstruc, estimation = "DWLS", model) {
+usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
+                      std.lv=FALSE, imp_cov=FALSE, fix_resid=TRUE, toler=NULL, Q_Factor=FALSE) {
+
+  # Ignored params
+  if (!identical(CFIcalc, TRUE)) {
+    message("Note: 'CFIcalc' is ignored in gsemr -- CFI is always computed")
+  }
+  if (!identical(imp_cov, FALSE)) {
+    message("Note: 'imp_cov' is ignored in gsemr -- not implemented")
+  }
+  if (!is.null(toler)) {
+    message("Note: 'toler' is ignored in gsemr -- Rust uses its own convergence criteria")
+  }
+  if (!identical(Q_Factor, FALSE)) {
+    message("Note: 'Q_Factor' is ignored in gsemr -- not implemented")
+  }
+
   # Convert covstruc to JSON for Rust
   covstruc_json <- jsonlite::toJSON(list(
     s = covstruc$S,
@@ -24,7 +46,9 @@ usermodel <- function(covstruc, estimation = "DWLS", model) {
   json <- .Call("wrap__usermodel_rust",
     as.character(covstruc_json),
     as.character(model),
-    as.character(estimation)
+    as.character(estimation),
+    as.logical(std.lv),
+    as.logical(fix_resid)
   )
 
   result <- jsonlite::fromJSON(json)

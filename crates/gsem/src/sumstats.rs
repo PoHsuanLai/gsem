@@ -30,6 +30,8 @@ pub struct SumstatsConfig {
     pub linprob: Vec<bool>,
     /// Keep indels (multi-character alleles)?
     pub keep_indel: bool,
+    /// If false (default), remove ambiguous strand SNPs (A/T and C/G pairs).
+    pub keep_ambig: bool,
 }
 
 impl Default for SumstatsConfig {
@@ -42,6 +44,7 @@ impl Default for SumstatsConfig {
             ols: Vec::new(),
             linprob: Vec::new(),
             keep_indel: false,
+            keep_ambig: false,
         }
     }
 }
@@ -83,7 +86,7 @@ pub fn merge_sumstats(
     let mut trait_records: Vec<HashMap<String, QcRecord>> = Vec::with_capacity(k);
     for (i, file) in files.iter().enumerate() {
         let n_override = config.n_overrides.get(i).copied().flatten();
-        let records = read_and_qc_gwas(file, &ref_snps, config, n_override)?;
+        let records = read_and_qc_gwas(file, &ref_snps, config, n_override, i)?;
         log::info!("  {}: {} SNPs after QC", trait_names[i], records.len());
         trait_records.push(records);
     }
@@ -141,6 +144,7 @@ fn read_and_qc_gwas(
     ref_snps: &HashMap<String, ()>,
     config: &SumstatsConfig,
     n_override: Option<f64>,
+    trait_idx: usize,
 ) -> Result<HashMap<String, QcRecord>> {
     let data = gwas_reader::read_gwas_file(path)?;
     let mut records = HashMap::new();
@@ -161,7 +165,9 @@ fn read_and_qc_gwas(
                     if let (Some(a1_raw), Some(a2_raw)) = (&rec.a1, &rec.a2) {
                         let a1 = a1_raw.to_uppercase();
                         let a2 = a2_raw.to_uppercase();
-                        if valid_allele_pair(&a1, &a2, config.keep_indel) {
+                        if valid_allele_pair(&a1, &a2, config.keep_indel)
+                            && (config.keep_ambig || !is_ambiguous_snp(&a1, &a2))
+                        {
                             records.insert(
                                 rec.snp,
                                 QcRecord {
@@ -204,6 +210,11 @@ fn read_and_qc_gwas(
             continue;
         }
 
+        // Ambiguous strand SNP filtering
+        if !config.keep_ambig && is_ambiguous_snp(&a1, &a2) {
+            continue;
+        }
+
         // INFO filter
         if rec.info.is_some_and(|info| info < config.info_filter) {
             continue;
@@ -216,7 +227,11 @@ fn read_and_qc_gwas(
         }
 
         // Detect and convert OR to log(OR)
-        let beta = if is_or_value(effect) {
+        // Skip OR auto-detection if se_logit or ols is set for this trait
+        // (effects are already on the correct scale)
+        let skip_or_detect = config.se_logit.get(trait_idx).copied().unwrap_or(false)
+            || config.ols.get(trait_idx).copied().unwrap_or(false);
+        let beta = if !skip_or_detect && is_or_value(effect) {
             if effect <= 0.0 {
                 continue;
             }
@@ -251,6 +266,14 @@ fn valid_allele_pair(a1: &str, a2: &str, keep_indel: bool) -> bool {
 
 fn is_single_nucleotide(a: &str) -> bool {
     matches!(a, "A" | "C" | "G" | "T")
+}
+
+/// Check if a SNP has ambiguous strand (A/T or C/G pairs).
+fn is_ambiguous_snp(a1: &str, a2: &str) -> bool {
+    matches!(
+        (a1, a2),
+        ("A", "T") | ("T", "A") | ("C", "G") | ("G", "C")
+    )
 }
 
 /// Rough heuristic: if |effect| is close to 1, it's likely an OR.
@@ -389,6 +412,18 @@ fn write_merged_sumstats(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_ambiguous_snp() {
+        assert!(is_ambiguous_snp("A", "T"));
+        assert!(is_ambiguous_snp("T", "A"));
+        assert!(is_ambiguous_snp("C", "G"));
+        assert!(is_ambiguous_snp("G", "C"));
+        assert!(!is_ambiguous_snp("A", "G"));
+        assert!(!is_ambiguous_snp("A", "C"));
+        assert!(!is_ambiguous_snp("T", "G"));
+        assert!(!is_ambiguous_snp("T", "C"));
+    }
 
     #[test]
     fn test_valid_allele_pair() {

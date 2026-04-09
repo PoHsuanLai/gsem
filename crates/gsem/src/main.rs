@@ -364,6 +364,14 @@ enum Commands {
         #[arg(long, default_value = "DWLS")]
         estimation: String,
 
+        /// User-specified model (lavaan syntax). If omitted, fits common factor.
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Standardize latent variables
+        #[arg(long, default_value_t = false)]
+        std_lv: bool,
+
         /// Output file
         #[arg(short, long, default_value = "rgmodel_result.tsv")]
         out: PathBuf,
@@ -617,8 +625,10 @@ fn main() -> Result<()> {
         Commands::Rgmodel {
             covstruc,
             estimation,
+            model,
+            std_lv,
             out,
-        } => run_rgmodel_cmd(&covstruc, &estimation, &out),
+        } => run_rgmodel_cmd(&covstruc, &estimation, model.as_deref(), std_lv, &out),
         Commands::MultiSnp {
             covstruc,
             sumstats,
@@ -750,6 +760,7 @@ fn run_sumstats(
         ols: vec![false; k],
         linprob: vec![false; k],
         keep_indel,
+        keep_ambig: false,
     };
 
     let file_refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
@@ -1239,6 +1250,7 @@ fn run_gwas_snp(
         smooth_check,
         snp_se: None,
         snp_label: "SNP".to_string(),
+        q_snp: false,
     };
 
     eprintln!("Running GWAS across {n_snps} SNPs...");
@@ -1348,6 +1360,7 @@ fn run_gwas_twas(
         smooth_check,
         snp_se: None,
         snp_label: "Gene".to_string(),
+        q_snp: false,
     };
 
     eprintln!("Running TWAS across {n_genes} genes...");
@@ -1697,14 +1710,21 @@ fn run_enrich(input: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_rgmodel_cmd(covstruc: &Path, estimation: &str, out: &Path) -> Result<()> {
+fn run_rgmodel_cmd(
+    covstruc: &Path,
+    estimation: &str,
+    model: Option<&str>,
+    std_lv: bool,
+    out: &Path,
+) -> Result<()> {
     let json = std::fs::read_to_string(covstruc)
         .with_context(|| format!("failed to read {}", covstruc.display()))?;
     let ldsc_result = gsem_ldsc::LdscResult::from_json_string(&json)?;
 
     eprintln!("Fitting rgmodel (estimation={estimation})...");
 
-    let result = gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation)?;
+    let result =
+        gsem_sem::rgmodel::run_rgmodel(&ldsc_result.s, &ldsc_result.v, estimation, model, std_lv)?;
 
     let k = result.r.nrows();
     eprintln!(

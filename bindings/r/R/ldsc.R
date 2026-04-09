@@ -10,7 +10,13 @@
 #' @param ld Path to LD score directory (containing {chr}.l2.ldscore.gz files)
 #' @param wld Path to weight LD score directory (defaults to \code{ld})
 #' @param trait.names Character vector of trait names (defaults to V1, V2, ...)
+#' @param sep_weights Use separate weight LD scores (ignored in gsemr)
+#' @param chr Number of chromosomes (default 22)
 #' @param n.blocks Number of jackknife blocks (default 200)
+#' @param ldsc.log Log file path (ignored in gsemr)
+#' @param stand Standardize output (default FALSE)
+#' @param select Variable selection method (default FALSE)
+#' @param chisq.max Maximum chi-square filter (default NA = auto)
 #' @return A list with components:
 #'   \item{S}{Genetic covariance matrix (k x k)}
 #'   \item{V}{Sampling covariance matrix of S (k* x k*, where k* = k(k+1)/2)}
@@ -18,17 +24,27 @@
 #'   \item{N}{Sample size vector}
 #'   \item{m}{Number of SNPs used}
 #' @export
-ldsc <- function(traits,
-                 sample.prev = rep(NA, length(traits)),
-                 population.prev = rep(NA, length(traits)),
-                 ld,
-                 wld = ld,
-                 trait.names = NULL,
-                 n.blocks = 200L) {
+ldsc <- function(traits, sample.prev, population.prev, ld, wld,
+                 trait.names=NULL, sep_weights=FALSE, chr=22,
+                 n.blocks=200, ldsc.log=NULL, stand=FALSE, select=FALSE, chisq.max=NA) {
+
+  # Ignored params
+  if (!identical(sep_weights, FALSE)) {
+    message("Note: 'sep_weights' is ignored in gsemr -- weight LD scores are always read from wld directory")
+  }
+  if (!is.null(ldsc.log)) {
+    message("Note: 'ldsc.log' is ignored in gsemr -- logging is handled by the Rust runtime")
+  }
 
   if (is.null(trait.names)) {
     trait.names <- paste0("V", seq_along(traits))
   }
+
+  # Convert select to string for Rust
+  select_str <- if (is.logical(select) && !select) "FALSE" else as.character(select)
+
+  # Convert chisq.max: NA means auto (pass NaN to Rust)
+  chisq_max_val <- if (is.na(chisq.max)) NaN else as.double(chisq.max)
 
   json <- .Call("wrap__ldsc_rust",
     as.character(traits),
@@ -36,7 +52,11 @@ ldsc <- function(traits,
     as.double(population.prev),
     as.character(ld),
     as.character(wld),
-    as.integer(n.blocks)
+    as.integer(n.blocks),
+    as.integer(chr),
+    chisq_max_val,
+    as.logical(stand),
+    as.character(select_str)
   )
 
   result <- jsonlite::fromJSON(json)

@@ -4,8 +4,7 @@
 #
 # Prerequisites:
 #   install.packages(c("bench", "jsonlite"))
-#   # Install gsemr (compiles Rust via extendr):
-#   R CMD INSTALL crates/gsem-r/
+#   R CMD INSTALL bindings/r/
 #
 # Usage:
 #   cd bench && Rscript benchmark.R
@@ -26,7 +25,7 @@ library(GenomicSEM)
 if (!requireNamespace("gsemr", quietly = TRUE)) {
   stop(
     "gsemr package not installed.\n",
-    "Install with: R CMD INSTALL ../crates/gsem-r/\n",
+    "Install with: R CMD INSTALL ../bindings/r/\n",
     "(requires Rust toolchain)"
   )
 }
@@ -36,7 +35,6 @@ library(gsemr)
 traits <- paste0("data/iter1GWAS", 1:3, ".sumstats.gz")
 ld     <- "data/eur_w_ld_chr/"
 trait_names <- c("V1", "V2", "V3")
-model_str  <- "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3"
 
 cat("\n========================================\n")
 cat("  GenomicSEM Benchmark: R vs gsemr\n")
@@ -49,7 +47,7 @@ cat("--- Benchmarking LDSC ---\n")
 
 ldsc_bench <- bench::mark(
   R_GenomicSEM = {
-    ldsc(
+    GenomicSEM::ldsc(
       traits = traits,
       sample.prev = c(NA, NA, NA),
       population.prev = c(NA, NA, NA),
@@ -59,7 +57,14 @@ ldsc_bench <- bench::mark(
     )
   },
   gsemr_Rust = {
-    ldsc_r(traits, c(NA, NA, NA), c(NA, NA, NA), ld, ld, 200L)
+    gsemr::ldsc(
+      traits = traits,
+      sample.prev = c(NA, NA, NA),
+      population.prev = c(NA, NA, NA),
+      ld = ld, wld = ld,
+      trait.names = trait_names,
+      n.blocks = 200L
+    )
   },
   min_iterations = 3,
   check = FALSE,
@@ -70,12 +75,12 @@ cat("\nLDSC results:\n")
 print(ldsc_bench[, c("expression", "min", "median", "mem_alloc", "n_itr")])
 
 # ==========================================================================
-# SEM Benchmark
+# Common Factor SEM Benchmark
 # ==========================================================================
-cat("\n--- Benchmarking SEM ---\n")
+cat("\n--- Benchmarking Common Factor SEM ---\n")
 
 # Pre-compute LDSC results for SEM input
-r_covstruc <- ldsc(
+r_covstruc <- GenomicSEM::ldsc(
   traits = traits,
   sample.prev = c(NA, NA, NA),
   population.prev = c(NA, NA, NA),
@@ -83,14 +88,21 @@ r_covstruc <- ldsc(
   trait.names = trait_names,
   n.blocks = 200
 )
-rust_covstruc_json <- ldsc_r(traits, c(NA, NA, NA), c(NA, NA, NA), ld, ld, 200L)
+rust_covstruc <- gsemr::ldsc(
+  traits = traits,
+  sample.prev = c(NA, NA, NA),
+  population.prev = c(NA, NA, NA),
+  ld = ld, wld = ld,
+  trait.names = trait_names,
+  n.blocks = 200L
+)
 
 sem_bench <- bench::mark(
   R_GenomicSEM = {
-    commonfactor(r_covstruc, estimation = "DWLS")
+    GenomicSEM::commonfactor(r_covstruc, estimation = "DWLS")
   },
   gsemr_Rust = {
-    usermodel_r(rust_covstruc_json, model_str, "DWLS")
+    gsemr::commonfactor(rust_covstruc, estimation = "DWLS")
   },
   min_iterations = 5,
   check = FALSE,
@@ -101,14 +113,38 @@ cat("\nSEM results:\n")
 print(sem_bench[, c("expression", "min", "median", "mem_alloc", "n_itr")])
 
 # ==========================================================================
+# User Model Benchmark
+# ==========================================================================
+cat("\n--- Benchmarking User Model ---\n")
+
+model_str <- "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3"
+
+usermodel_bench <- bench::mark(
+  R_GenomicSEM = {
+    GenomicSEM::usermodel(r_covstruc, estimation = "DWLS", model = model_str)
+  },
+  gsemr_Rust = {
+    gsemr::usermodel(rust_covstruc, estimation = "DWLS", model = model_str)
+  },
+  min_iterations = 5,
+  check = FALSE,
+  filter_gc = FALSE
+)
+
+cat("\nUser Model results:\n")
+print(usermodel_bench[, c("expression", "min", "median", "mem_alloc", "n_itr")])
+
+# ==========================================================================
 # Speedup Summary
 # ==========================================================================
 ldsc_speedup <- as.numeric(ldsc_bench$median[1]) / as.numeric(ldsc_bench$median[2])
 sem_speedup  <- as.numeric(sem_bench$median[1]) / as.numeric(sem_bench$median[2])
+um_speedup   <- as.numeric(usermodel_bench$median[1]) / as.numeric(usermodel_bench$median[2])
 
 cat("\n========================================\n")
-cat(sprintf("  LDSC speedup (median): %.1fx\n", ldsc_speedup))
-cat(sprintf("  SEM  speedup (median): %.1fx\n", sem_speedup))
+cat(sprintf("  LDSC         speedup (median): %.1fx\n", ldsc_speedup))
+cat(sprintf("  commonfactor speedup (median): %.1fx\n", sem_speedup))
+cat(sprintf("  usermodel    speedup (median): %.1fx\n", um_speedup))
 cat("========================================\n")
 
 # ==========================================================================
@@ -120,10 +156,9 @@ S_r <- as.matrix(r_covstruc$S)
 V_r <- as.matrix(r_covstruc$V)
 I_r <- as.matrix(r_covstruc$I)
 
-rust_parsed <- fromJSON(rust_covstruc_json)
-S_rust <- as.matrix(rust_parsed$s)
-V_rust <- as.matrix(rust_parsed$v)
-I_rust <- as.matrix(rust_parsed$i_mat)
+S_rust <- as.matrix(rust_covstruc$S)
+V_rust <- as.matrix(rust_covstruc$V)
+I_rust <- as.matrix(rust_covstruc$I)
 
 s_diff <- max(abs(S_r - S_rust))
 v_diff <- max(abs(V_r - V_rust))
@@ -141,7 +176,7 @@ fmt_time <- function(x) sprintf("%.2f", as.numeric(x))
 lines <- c(
   "# Benchmark Results: gsemr (Rust) vs R GenomicSEM",
   "",
-  sprintf("Data: 3 simulated traits, N=50,000 | bench::mark (min_iterations=3/5)"),
+  sprintf("Data: 3 simulated traits, N=50,000 | bench::mark"),
   "",
   "## Timing (median)",
   "",
@@ -149,8 +184,10 @@ lines <- c(
   "|------|-------------|-------------|---------|",
   sprintf("| LDSC | %ss | %ss | **%.1fx** |",
     fmt_time(ldsc_bench$median[1]), fmt_time(ldsc_bench$median[2]), ldsc_speedup),
-  sprintf("| SEM  | %ss | %ss | **%.1fx** |",
+  sprintf("| commonfactor | %ss | %ss | **%.1fx** |",
     fmt_time(sem_bench$median[1]), fmt_time(sem_bench$median[2]), sem_speedup),
+  sprintf("| usermodel | %ss | %ss | **%.1fx** |",
+    fmt_time(usermodel_bench$median[1]), fmt_time(usermodel_bench$median[2]), um_speedup),
   "",
   "## Numerical Accuracy (max element-wise absolute diff)",
   "",

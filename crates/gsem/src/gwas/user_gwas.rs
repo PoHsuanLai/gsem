@@ -19,6 +19,12 @@ pub struct SnpResult {
     pub chisq_df: usize,
     pub converged: bool,
     pub warning: Option<String>,
+    /// Q_SNP heterogeneity statistic (if computed).
+    pub q_snp: Option<f64>,
+    /// Degrees of freedom for Q_SNP test.
+    pub q_snp_df: Option<usize>,
+    /// P-value for Q_SNP test.
+    pub q_snp_p: Option<f64>,
 }
 
 /// A single parameter result for one SNP.
@@ -49,6 +55,8 @@ pub struct UserGwasConfig {
     /// Label for the first observed variable in the model.
     /// "SNP" for standard GWAS, "Gene" for TWAS mode.
     pub snp_label: String,
+    /// Compute Q_SNP heterogeneity statistic.
+    pub q_snp: bool,
 }
 
 impl Default for UserGwasConfig {
@@ -62,6 +70,7 @@ impl Default for UserGwasConfig {
             smooth_check: false,
             snp_se: None,
             snp_label: "SNP".to_string(),
+            q_snp: false,
         }
     }
 }
@@ -92,6 +101,9 @@ pub fn run_user_gwas(
                 chisq_df: 0,
                 converged: false,
                 warning: Some(format!("model parse error: {e}")),
+                q_snp: None,
+                q_snp_df: None,
+                q_snp_p: None,
             }];
         }
     };
@@ -204,6 +216,15 @@ fn process_single_snp(
         })
         .collect();
 
+    // Compute Q_SNP if requested
+    let (q_snp_val, q_snp_df_val, q_snp_p_val) = if config.q_snp {
+        let sigma_hat = model.implied_cov();
+        let (q, df, p) = super::q_snp::compute_q_snp(&s_full, &sigma_hat, &v_full);
+        (Some(q), Some(df), Some(p))
+    } else {
+        (None, None, None)
+    };
+
     SnpResult {
         snp_idx,
         params,
@@ -211,5 +232,8 @@ fn process_single_snp(
         chisq_df: model.df(),
         converged: fit.converged,
         warning: None,
+        q_snp: q_snp_val,
+        q_snp_df: q_snp_df_val,
+        q_snp_p: q_snp_p_val,
     }
 }
