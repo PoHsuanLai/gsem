@@ -146,13 +146,6 @@ pub fn ldsc(
         anyhow::bail!("no traits provided");
     }
 
-    // Build LD score lookup: SNP -> (index, l2, w_ld)
-    let ld_map: HashMap<&str, (usize, f64, f64)> = ld_snps
-        .iter()
-        .enumerate()
-        .map(|(i, snp)| (snp.as_str(), (i, ld_scores[i], w_ld_scores[i])))
-        .collect();
-
     // Build trait SNP lookups: SNP -> index
     let trait_maps: Vec<HashMap<&str, usize>> = traits
         .iter()
@@ -176,7 +169,7 @@ pub fn ldsc(
         .map(|&(j, jj)| {
             // Merge data for this specific pair
             let merged = merge_pair(
-                traits, &ld_map, &trait_maps, j, jj, m_total, config,
+                traits, ld_snps, ld_scores, w_ld_scores, &trait_maps, j, jj, m_total, config,
             )?;
             let n_blocks = config.n_blocks.min(merged.n_snps);
 
@@ -263,19 +256,23 @@ pub fn ldsc(
 
 /// Merge two traits with LD scores on SNP ID (per-pair, matching R's behavior).
 ///
-/// R merges per trait-pair, so the ANX-PTSD pair may have more SNPs than
-/// a global merge across all traits. This is important for accuracy.
+/// R merges per trait-pair, then sorts by CHR, BP (genomic position).
+/// We iterate over LD SNPs in order (which are already in genomic order,
+/// read chromosome by chromosome) to match R's block structure.
 fn merge_pair(
     traits: &[TraitSumstats],
-    ld_map: &HashMap<&str, (usize, f64, f64)>,
+    ld_snps: &[String],
+    ld_scores: &[f64],
+    w_ld_scores: &[f64],
     trait_maps: &[HashMap<&str, usize>],
     j: usize,
     jj: usize,
     m_total: f64,
     config: &LdscConfig,
 ) -> Result<PairMergedData> {
-    // Find SNPs present in both traits (j, jj) AND in LD scores.
-    // Use trait j's SNP order as the iteration base (matches R which uses y1).
+    // Iterate over LD SNPs in genomic order (chr1, chr2, ..., chr22).
+    // This matches R's `merged[order(CHR, BP), ]` which is critical for
+    // jackknife block structure and V matrix accuracy.
     let mut z_j = Vec::new();
     let mut z_k = Vec::new();
     let mut n_j = Vec::new();
@@ -283,16 +280,13 @@ fn merge_pair(
     let mut ld = Vec::new();
     let mut w_ld = Vec::new();
 
-    for snp in &traits[j].snp {
+    for (ld_idx, snp) in ld_snps.iter().enumerate() {
         let snp_str = snp.as_str();
 
-        // Must be in LD scores
-        let Some(&(_, l2, wl)) = ld_map.get(snp_str) else {
+        // Must be in trait j
+        let Some(&idx_j) = trait_maps[j].get(snp_str) else {
             continue;
         };
-
-        // Must be in trait j (always true since we iterate trait j's SNPs)
-        let idx_j = trait_maps[j][snp_str];
 
         // Must be in trait jj
         let Some(&idx_jj) = trait_maps[jj].get(snp_str) else {
@@ -317,8 +311,8 @@ fn merge_pair(
         z_k.push(traits[jj].z[idx_jj]);
         n_j.push(traits[j].n[idx_j]);
         n_k.push(traits[jj].n[idx_jj]);
-        ld.push(l2);
-        w_ld.push(wl);
+        ld.push(ld_scores[ld_idx]);
+        w_ld.push(w_ld_scores[ld_idx]);
     }
 
     let n_snps = ld.len();
