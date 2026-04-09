@@ -298,9 +298,9 @@ fn usermodel(
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
+        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
     } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
+        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
     };
 
     let params_json: Vec<String> = pt
@@ -383,6 +383,8 @@ fn sumstats(
         ols: ols.unwrap_or_else(|| vec![false; k]),
         linprob: linprob.unwrap_or_else(|| vec![false; k]),
         n_overrides: n.map(|v| v.into_iter().map(Some).collect()).unwrap_or_else(|| vec![None; k]),
+        beta_overrides: Vec::new(),
+        direct_filter: false,
     };
     let file_refs: Vec<&std::path::Path> = files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
     gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &names, &config, std::path::Path::new(out))
@@ -549,25 +551,21 @@ fn user_gwas(
 /// Parallel analysis to determine number of factors.
 /// Accepts S and V as JSON strings (2D arrays).
 #[pyfunction]
-#[pyo3(signature = (s_json, v_json, r=500, p=None, save_pdf=false, diag=false, fa=false, fm=None, nfactors=None))]
-#[allow(unused_variables)]
+#[pyo3(signature = (s_json, v_json, r=500, p=None, diag=false))]
 fn parallel_analysis(
     s_json: &str,
     v_json: &str,
     r: usize,
-    p: Option<usize>,              // ignored
-    save_pdf: bool,                // ignored
-    diag: bool,                    // ignored
-    fa: bool,                      // ignored
-    fm: Option<String>,            // ignored
-    nfactors: Option<usize>,       // ignored
+    p: Option<f64>,
+    diag: bool,
 ) -> PyResult<String> {
     let s_mat = json_to_mat(s_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid s_json: {e}")))?;
     let v_mat = json_to_mat(v_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
 
-    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r);
+    let percentile = p.unwrap_or(0.95);
+    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, percentile, diag);
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(
@@ -592,7 +590,7 @@ fn write_model(
     let n_rows = loadings.len();
     let n_cols = if n_rows > 0 { loadings[0].len() } else { 0 };
     let mat = faer::Mat::from_fn(n_rows, n_cols, |i, j| loadings[i][j]);
-    gsem_sem::write_model::write_model(&mat, &names, cutoff, fix_resid, bifactor)
+    gsem_sem::write_model::write_model(&mat, &names, cutoff, fix_resid, bifactor, mustload, common)
 }
 
 /// Compute model-implied genetic correlation matrix.
@@ -879,6 +877,8 @@ fn s_ldsc(
 
     let config = gsem_ldsc::stratified::StratifiedLdscConfig {
         n_blocks,
+        rm_flank: false,
+        flank_kb: 500,
     };
 
     let result = gsem_ldsc::stratified::s_ldsc(
@@ -891,6 +891,8 @@ fn s_ldsc(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
+        Some(&annot_data.chr),
+        Some(&annot_data.bp),
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
@@ -992,22 +994,44 @@ fn enrich(
 
 /// Simulate GWAS summary statistics.
 #[pyfunction]
-#[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m))]
+#[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m, intercepts=None, r_pheno=None, n_overlap=0.0))]
 fn sim_ldsc(
     s_matrix: Vec<Vec<f64>>,
     n_per_trait: Vec<f64>,
     ld_scores: Vec<f64>,
     m: f64,
+    intercepts: Option<Vec<Vec<f64>>>,
+    r_pheno: Option<Vec<Vec<f64>>>,
+    n_overlap: f64,
 ) -> PyResult<Vec<Vec<f64>>> {
     let nr = s_matrix.len();
     let nc = if nr > 0 { s_matrix[0].len() } else { 0 };
     let s_mat = faer::Mat::from_fn(nr, nc, |i, j| s_matrix[i][j]);
+
+    let int_mat = intercepts.map(|rows| {
+        let nr = rows.len();
+        let nc = if nr > 0 { rows[0].len() } else { 0 };
+        faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
+    });
+
+    let r_pheno_mat = r_pheno.map(|rows| {
+        let nr = rows.len();
+        let nc = if nr > 0 { rows[0].len() } else { 0 };
+        faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
+    });
+
+    let config = gsem::stats::simulation::SimConfig {
+        intercepts: int_mat,
+        r_pheno: r_pheno_mat,
+        n_overlap,
+    };
 
     Ok(gsem::stats::simulation::simulate_sumstats(
         &s_mat,
         &n_per_trait,
         &ld_scores,
         m,
+        &config,
     ))
 }
 
@@ -1036,6 +1060,7 @@ fn multi_snp(
         model: model.to_string(),
         estimation: estimation.to_string(),
         max_iter,
+        snp_var_se: None,
     };
 
     let result = gsem::gwas::multi_snp::run_multi_snp(

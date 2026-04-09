@@ -20,10 +20,19 @@ pub struct PaResult {
 ///
 /// Monte Carlo simulation: generates random correlation matrices from
 /// N(null_vec, V) where null_vec is vech of the diagonal-only S,
-/// then compares observed eigenvalues to 95th percentile.
+/// then compares observed eigenvalues to the given percentile threshold.
+///
+/// `percentile`: quantile threshold (e.g. 0.95 for 95th percentile).
+/// `diag_only`: if true, use only `diag(V)` for simulation (ignore off-diagonal sampling covariance).
 ///
 /// Port of GenomicSEM's `paLDSC()`.
-pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
+pub fn parallel_analysis(
+    s: &Mat<f64>,
+    v: &Mat<f64>,
+    n_sim: usize,
+    percentile: f64,
+    diag_only: bool,
+) -> PaResult {
     let k = s.nrows();
     let kstar = k * (k + 1) / 2;
 
@@ -38,8 +47,15 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
     let s_null = Mat::<f64>::identity(k, k);
     let null_vec = vech::vech(&s_null);
 
+    // When diag_only=true, use only diagonal of V (ignore sampling covariance between elements)
+    let v_sim = if diag_only {
+        Mat::from_fn(kstar, kstar, |i, j| if i == j { v[(i, j)] } else { 0.0 })
+    } else {
+        v.to_owned()
+    };
+
     // Cholesky of V for multivariate normal sampling: L such that V = L L'
-    let chol_l = compute_cholesky_l(v, kstar);
+    let chol_l = compute_cholesky_l(&v_sim, kstar);
 
     // Simulate null eigenvalue distributions (parallelized — each iteration is independent)
     let pb = ProgressBar::new(n_sim as u64);
@@ -85,8 +101,8 @@ pub fn parallel_analysis(s: &Mat<f64>, v: &Mat<f64>, n_sim: usize) -> PaResult {
         }
     }
 
-    // Compute 95th percentile for each eigenvalue using partial sort
-    let percentile_idx = ((n_sim as f64) * 0.95) as usize;
+    // Compute percentile for each eigenvalue using partial sort
+    let percentile_idx = ((n_sim as f64) * percentile) as usize;
     let simulated_95: Vec<f64> = sim_eigenvalues
         .iter_mut()
         .map(|eigs| {
@@ -159,7 +175,7 @@ mod tests {
         // Identity correlation matrix: all eigenvalues = 1
         let s = Mat::<f64>::identity(3, 3);
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.01 } else { 0.0 });
-        let result = parallel_analysis(&s, &v, 100);
+        let result = parallel_analysis(&s, &v, 100, 0.95, false);
         assert_eq!(result.observed.len(), 3);
         for &eig in &result.observed {
             assert!((eig - 1.0).abs() < 1e-10);
@@ -171,7 +187,7 @@ mod tests {
         // Strong 1-factor structure
         let s = faer::mat![[1.0, 0.8, 0.8], [0.8, 1.0, 0.8], [0.8, 0.8, 1.0],];
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
-        let result = parallel_analysis(&s, &v, 200);
+        let result = parallel_analysis(&s, &v, 200, 0.95, false);
         assert!(result.n_factors >= 1);
     }
 }

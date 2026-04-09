@@ -11,8 +11,8 @@
 #' @param maf.filter MAF filter threshold (default 0.01)
 #' @param log.name Log file name (ignored in gsemr)
 #' @param column.names Named list of column name overrides
-#' @param parallel Use parallel processing (ignored in gsemr)
-#' @param cores Number of cores (ignored in gsemr)
+#' @param parallel Use parallel processing (default FALSE)
+#' @param cores Number of cores (default NULL)
 #' @param overwrite Overwrite existing files (ignored in gsemr)
 #' @return Character vector of output file paths (invisibly)
 #' @export

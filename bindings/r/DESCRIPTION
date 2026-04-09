@@ -13,5 +13,5 @@ License: GPL-3
 Encoding: UTF-8
 SystemRequirements: Rust (>= 1.70), cargo
 Imports: jsonlite
-Suggests: bench
+Suggests: bench, psych
 RoxygenNote: 7.3.0

@@ -22,7 +22,19 @@ pub struct FitResult {
 ///
 /// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
 /// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
-pub fn fit_dwls(model: &mut Model, s_obs: &Mat<f64>, v_diag: &[f64], max_iter: usize) -> FitResult {
+/// Fit a model using Diagonally Weighted Least Squares (DWLS).
+///
+/// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
+/// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
+///
+/// `grad_tol`: gradient norm convergence threshold (default 1e-6).
+pub fn fit_dwls(
+    model: &mut Model,
+    s_obs: &Mat<f64>,
+    v_diag: &[f64],
+    max_iter: usize,
+    grad_tol: Option<f64>,
+) -> FitResult {
     let s_vec = vech::vech(s_obs);
     let w: Vec<f64> = v_diag
         .iter()
@@ -37,13 +49,20 @@ pub fn fit_dwls(model: &mut Model, s_obs: &Mat<f64>, v_diag: &[f64], max_iter: u
         numerical_gradient(model, params, |m| dwls_objective(m, &s_vec, &w))
     };
 
-    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn)
+    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, grad_tol)
 }
 
 /// Fit a model using Maximum Likelihood.
 ///
 /// Minimizes: F = log|Sigma| + tr(S * Sigma^{-1}) - log|S| - p
-pub fn fit_ml(model: &mut Model, s_obs: &Mat<f64>, max_iter: usize) -> FitResult {
+///
+/// `grad_tol`: gradient norm convergence threshold (default 1e-6).
+pub fn fit_ml(
+    model: &mut Model,
+    s_obs: &Mat<f64>,
+    max_iter: usize,
+    grad_tol: Option<f64>,
+) -> FitResult {
     let lower_bounds: Vec<Option<f64>> = model.lower_bounds.clone();
     let s_owned = s_obs.to_owned();
 
@@ -53,7 +72,7 @@ pub fn fit_ml(model: &mut Model, s_obs: &Mat<f64>, max_iter: usize) -> FitResult
         numerical_gradient(model, params, |m| ml_objective(m, &s_owned))
     };
 
-    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn)
+    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, grad_tol)
 }
 
 /// Apply a parameter step with projection onto lower bounds.
@@ -82,11 +101,13 @@ fn lbfgs_minimize<F, G>(
     lower_bounds: &[Option<f64>],
     obj_fn: F,
     mut grad_fn: G,
+    tolerance: Option<f64>,
 ) -> FitResult
 where
     F: Fn(&Model) -> f64,
     G: FnMut(&mut Model, &[f64]) -> Vec<f64>,
 {
+    let gtol = tolerance.unwrap_or(1e-6);
     let memory_size = 10;
     let c1 = 1e-4; // Armijo condition constant
     let max_ls = 30; // Max line search steps
@@ -114,7 +135,7 @@ where
     for _iter in 0..max_iter {
         // Check gradient convergence
         let grad_norm: f64 = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
-        if grad_norm < 1e-6 {
+        if grad_norm < gtol {
             converged = true;
             break;
         }
@@ -374,7 +395,7 @@ mod tests {
             .collect();
         let mut model = Model::from_partable(&pt, &obs_names);
 
-        let result = fit_dwls(&mut model, &s, &v_diag, 1000);
+        let result = fit_dwls(&mut model, &s, &v_diag, 1000, None);
         assert!(result.converged, "L-BFGS should converge for simple CFA");
         assert!(
             result.objective < 0.1,

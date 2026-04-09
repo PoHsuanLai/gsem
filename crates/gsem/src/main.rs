@@ -799,6 +799,8 @@ fn run_sumstats(
         linprob: vec![false; k],
         keep_indel,
         keep_ambig: false,
+        beta_overrides: Vec::new(),
+        direct_filter: false,
     };
 
     let file_refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
@@ -982,7 +984,7 @@ fn run_s_ldsc(
     let sp = parse_prevalences(&sample_prev, k);
     let pp = parse_prevalences(&pop_prev, k);
 
-    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks };
+    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks, rm_flank: false, flank_kb: 500 };
 
     eprintln!("Running stratified LDSC...");
     let result = gsem_ldsc::stratified::s_ldsc(
@@ -995,6 +997,8 @@ fn run_s_ldsc(
         &annot_data.annotation_names,
         &annot_data.m_annot,
         &config,
+        Some(&annot_data.chr),
+        Some(&annot_data.bp),
     )?;
 
     // Write JSON output
@@ -1071,9 +1075,9 @@ fn run_sem(
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
+        gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
     } else {
-        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
+        gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
     };
 
     // If model failed to converge and fix_resid is set, add lower bounds on
@@ -1094,9 +1098,9 @@ fn run_sem(
         // Rebuild model with updated lower bounds
         sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
         if estimation.to_uppercase() == "ML" {
-            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000)
+            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
         } else {
-            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000)
+            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
         }
     } else {
         fit
@@ -1651,7 +1655,7 @@ fn run_write_model(
     );
 
     let model_str =
-        gsem_sem::write_model::write_model(&loadings, names, cutoff, fix_resid, bifactor);
+        gsem_sem::write_model::write_model(&loadings, names, cutoff, fix_resid, bifactor, false, false);
 
     std::fs::write(out, &model_str)
         .with_context(|| format!("failed to write {}", out.display()))?;
@@ -1669,7 +1673,7 @@ fn run_parallel_analysis(covstruc: &Path, n_sim: usize, out: &Path) -> Result<()
     eprintln!("Running parallel analysis ({k} traits, {n_sim} simulations)...");
 
     let result =
-        gsem::stats::parallel_analysis::parallel_analysis(&ldsc_result.s, &ldsc_result.v, n_sim);
+        gsem::stats::parallel_analysis::parallel_analysis(&ldsc_result.s, &ldsc_result.v, n_sim, 0.95, false);
 
     eprintln!("Suggested number of factors: {}", result.n_factors);
 
@@ -1905,6 +1909,7 @@ fn run_multi_snp_cmd(
         model: model_str,
         estimation: estimation.to_string(),
         max_iter: 500,
+        snp_var_se: None,
     };
 
     eprintln!("Running multi-SNP analysis with {n_snps} SNPs, {k} traits...");
@@ -1986,6 +1991,7 @@ fn run_simulate(covstruc: &Path, n_per_trait: &str, ld_dir: &Path, out: &Path) -
         &n_vec,
         &ld_scores,
         ld_data.total_m,
+        &gsem::stats::simulation::SimConfig::default(),
     );
 
     // Write TSV: columns are trait z-scores

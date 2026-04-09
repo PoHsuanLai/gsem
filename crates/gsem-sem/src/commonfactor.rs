@@ -44,9 +44,9 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
     let v_diag: Vec<f64> = (0..kstar).map(|i| v[(i, i)]).collect();
 
     let fit = if estimation.to_uppercase() == "ML" {
-        estimator::fit_ml(&mut model, s, 1000)
+        estimator::fit_ml(&mut model, s, 1000, None)
     } else {
-        estimator::fit_dwls(&mut model, s, &v_diag, 1000)
+        estimator::fit_dwls(&mut model, s, &v_diag, 1000, None)
     };
 
     if !fit.converged {
@@ -107,9 +107,9 @@ pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: &str) -> Result<
     let null_pt = parse_model(&null_model_str, false).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut null_model = Model::from_partable(&null_pt, &obs_names);
     let null_fit = if estimation.to_uppercase() == "ML" {
-        estimator::fit_ml(&mut null_model, s, 1000)
+        estimator::fit_ml(&mut null_model, s, 1000, None)
     } else {
-        estimator::fit_dwls(&mut null_model, s, &v_diag, 1000)
+        estimator::fit_dwls(&mut null_model, s, &v_diag, 1000, None)
     };
     let _ = null_fit; // used only to set parameter values in null_model
     let null_sigma = null_model.implied_cov();

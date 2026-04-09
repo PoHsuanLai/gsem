@@ -6,14 +6,11 @@
 #' @param covstruc LDSC result (list with S, V, I components, or JSON string)
 #' @param SNPs Data frame of SNP summary statistics (with beta, se, var columns per SNP)
 #' @param LD LD correlation matrix between SNPs
-#' @param SNPSE SNP SE flag (ignored in gsemr)
+#' @param SNPSE SNP SE override (default FALSE = auto, numeric = override)
 #' @param SNPlist Optional SNP list to subset (character vector)
 #' @return A list with converged, chisq, df, and params
 #' @export
 multiSNP <- function(covstruc, SNPs, LD, SNPSE = FALSE, SNPlist = NA) {
-  if (!identical(SNPSE, FALSE)) {
-    message("Note: 'SNPSE' is ignored in gsemr")
-  }
 
   if (is.list(covstruc) && !is.character(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(
@@ -49,6 +46,9 @@ multiSNP <- function(covstruc, SNPs, LD, SNPSE = FALSE, SNPlist = NA) {
   se_json <- jsonlite::toJSON(se_mat, digits = 15)
   ld_json <- jsonlite::toJSON(as.matrix(LD), digits = 15)
 
+  # Convert SNPSE: FALSE means auto (pass NaN), numeric means override
+  snp_se_val <- if (is.logical(SNPSE) && !SNPSE) NaN else as.double(SNPSE)
+
   json <- .Call("wrap__multi_snp_rust",
     as.character(covstruc_json),
     as.character(model),
@@ -57,7 +57,8 @@ multiSNP <- function(covstruc, SNPs, LD, SNPSE = FALSE, SNPlist = NA) {
     as.character(se_json),
     as.numeric(var_snp),
     as.character(ld_json),
-    as.character(snp_names)
+    as.character(snp_names),
+    snp_se_val
   )
 
   result <- jsonlite::fromJSON(json)
