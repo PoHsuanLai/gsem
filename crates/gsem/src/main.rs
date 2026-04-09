@@ -9,7 +9,7 @@ use gsem::io::gwas_reader;
 use gsem::munge;
 
 #[derive(Parser)]
-#[command(name = "genomicsem", about = "Genomic Structural Equation Modeling")]
+#[command(name = "gsem", about = "Genomic Structural Equation Modeling")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "genomicsem"
+name = "gsem"
 path = "src/main.rs"
 
 [dependencies]
