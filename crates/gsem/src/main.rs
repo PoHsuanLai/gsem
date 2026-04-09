@@ -100,6 +100,7 @@ enum Commands {
     },
 
     /// Fit structural equation model
+    #[command(name = "usermodel")]
     Sem {
         /// LDSC result JSON file
         #[arg(long)]
@@ -181,6 +182,7 @@ enum Commands {
     },
 
     /// Run multivariate GWAS
+    #[command(name = "userGWAS")]
     Gwas {
         /// LDSC result JSON file
         #[arg(long)]
@@ -240,6 +242,7 @@ enum Commands {
     },
 
     /// Run common factor GWAS (auto-generated 1-factor model per SNP)
+    #[command(name = "commonfactorGWAS")]
     CommonfactorGwas {
         /// LDSC result JSON file
         #[arg(long)]
@@ -263,6 +266,7 @@ enum Commands {
     },
 
     /// Auto-generate model syntax from factor loadings
+    #[command(name = "write.model")]
     WriteModel {
         /// TSV file of factor loadings (rows=phenotypes, cols=factors)
         #[arg(long)]
@@ -290,6 +294,7 @@ enum Commands {
     },
 
     /// Parallel analysis to determine number of factors
+    #[command(name = "paLDSC")]
     ParallelAnalysis {
         /// LDSC result JSON file
         #[arg(long)]
@@ -378,6 +383,7 @@ enum Commands {
     },
 
     /// Joint analysis of multiple SNPs with LD
+    #[command(name = "multiSNP")]
     MultiSnp {
         /// LDSC result JSON file
         #[arg(long)]
@@ -409,6 +415,7 @@ enum Commands {
     },
 
     /// Simulate GWAS summary statistics
+    #[command(name = "simLDSC")]
     Simulate {
         /// LDSC result JSON file
         #[arg(long)]
@@ -455,6 +462,30 @@ enum Commands {
 
         /// Output file (JSON)
         #[arg(short, long, default_value = "hdl_result.json")]
+        out: PathBuf,
+    },
+
+    /// Generalized Least Squares regression on genetic parameters
+    #[command(name = "summaryGLS")]
+    SummaryGls {
+        /// TSV file with predictor matrix X (rows=observations, cols=predictors)
+        #[arg(long)]
+        x: PathBuf,
+
+        /// TSV file with outcome vector Y (one value per line)
+        #[arg(long)]
+        y: PathBuf,
+
+        /// TSV file with covariance matrix V (square, same rows as Y)
+        #[arg(long)]
+        v: PathBuf,
+
+        /// Add intercept column (default true)
+        #[arg(long, default_value = "true")]
+        intercept: bool,
+
+        /// Output file
+        #[arg(short, long, default_value = "gls_result.tsv")]
         out: PathBuf,
     },
 }
@@ -669,6 +700,13 @@ fn main() -> Result<()> {
             &method,
             &out,
         ),
+        Commands::SummaryGls {
+            x,
+            y,
+            v,
+            intercept,
+            out,
+        } => run_summary_gls(&x, &y, &v, intercept, &out),
     }
 }
 
@@ -2162,5 +2200,93 @@ fn run_hdl(
         eprintln!("  {}", row.join(" "));
     }
 
+    Ok(())
+}
+
+fn run_summary_gls(
+    x_path: &Path,
+    y_path: &Path,
+    v_path: &Path,
+    intercept: bool,
+    out: &Path,
+) -> Result<()> {
+    let x_content = std::fs::read_to_string(x_path)
+        .with_context(|| format!("failed to read {}", x_path.display()))?;
+    let x_rows: Vec<Vec<f64>> = x_content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            l.split(['\t', ' '])
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<f64>().unwrap_or(0.0))
+                .collect()
+        })
+        .collect();
+
+    let n = x_rows.len();
+    if n == 0 {
+        anyhow::bail!("empty X matrix");
+    }
+    let p_base = x_rows[0].len();
+    let p = if intercept { p_base + 1 } else { p_base };
+
+    let x = faer::Mat::from_fn(n, p, |i, j| {
+        if intercept && j == 0 {
+            1.0
+        } else {
+            let col = if intercept { j - 1 } else { j };
+            x_rows[i][col]
+        }
+    });
+
+    let y_content = std::fs::read_to_string(y_path)
+        .with_context(|| format!("failed to read {}", y_path.display()))?;
+    let y: Vec<f64> = y_content
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    if y.len() != n {
+        anyhow::bail!("Y length {} != X rows {}", y.len(), n);
+    }
+
+    let v_content = std::fs::read_to_string(v_path)
+        .with_context(|| format!("failed to read {}", v_path.display()))?;
+    let v_rows: Vec<Vec<f64>> = v_content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            l.split(['\t', ' '])
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<f64>().unwrap_or(0.0))
+                .collect()
+        })
+        .collect();
+
+    if v_rows.len() != n {
+        anyhow::bail!("V rows {} != Y length {}", v_rows.len(), n);
+    }
+    let v = faer::Mat::from_fn(n, n, |i, j| v_rows[i][j]);
+
+    eprintln!("GLS: {} observations, {} predictors", n, p);
+
+    let result = gsem::stats::gls::summary_gls(&x, &y, &v)
+        .ok_or_else(|| anyhow::anyhow!("GLS computation failed"))?;
+
+    let mut output = String::from("predictor\tbeta\tse\tz\tp\n");
+    for i in 0..result.beta.len() {
+        let name = if intercept && i == 0 {
+            "intercept".to_string()
+        } else {
+            format!("X{}", if intercept { i } else { i + 1 })
+        };
+        output.push_str(&format!(
+            "{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\n",
+            name, result.beta[i], result.se[i], result.z[i], result.p[i]
+        ));
+    }
+
+    std::fs::write(out, &output).with_context(|| format!("failed to write {}", out.display()))?;
+    eprintln!("Results written to {}", out.display());
     Ok(())
 }
