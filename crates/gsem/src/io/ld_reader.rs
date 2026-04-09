@@ -31,7 +31,8 @@ pub struct LdScores {
 /// Weight files at `{wld_dir}/{chr}.l2.ldscore.gz`.
 pub fn read_ld_scores(ld_dir: &Path, wld_dir: &Path, chromosomes: &[usize]) -> Result<LdScores> {
     // Read all chromosomes in parallel (each decompresses a gzip file)
-    let per_chr: Vec<Result<(Vec<LdScoreRecord>, Vec<f64>, f64)>> = chromosomes
+    type ChrData = (Vec<LdScoreRecord>, Vec<f64>, f64);
+    let per_chr: Vec<Result<ChrData>> = chromosomes
         .par_iter()
         .map(|&chr| {
             let ld_path = ld_dir.join(format!("{chr}.l2.ldscore.gz"));

@@ -119,7 +119,7 @@ pub fn run_multi_snp(
     }
 
     // SNP-trait covariance elements: use se^2 * var_snp^2 as approximate variance
-    for snp_i in 0..n_snps {
+    for (snp_i, var_snp_i) in var_snp.iter().enumerate().take(n_snps) {
         for t in 0..k {
             let row_idx = n_snps + t;
             let col_idx = snp_i;
@@ -136,7 +136,7 @@ pub fn run_multi_snp(
                     .and_then(|s| s.get(t))
                     .copied()
                     .unwrap_or(0.01);
-                v_full[(idx, idx)] = (se_val * var_snp[snp_i]).powi(2);
+                v_full[(idx, idx)] = (se_val * var_snp_i).powi(2);
             }
         }
     }

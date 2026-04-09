@@ -39,10 +39,12 @@ pub fn factor_indicators(pt: &ParTable, obs_names: &[String]) -> Vec<(String, Ve
             factors.push((factor_name.clone(), Vec::new()));
         }
 
-        if let Some(entry) = factors.iter_mut().find(|(name, _)| name == factor_name) {
-            if !entry.1.contains(&obs_idx) {
-                entry.1.push(obs_idx);
-            }
+        if let Some(entry) = factors
+            .iter_mut()
+            .find(|(name, _)| name == factor_name)
+            .filter(|entry| !entry.1.contains(&obs_idx))
+        {
+            entry.1.push(obs_idx);
         }
     }
 

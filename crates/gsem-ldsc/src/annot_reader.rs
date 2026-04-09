@@ -104,9 +104,12 @@ pub fn read_annot_ld_scores(
     })
 }
 
+/// Parsed annotation LD score file data.
+type AnnotLdFileData = (Vec<String>, Vec<Vec<f64>>, Vec<String>);
+
 /// Read a single annotation LD score file.
 /// Returns (snp_names, annotation_data[n_snps][n_annot], annotation_names).
-fn read_annot_ld_file(path: &Path) -> Result<(Vec<String>, Vec<Vec<f64>>, Vec<String>)> {
+fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
     let file =
         std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let reader = BufReader::new(GzDecoder::new(file));

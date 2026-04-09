@@ -158,22 +158,20 @@ fn read_and_qc_gwas(
                 if n_val > 0.0 {
                     let beta = z / n_val.sqrt();
                     let se_val = 1.0 / n_val.sqrt();
-                    if let Some(a1) = &rec.a1 {
-                        if let Some(a2) = &rec.a2 {
-                            let a1 = a1.to_uppercase();
-                            let a2 = a2.to_uppercase();
-                            if valid_allele_pair(&a1, &a2, config.keep_indel) {
-                                records.insert(
-                                    rec.snp,
-                                    QcRecord {
-                                        a1,
-                                        a2,
-                                        beta,
-                                        se: se_val,
-                                        maf: rec.maf,
-                                    },
-                                );
-                            }
+                    if let (Some(a1_raw), Some(a2_raw)) = (&rec.a1, &rec.a2) {
+                        let a1 = a1_raw.to_uppercase();
+                        let a2 = a2_raw.to_uppercase();
+                        if valid_allele_pair(&a1, &a2, config.keep_indel) {
+                            records.insert(
+                                rec.snp,
+                                QcRecord {
+                                    a1,
+                                    a2,
+                                    beta,
+                                    se: se_val,
+                                    maf: rec.maf,
+                                },
+                            );
                         }
                     }
                 }
@@ -207,18 +205,14 @@ fn read_and_qc_gwas(
         }
 
         // INFO filter
-        if let Some(info) = rec.info {
-            if info < config.info_filter {
-                continue;
-            }
+        if rec.info.is_some_and(|info| info < config.info_filter) {
+            continue;
         }
 
         // MAF filter
         let maf = rec.maf.map(|m| if m > 0.5 { 1.0 - m } else { m });
-        if let Some(maf_val) = maf {
-            if maf_val < config.maf_filter {
-                continue;
-            }
+        if maf.is_some_and(|maf_val| maf_val < config.maf_filter) {
+            continue;
         }
 
         // Detect and convert OR to log(OR)
@@ -341,10 +335,8 @@ fn build_merged(
             }
 
             // Use MAF from whichever trait has it
-            if maf_val == 0.0 {
-                if let Some(m) = rec.maf {
-                    maf_val = m;
-                }
+            if let Some(m) = rec.maf.filter(|_| maf_val == 0.0) {
+                maf_val = m;
             }
         }
 

@@ -179,8 +179,8 @@ pub fn s_ldsc(
 
             // Jackknife pseudo-values per annotation
             let jk = jackknife_multi(&reg, n_annot);
-            for a in 0..n_annot {
-                all_pseudos_per_annot[a].push(jk.pseudo_coefs[a].clone());
+            for (a, pseudos) in all_pseudos_per_annot.iter_mut().enumerate().take(n_annot) {
+                pseudos.push(jk.pseudo_coefs[a].clone());
             }
 
             vech_idx += 1;
