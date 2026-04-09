@@ -353,9 +353,7 @@ fn lbfgs_optimize_h2(
     let max_iter = 100;
     let c1 = 1e-4;
 
-    let obj_fn = |p: &[f64; 2]| -> f64 {
-        h2_neg_loglik(bhat, ld_scores, p[0], p[1], n, m, n_ref)
-    };
+    let obj_fn = |p: &[f64; 2]| -> f64 { h2_neg_loglik(bhat, ld_scores, p[0], p[1], n, m, n_ref) };
 
     let grad_fn = |p: &[f64; 2]| -> [f64; 2] {
         let f0 = obj_fn(p);

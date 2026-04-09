@@ -91,12 +91,12 @@ fn fit_user_model(
     model_str: &str,
     std_lv: bool,
 ) -> Result<crate::SemResult> {
+    use crate::ParamEstimate;
     use crate::estimator;
     use crate::fit_indices;
     use crate::model::Model;
     use crate::sandwich;
     use crate::syntax::parse_model;
-    use crate::ParamEstimate;
     use statrs::distribution::{ChiSquared, ContinuousCDF};
 
     let k = s.nrows();

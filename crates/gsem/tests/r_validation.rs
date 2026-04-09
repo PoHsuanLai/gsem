@@ -421,7 +421,12 @@ fn test_commonfactor_matches_r() {
     }
 
     // Check sandwich SEs match R
-    for (i, (rust_p, &r_se)) in result.parameters.iter().zip(r_sandwich_se.iter()).enumerate() {
+    for (i, (rust_p, &r_se)) in result
+        .parameters
+        .iter()
+        .zip(r_sandwich_se.iter())
+        .enumerate()
+    {
         let diff = (rust_p.se - r_se).abs();
         assert!(
             diff < 0.01,
@@ -431,5 +436,10 @@ fn test_commonfactor_matches_r() {
     }
 
     // Check implied covariance matches R
-    assert_mat_close(&result.implied_cov, &r_implied, 1e-6, "commonfactor implied cov");
+    assert_mat_close(
+        &result.implied_cov,
+        &r_implied,
+        1e-6,
+        "commonfactor implied cov",
+    );
 }

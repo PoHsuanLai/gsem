@@ -270,10 +270,7 @@ fn is_single_nucleotide(a: &str) -> bool {
 
 /// Check if a SNP has ambiguous strand (A/T or C/G pairs).
 fn is_ambiguous_snp(a1: &str, a2: &str) -> bool {
-    matches!(
-        (a1, a2),
-        ("A", "T") | ("T", "A") | ("C", "G") | ("G", "C")
-    )
+    matches!((a1, a2), ("A", "T") | ("T", "A") | ("C", "G") | ("G", "C"))
 }
 
 /// Rough heuristic: if |effect| is close to 1, it's likely an OR.
