@@ -7,24 +7,18 @@
 #' @param N Sample size matrix or vector of per-trait sample sizes
 #' @param seed Random seed (ignored in gsemr -- Rust uses its own RNG)
 #' @param ld Path to LD score directory
-#' @param rPheno Phenotypic correlation matrix (ignored in gsemr)
-#' @param int LDSC intercepts (ignored in gsemr)
-#' @param N_overlap Sample overlap proportion (ignored in gsemr)
+#' @param rPheno Phenotypic correlation matrix (default NULL = no environmental correlation)
+#' @param int LDSC intercept matrix (default NULL = identity)
+#' @param N_overlap Sample overlap proportion (default 0.99)
 #' @param r Number of replications (ignored in gsemr -- returns 1 replication)
 #' @param gzip_output Compress output (ignored in gsemr)
-#' @param parallel Run in parallel (ignored in gsemr)
-#' @param cores Number of cores (ignored in gsemr)
+#' @param parallel Run in parallel (default FALSE)
+#' @param cores Number of cores (default NULL = auto-detect)
 #' @return A matrix of simulated Z-statistics (k traits x n_snps)
 #' @export
 simLDSC <- function(covmat, N, seed = 1234, ld, rPheno = NULL, int = NULL,
                     N_overlap = 0.99, r = 1, gzip_output = TRUE,
                     parallel = FALSE, cores = NULL) {
-  if (!is.null(rPheno)) {
-    message("Note: 'rPheno' is ignored in gsemr -- simulation uses S directly")
-  }
-  if (!is.null(int)) {
-    message("Note: 'int' is ignored in gsemr")
-  }
   if (r > 1) {
     message("Note: gsemr simLDSC returns 1 replication; 'r' > 1 is ignored")
   }
@@ -67,11 +61,23 @@ simLDSC <- function(covmat, N, seed = 1234, ld, rPheno = NULL, int = NULL,
 
   s_json <- jsonlite::toJSON(s_mat, digits = 15)
 
+  # Convert intercept matrix to JSON
+  int_json <- if (is.null(int)) "null" else jsonlite::toJSON(as.matrix(int), digits = 15)
+
+  # Convert phenotypic correlation matrix to JSON
+  r_pheno_json <- if (is.null(rPheno)) "null" else jsonlite::toJSON(as.matrix(rPheno), digits = 15)
+
+  # N_overlap: use 0 if rPheno is NULL (no effect without it)
+  n_overlap_val <- if (is.null(rPheno)) 0.0 else as.double(N_overlap)
+
   json <- .Call("wrap__sim_ldsc_rust",
     as.character(s_json),
     as.numeric(n_per_trait),
     as.numeric(ld_scores),
-    as.numeric(m_total)
+    as.numeric(m_total),
+    as.character(int_json),
+    as.character(r_pheno_json),
+    n_overlap_val
   )
 
   jsonlite::fromJSON(json)

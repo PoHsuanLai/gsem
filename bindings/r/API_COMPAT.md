@@ -24,13 +24,13 @@ All core parameters for every function work identically to R GenomicSEM, includi
 - **sumstats**: files, ref, trait.names, se.logit, OLS, linprob, N, info.filter, maf.filter, keep.indel, out, ambig, betas, direct.filter
 - **userGWAS**: covstruc, SNPs, model, estimation, GC, sub, SNPSE, smooth_check, std.lv, fix_measurement, Q_SNP, printwarn, TWAS
 - **commonfactorGWAS**: covstruc, SNPs, estimation, GC, SNPSE, smooth_check, TWAS
-- **paLDSC**: covstruc, r, p
+- **paLDSC**: covstruc, r, p, diag
 - **write.model**: Loadings, S_LD, cutoff, fix_resid, bifactor, mustload, common
 - **rgmodel**: LDSCoutput, model, std.lv, estimation, sub
 - **hdl**: traits, sample.prev, population.prev, LD.path, Nref, method
 - **s_ldsc**: traits, sample.prev, population.prev, ld, wld, frq, trait.names, n.blocks, exclude_cont, ldsc.log
 - **enrich**: s_baseline, s_annot, v_annot
-- **simLDSC**: covmat, N, ld
+- **simLDSC**: covmat, N, ld, rPheno, int, N_overlap
 - **multiSNP**: covstruc, model, beta, se, var_snp, ld_matrix, snp_names, SNPSE
 - **multiGene**: covstruc, model, beta, se, var_gene, ld_matrix, gene_names, GeneSE, Genelist
 - **summaryGLS**: covstruc, results
@@ -47,11 +47,8 @@ These parameters are accepted but have no effect. An informational message is pr
 - `enrich(params, fix, std.lv, rm_flank, tau, toler, fixparam)` — The Rust enrichment implementation uses a simplified test. The full lavaan-based enrichment model with custom parameter constraints is not yet ported.
 
 ### Parallel analysis variants
-- `paLDSC(diag, fa, fm, nfactors)` — Diagonal-only mode, factor analysis mode, and factor extraction methods. Not yet ported.
+- `paLDSC(fa, fm, nfactors)` — Factor analysis mode and factor extraction methods. Would require implementing principal axis factoring and ML factor analysis algorithms.
 - `paLDSC(save.pdf)` — PDF plot generation. Not supported in the Rust backend.
-
-### Simulation parameters
-- `simLDSC(rPheno, int, N_overlap)` — Phenotypic correlation, intercept inflation, and sample overlap parameters. The Rust simulation generates Z-statistics directly from the genetic covariance matrix.
 
 ### Model options
 - `usermodel(CFIcalc)` — CFI is always computed in gsemr; this flag has no effect.

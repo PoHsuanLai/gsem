@@ -1661,7 +1661,7 @@ fn run_parallel_analysis(covstruc: &Path, n_sim: usize, out: &Path) -> Result<()
     eprintln!("Running parallel analysis ({k} traits, {n_sim} simulations)...");
 
     let result =
-        gsem::stats::parallel_analysis::parallel_analysis(&ldsc_result.s, &ldsc_result.v, n_sim);
+        gsem::stats::parallel_analysis::parallel_analysis(&ldsc_result.s, &ldsc_result.v, n_sim, 0.95, false);
 
     eprintln!("Suggested number of factors: {}", result.n_factors);
 
@@ -1979,6 +1979,7 @@ fn run_simulate(covstruc: &Path, n_per_trait: &str, ld_dir: &Path, out: &Path) -
         &n_vec,
         &ld_scores,
         ld_data.total_m,
+        &gsem::stats::simulation::SimConfig::default(),
     );
 
     // Write TSV: columns are trait z-scores

@@ -372,6 +372,8 @@ fn sumstats(
         ols: ols.unwrap_or_else(|| vec![false; k]),
         linprob: linprob.unwrap_or_else(|| vec![false; k]),
         n_overrides: n.map(|v| v.into_iter().map(Some).collect()).unwrap_or_else(|| vec![None; k]),
+        beta_overrides: Vec::new(),
+        direct_filter: false,
     };
     let file_refs: Vec<&std::path::Path> = files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
     gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &names, &config, std::path::Path::new(out))
@@ -556,7 +558,7 @@ fn parallel_analysis(
     let v_mat = json_to_mat(v_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
 
-    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r);
+    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, 0.95, false);
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(
@@ -997,6 +999,7 @@ fn sim_ldsc(
         &n_per_trait,
         &ld_scores,
         m,
+        &gsem::stats::simulation::SimConfig::default(),
     ))
 }
 

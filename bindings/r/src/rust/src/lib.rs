@@ -661,7 +661,7 @@ fn filter_results_by_sub(results: &mut [gsem::gwas::user_gwas::SnpResult], sub: 
 
 /// Parallel analysis to determine number of factors.
 #[extendr]
-fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32, percentile: Rfloat) -> String {
+fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32, percentile: Rfloat, diag_only: bool) -> String {
     let s_mat = match conversions::json_to_mat(s_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
@@ -679,7 +679,7 @@ fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32, percentile: Rfloat) -> S
     };
 
     let result =
-        gsem::stats::parallel_analysis::parallel_analysis_p(&s_mat, &v_mat, n_sim as usize, p);
+        gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, n_sim as usize, p, diag_only);
 
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result
@@ -1115,13 +1115,40 @@ fn sim_ldsc_rust(
     n_per_trait: Vec<f64>,
     ld_scores: Vec<f64>,
     m: f64,
+    int_json: &str,
+    r_pheno_json: &str,
+    n_overlap: f64,
 ) -> String {
     let s_mat = match conversions::json_to_mat(s_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
     };
 
-    let result = gsem::stats::simulation::simulate_sumstats(&s_mat, &n_per_trait, &ld_scores, m);
+    let intercepts = if int_json.is_empty() || int_json == "null" {
+        None
+    } else {
+        conversions::json_to_mat(int_json)
+    };
+
+    let r_pheno = if r_pheno_json.is_empty() || r_pheno_json == "null" {
+        None
+    } else {
+        conversions::json_to_mat(r_pheno_json)
+    };
+
+    let config = gsem::stats::simulation::SimConfig {
+        intercepts,
+        r_pheno,
+        n_overlap,
+    };
+
+    let result = gsem::stats::simulation::simulate_sumstats(
+        &s_mat,
+        &n_per_trait,
+        &ld_scores,
+        m,
+        &config,
+    );
 
     // result is Vec<Vec<f64>> (k traits x n_snps)
     let trait_json: Vec<String> = result
