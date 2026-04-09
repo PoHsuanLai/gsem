@@ -175,8 +175,16 @@ fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
         }
 
         snps.push(flds[snp_idx].to_string());
-        chrs.push(chr_idx.and_then(|i| flds.get(i)?.parse::<u32>().ok()).unwrap_or(0));
-        bps.push(bp_idx.and_then(|i| flds.get(i)?.parse::<u64>().ok()).unwrap_or(0));
+        chrs.push(
+            chr_idx
+                .and_then(|i| flds.get(i)?.parse::<u32>().ok())
+                .unwrap_or(0),
+        );
+        bps.push(
+            bp_idx
+                .and_then(|i| flds.get(i)?.parse::<u64>().ok())
+                .unwrap_or(0),
+        );
         let mut row = Vec::with_capacity(n_annot);
         for &(col_idx, _) in &annot_indices {
             let val: f64 = flds
@@ -254,10 +262,7 @@ fn read_m_annot_file(path: &Path) -> Result<Vec<f64>> {
 ///
 /// Expects files at `{frq_dir}/{chr}.frq` with columns: CHR, SNP, A1, A2, MAF, NCHROBS.
 /// Returns a map of SNP → MAF for SNPs with MAF in (0.05, 0.95).
-pub fn read_frq_files(
-    frq_dir: &Path,
-    chromosomes: &[usize],
-) -> Result<HashMap<String, f64>> {
+pub fn read_frq_files(frq_dir: &Path, chromosomes: &[usize]) -> Result<HashMap<String, f64>> {
     let mut snp_maf = HashMap::new();
 
     for &chr in chromosomes {
@@ -276,9 +281,13 @@ pub fn read_frq_files(
             None => continue,
         };
         let fields: Vec<&str> = header.split_whitespace().collect();
-        let snp_idx = fields.iter().position(|&h| h == "SNP")
+        let snp_idx = fields
+            .iter()
+            .position(|&h| h == "SNP")
             .context("SNP column not found in .frq file")?;
-        let maf_idx = fields.iter().position(|&h| h == "MAF")
+        let maf_idx = fields
+            .iter()
+            .position(|&h| h == "MAF")
             .context("MAF column not found in .frq file")?;
 
         for line in lines {
@@ -302,7 +311,11 @@ pub fn read_frq_files(
 
 /// Filter annotation LD score data to only SNPs present in the frq map.
 pub fn filter_annot_by_frq(annot: &mut AnnotLdScores, frq_snps: &HashMap<String, f64>) {
-    let keep: Vec<bool> = annot.snps.iter().map(|s| frq_snps.contains_key(s)).collect();
+    let keep: Vec<bool> = annot
+        .snps
+        .iter()
+        .map(|s| frq_snps.contains_key(s))
+        .collect();
     let n_keep = keep.iter().filter(|&&k| k).count();
     if n_keep == annot.snps.len() {
         return; // nothing to filter

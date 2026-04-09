@@ -173,7 +173,9 @@ pub fn run_multi_snp(
 
     let fit = match config.estimation {
         EstimationMethod::Ml => estimator::fit_ml(&mut model, &s_full, config.max_iter, None),
-        EstimationMethod::Dwls => estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None),
+        EstimationMethod::Dwls => {
+            estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None)
+        }
     };
 
     // Sandwich SEs

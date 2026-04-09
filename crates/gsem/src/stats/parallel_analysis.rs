@@ -84,7 +84,8 @@ pub fn parallel_analysis(
                 sample[i] = null_vec[i] + lz;
             }
 
-            let sim_mat = vech::vech_reverse(&sample, k).expect("vech_reverse should not fail for valid kstar");
+            let sim_mat = vech::vech_reverse(&sample, k)
+                .expect("vech_reverse should not fail for valid kstar");
             let eigs = eigenvalues_sorted(&sim_mat);
             pb.inc(1);
             eigs

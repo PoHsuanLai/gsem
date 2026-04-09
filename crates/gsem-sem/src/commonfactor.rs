@@ -19,7 +19,11 @@ use crate::{EstimationMethod, ParamEstimate, SemResult};
 /// Run common factor analysis on LDSC output.
 ///
 /// Equivalent to R GenomicSEM's `commonfactor()`.
-pub fn run_commonfactor(s: &Mat<f64>, v: &Mat<f64>, estimation: EstimationMethod) -> Result<SemResult> {
+pub fn run_commonfactor(
+    s: &Mat<f64>,
+    v: &Mat<f64>,
+    estimation: EstimationMethod,
+) -> Result<SemResult> {
     let k = s.nrows();
     let obs_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
 
@@ -150,7 +154,8 @@ mod tests {
     #[test]
     fn test_commonfactor_dwls_converges() {
         let (s, v) = simple_s_and_v();
-        let result = run_commonfactor(&s, &v, crate::EstimationMethod::Dwls).expect("DWLS should not error");
+        let result =
+            run_commonfactor(&s, &v, crate::EstimationMethod::Dwls).expect("DWLS should not error");
         // Should have parameters: 3 loadings + 3 residual variances = 6
         assert_eq!(result.parameters.len(), 6, "expected 6 free parameters");
         // Check that estimates are finite
@@ -178,7 +183,8 @@ mod tests {
     #[test]
     fn test_commonfactor_ml_converges() {
         let (s, v) = simple_s_and_v();
-        let result = run_commonfactor(&s, &v, crate::EstimationMethod::Ml).expect("ML should not error");
+        let result =
+            run_commonfactor(&s, &v, crate::EstimationMethod::Ml).expect("ML should not error");
         assert_eq!(result.parameters.len(), 6, "expected 6 free parameters");
         for p in &result.parameters {
             assert!(p.est.is_finite(), "estimate should be finite");
@@ -191,11 +197,19 @@ mod tests {
         let result = run_commonfactor(&s, &v, crate::EstimationMethod::Dwls).unwrap();
 
         // First 3 params should be loadings (F1 =~ V1, V2, V3)
-        let loadings: Vec<_> = result.parameters.iter().filter(|p| p.op == crate::syntax::Op::Loading).collect();
+        let loadings: Vec<_> = result
+            .parameters
+            .iter()
+            .filter(|p| p.op == crate::syntax::Op::Loading)
+            .collect();
         assert_eq!(loadings.len(), 3, "should have 3 loadings");
 
         // Last 3 params should be residual variances (V1 ~~ V1, etc.)
-        let resid: Vec<_> = result.parameters.iter().filter(|p| p.op == crate::syntax::Op::Covariance).collect();
+        let resid: Vec<_> = result
+            .parameters
+            .iter()
+            .filter(|p| p.op == crate::syntax::Op::Covariance)
+            .collect();
         assert_eq!(resid.len(), 3, "should have 3 residual variances");
 
         // Loadings should be positive for this well-behaved covariance matrix

@@ -358,8 +358,7 @@ fn main() -> Result<()> {
 fn run_munge(args: MungeArgs) -> Result<()> {
     // Read reference
     eprintln!("Reading reference panel: {}", args.hm3.display());
-    let reference =
-        munge::read_reference(&args.hm3).context("failed to read HapMap3 reference")?;
+    let reference = munge::read_reference(&args.hm3).context("failed to read HapMap3 reference")?;
     eprintln!("Loaded {} reference SNPs", reference.len());
 
     // Parse column name overrides from comma-separated KEY=VALUE pairs
@@ -589,7 +588,11 @@ fn run_s_ldsc(args: SLdscArgs) -> Result<()> {
     let sp = parse_prevalences(&args.sample_prev, k);
     let pp = parse_prevalences(&args.pop_prev, k);
 
-    let config = gsem_ldsc::stratified::StratifiedLdscConfig { n_blocks: args.n_blocks, rm_flank: false, flank_kb: 500 };
+    let config = gsem_ldsc::stratified::StratifiedLdscConfig {
+        n_blocks: args.n_blocks,
+        rm_flank: false,
+        flank_kb: 500,
+    };
 
     eprintln!("Running stratified LDSC...");
     let result = gsem_ldsc::stratified::s_ldsc(
@@ -673,8 +676,12 @@ fn run_sem(args: SemArgs) -> Result<()> {
     let v_diag: Vec<f64> = (0..kstar).map(|i| ldsc_result.v[(i, i)]).collect();
 
     let fit = match estimation {
-        gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None),
-        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
+        gsem_sem::EstimationMethod::Ml => {
+            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
+        }
+        gsem_sem::EstimationMethod::Dwls => {
+            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
+        }
     };
 
     // If model failed to converge and fix_resid is set, add lower bounds on
@@ -695,8 +702,12 @@ fn run_sem(args: SemArgs) -> Result<()> {
         // Rebuild model with updated lower bounds
         sem_model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
         match estimation {
-            gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None),
-            gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
+            gsem_sem::EstimationMethod::Ml => {
+                gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
+            }
+            gsem_sem::EstimationMethod::Dwls => {
+                gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
+            }
         }
     } else {
         fit
@@ -1231,8 +1242,15 @@ fn run_write_model(args: WriteModelArgs) -> Result<()> {
         n_rows, n_cols
     );
 
-    let model_str =
-        gsem_sem::write_model::write_model(&loadings, &args.names, cutoff, fix_resid, bifactor, false, false);
+    let model_str = gsem_sem::write_model::write_model(
+        &loadings,
+        &args.names,
+        cutoff,
+        fix_resid,
+        bifactor,
+        false,
+        false,
+    );
 
     std::fs::write(&args.out, &model_str)
         .with_context(|| format!("failed to write {}", args.out.display()))?;
@@ -1250,8 +1268,13 @@ fn run_parallel_analysis(args: ParallelAnalysisArgs) -> Result<()> {
     let n_sim = args.n_sim;
     eprintln!("Running parallel analysis ({k} traits, {n_sim} simulations)...");
 
-    let result =
-        gsem::stats::parallel_analysis::parallel_analysis(&ldsc_result.s, &ldsc_result.v, n_sim, 0.95, false);
+    let result = gsem::stats::parallel_analysis::parallel_analysis(
+        &ldsc_result.s,
+        &ldsc_result.v,
+        n_sim,
+        0.95,
+        false,
+    );
 
     eprintln!("Suggested number of factors: {}", result.n_factors);
 
@@ -1355,7 +1378,11 @@ fn run_rgmodel_cmd(args: RgmodelArgs) -> Result<()> {
     eprintln!("Fitting rgmodel (estimation={estimation})...");
 
     let result = gsem_sem::rgmodel::run_rgmodel_with_model(
-        &ldsc_result.s, &ldsc_result.v, estimation, args.model.as_deref(), args.std_lv,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        estimation,
+        args.model.as_deref(),
+        args.std_lv,
     )?;
 
     let k = result.r.nrows();
@@ -1867,7 +1894,8 @@ fn run_summary_gls(args: SummaryGlsArgs) -> Result<()> {
         ));
     }
 
-    std::fs::write(&args.out, &output).with_context(|| format!("failed to write {}", args.out.display()))?;
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
     eprintln!("Results written to {}", args.out.display());
     Ok(())
 }

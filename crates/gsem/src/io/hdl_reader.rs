@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use gsem_ldsc::hdl::LdPiece;
 
 /// Load HDL LD pieces from a text-format reference directory.
@@ -95,10 +95,7 @@ pub fn load_hdl_pieces(ld_dir: &Path) -> Result<Vec<LdPiece>> {
     }
 
     if ld_pieces.is_empty() {
-        bail!(
-            "no valid LD pieces loaded from {}",
-            ld_dir.display()
-        );
+        bail!("no valid LD pieces loaded from {}", ld_dir.display());
     }
 
     Ok(ld_pieces)

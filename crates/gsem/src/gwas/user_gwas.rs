@@ -137,13 +137,19 @@ pub fn run_user_gwas(
             .cloned()
             .collect();
         if !baseline_rows.is_empty() {
-            let baseline_pt = ParTable { rows: baseline_rows };
+            let baseline_pt = ParTable {
+                rows: baseline_rows,
+            };
             let mut baseline_model = Model::from_partable(&baseline_pt, &obs_names);
             let kstar_ld = k * (k + 1) / 2;
             let v_diag: Vec<f64> = (0..kstar_ld).map(|i| v_ld[(i, i)]).collect();
             let baseline_fit = match config.estimation {
-                EstimationMethod::Ml => estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter, None),
-                EstimationMethod::Dwls => estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter, None),
+                EstimationMethod::Ml => {
+                    estimator::fit_ml(&mut baseline_model, s_ld, config.max_iter, None)
+                }
+                EstimationMethod::Dwls => {
+                    estimator::fit_dwls(&mut baseline_model, s_ld, &v_diag, config.max_iter, None)
+                }
             };
             if baseline_fit.converged {
                 // Fix baseline parameters in the full model
@@ -172,7 +178,9 @@ pub fn run_user_gwas(
                     pt.rows.iter().filter(|r| r.free > 0).count()
                 );
             } else {
-                log::warn!("fix_measurement: baseline model did not converge, using unfixed params");
+                log::warn!(
+                    "fix_measurement: baseline model did not converge, using unfixed params"
+                );
             }
         }
     }
@@ -256,7 +264,9 @@ fn process_single_snp(
     // Fit model
     let fit = match config.estimation {
         EstimationMethod::Ml => estimator::fit_ml(&mut model, &s_full, config.max_iter, None),
-        EstimationMethod::Dwls => estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None),
+        EstimationMethod::Dwls => {
+            estimator::fit_dwls(&mut model, &s_full, &v_diag, config.max_iter, None)
+        }
     };
 
     // Compute sandwich SEs

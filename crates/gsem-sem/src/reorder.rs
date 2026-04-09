@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use faer::Mat;
 
 /// Reorder V matrix from user variable ordering to model variable ordering.
@@ -11,11 +11,18 @@ use faer::Mat;
 pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) -> Result<Mat<f64>> {
     let k = user_order.len();
     if k != model_order.len() {
-        bail!("user_order length ({k}) != model_order length ({})", model_order.len());
+        bail!(
+            "user_order length ({k}) != model_order length ({})",
+            model_order.len()
+        );
     }
     let kstar = k * (k + 1) / 2;
     if v.nrows() != kstar || v.ncols() != kstar {
-        bail!("V dimensions {}x{} don't match expected {kstar}x{kstar}", v.nrows(), v.ncols());
+        bail!(
+            "V dimensions {}x{} don't match expected {kstar}x{kstar}",
+            v.nrows(),
+            v.ncols()
+        );
     }
 
     // Build permutation: where does each user-ordered variable appear in model order?
@@ -49,7 +56,9 @@ pub fn reorder_v(v: &Mat<f64>, user_order: &[String], model_order: &[String]) ->
     };
 
     // Apply permutation to V
-    Ok(Mat::from_fn(kstar, kstar, |i, j| v[(model_to_user[i], model_to_user[j])]))
+    Ok(Mat::from_fn(kstar, kstar, |i, j| {
+        v[(model_to_user[i], model_to_user[j])]
+    }))
 }
 
 /// Build a mapping: for a k×k matrix, vech position of element (i,j) where i>=j.

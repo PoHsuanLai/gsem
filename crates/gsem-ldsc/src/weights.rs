@@ -15,12 +15,8 @@ pub fn compute_h2_weights(chi2: &[f64], ld: &[f64], w_ld: &[f64], n: &[f64], m: 
     // Compute total aggregated heritability
     // R: tot.agg <- (M.tot*(mean(merged$chi1)-1))/mean(merged$L2*merged$N)
     let mean_chi2: f64 = chi2.iter().sum::<f64>() / n_snps as f64;
-    let mean_ld_n: f64 = ld
-        .iter()
-        .zip(n.iter())
-        .map(|(&l, &ni)| l * ni)
-        .sum::<f64>()
-        / n_snps as f64;
+    let mean_ld_n: f64 =
+        ld.iter().zip(n.iter()).map(|(&l, &ni)| l * ni).sum::<f64>() / n_snps as f64;
 
     let tot_agg = if mean_ld_n > 0.0 {
         ((m * (mean_chi2 - 1.0)) / mean_ld_n).clamp(0.0, 1.0)
@@ -75,11 +71,7 @@ pub fn compute_gcov_weights(
     // We need unnormalized initial.w + initial.w2, then renormalize.
     // Since w_j = initial.w_j / sum(initial.w_j) and w_k = initial.w_k / sum(initial.w_k),
     // averaging and renormalizing is equivalent to R's formula.
-    let mut w_avg: Vec<f64> = w_j
-        .iter()
-        .zip(w_k.iter())
-        .map(|(a, b)| a + b)
-        .collect();
+    let mut w_avg: Vec<f64> = w_j.iter().zip(w_k.iter()).map(|(a, b)| a + b).collect();
 
     let sum: f64 = w_avg.iter().sum();
     if sum > 0.0 {

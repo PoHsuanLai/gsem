@@ -23,10 +23,7 @@ pub fn analytical_jacobian(model: &Model) -> Mat<f64> {
     let mut delta = Mat::zeros(kstar, n_free);
 
     // Check if Beta is non-zero
-    let has_beta = model
-        .beta
-        .col_iter()
-        .any(|c| c.iter().any(|&x| x != 0.0));
+    let has_beta = model.beta.col_iter().any(|c| c.iter().any(|&x| x != 0.0));
 
     if has_beta {
         fill_delta_with_beta(model, &mut delta, p, m);
@@ -274,7 +271,10 @@ mod tests {
     fn test_analytical_vs_numerical_cfa() {
         let model_str = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3";
         let pt = parse_model(model_str, false).unwrap();
-        let obs: Vec<String> = vec!["V1", "V2", "V3"].into_iter().map(String::from).collect();
+        let obs: Vec<String> = vec!["V1", "V2", "V3"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         let mut model = Model::from_partable(&pt, &obs);
 
         model.set_param_vec(&[0.7, 0.8, 0.6, 0.3, 0.4, 0.2]);
@@ -291,7 +291,11 @@ mod tests {
                 assert!(
                     diff < 1e-5,
                     "Mismatch at ({}, {}): analytical={}, numerical={}, diff={}",
-                    i, j, analytical[(i, j)], numerical[(i, j)], diff
+                    i,
+                    j,
+                    analytical[(i, j)],
+                    numerical[(i, j)],
+                    diff
                 );
             }
         }
@@ -315,7 +319,11 @@ mod tests {
                 assert!(
                     diff < 1e-5,
                     "Mismatch at ({}, {}): analytical={}, numerical={}, diff={}",
-                    i, j, analytical[(i, j)], numerical[(i, j)], diff
+                    i,
+                    j,
+                    analytical[(i, j)],
+                    numerical[(i, j)],
+                    diff
                 );
             }
         }
@@ -331,7 +339,11 @@ mod tests {
         let mut model = Model::from_partable(&pt, &obs);
 
         let params = model.get_param_vec();
-        let modified: Vec<f64> = params.iter().enumerate().map(|(i, _)| 0.3 + 0.1 * i as f64).collect();
+        let modified: Vec<f64> = params
+            .iter()
+            .enumerate()
+            .map(|(i, _)| 0.3 + 0.1 * i as f64)
+            .collect();
         model.set_param_vec(&modified);
 
         let analytical = analytical_jacobian(&model);
@@ -343,7 +355,11 @@ mod tests {
                 assert!(
                     diff < 1e-5,
                     "Mismatch at ({}, {}): analytical={}, numerical={}, diff={}",
-                    i, j, analytical[(i, j)], numerical[(i, j)], diff
+                    i,
+                    j,
+                    analytical[(i, j)],
+                    numerical[(i, j)],
+                    diff
                 );
             }
         }
@@ -368,7 +384,11 @@ mod tests {
                 assert!(
                     diff < 1e-5,
                     "Mismatch at ({}, {}): analytical={}, numerical={}, diff={}",
-                    i, j, analytical[(i, j)], numerical[(i, j)], diff
+                    i,
+                    j,
+                    analytical[(i, j)],
+                    numerical[(i, j)],
+                    diff
                 );
             }
         }

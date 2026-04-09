@@ -53,7 +53,8 @@ pub fn run_common_factor_gwas(
         .join(" + ");
     let model_str = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
     // This parse cannot fail since we generate the syntax ourselves
-    let model = syntax::parse_model(&model_str, false).expect("auto-generated model syntax is invalid");
+    let model =
+        syntax::parse_model(&model_str, false).expect("auto-generated model syntax is invalid");
 
     let config = UserGwasConfig {
         model,

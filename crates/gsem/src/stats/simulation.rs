@@ -43,8 +43,7 @@ pub fn simulate_sumstats(
     let mut rng = rand::rng();
 
     // Pre-compute sqrt(N_i * N_j)
-    let sqrt_nn: Mat<f64> =
-        Mat::from_fn(k, k, |i, j| (n_per_trait[i] * n_per_trait[j]).sqrt());
+    let sqrt_nn: Mat<f64> = Mat::from_fn(k, k, |i, j| (n_per_trait[i] * n_per_trait[j]).sqrt());
 
     // Intercept matrix (default: identity)
     let int_mat = config
@@ -55,11 +54,9 @@ pub fn simulate_sumstats(
 
     // Environmental covariance contribution (constant across SNPs)
     let env_cov = match &config.r_pheno {
-        Some(r_pheno) if config.n_overlap > 0.0 => {
-            Some(Mat::from_fn(k, k, |i, j| {
-                r_pheno[(i, j)] * config.n_overlap * sqrt_nn[(i, j)] / n_snps as f64
-            }))
-        }
+        Some(r_pheno) if config.n_overlap > 0.0 => Some(Mat::from_fn(k, k, |i, j| {
+            r_pheno[(i, j)] * config.n_overlap * sqrt_nn[(i, j)] / n_snps as f64
+        })),
         _ => None,
     };
 

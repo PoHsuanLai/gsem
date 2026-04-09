@@ -111,7 +111,9 @@ pub fn s_ldsc(
                 config.flank_kb,
             ),
             _ => {
-                log::warn!("rm_flank=true but chr/bp data not available; skipping flanking removal");
+                log::warn!(
+                    "rm_flank=true but chr/bp data not available; skipping flanking removal"
+                );
                 vec![vec![false; n_snps]; n_annot]
             }
         }
@@ -183,7 +185,8 @@ pub fn s_ldsc(
                 // rm_flank: run a separate regression per annotation,
                 // excluding flanking SNPs around that annotation's SNPs.
                 // First run the full regression once for the intercept.
-                let reg_full = block_regression_multi(&merged.annot_ld, &outcome, &w, n_blocks, n_annot);
+                let reg_full =
+                    block_regression_multi(&merged.annot_ld, &outcome, &w, n_blocks, n_annot);
                 let intercept = reg_full.coef[n_annot];
                 if j == jj {
                     i_mat[(j, j)] = intercept;
@@ -203,12 +206,19 @@ pub fn s_ldsc(
                         continue;
                     }
 
-                    let filt_annot = Mat::from_fn(n_kept, n_annot, |i, col| merged.annot_ld[(kept[i], col)]);
+                    let filt_annot =
+                        Mat::from_fn(n_kept, n_annot, |i, col| merged.annot_ld[(kept[i], col)]);
                     let filt_outcome: Vec<f64> = kept.iter().map(|&i| outcome[i]).collect();
                     let filt_w: Vec<f64> = kept.iter().map(|&i| w[i]).collect();
                     let filt_blocks = n_blocks.min(n_kept);
 
-                    let reg_a = block_regression_multi(&filt_annot, &filt_outcome, &filt_w, filt_blocks, n_annot);
+                    let reg_a = block_regression_multi(
+                        &filt_annot,
+                        &filt_outcome,
+                        &filt_w,
+                        filt_blocks,
+                        n_annot,
+                    );
                     let tau = reg_a.coef[a];
                     let contribution = tau * m_annot[a] / mean_n;
 
@@ -688,7 +698,11 @@ mod tests {
         let annot_names = vec!["annot1".to_string(), "annot2".to_string()];
         let m_annot = vec![500000.0, 300000.0];
 
-        let config = StratifiedLdscConfig { n_blocks: 10, rm_flank: false, flank_kb: 500 };
+        let config = StratifiedLdscConfig {
+            n_blocks: 10,
+            rm_flank: false,
+            flank_kb: 500,
+        };
 
         let result = s_ldsc(
             &[trait_data],

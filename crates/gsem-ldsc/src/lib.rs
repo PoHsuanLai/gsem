@@ -169,7 +169,15 @@ pub fn ldsc(
         .map(|&(j, jj)| {
             // Merge data for this specific pair
             let merged = merge_pair(
-                traits, ld_snps, ld_scores, w_ld_scores, &trait_maps, j, jj, m_total, config,
+                traits,
+                ld_snps,
+                ld_scores,
+                w_ld_scores,
+                &trait_maps,
+                j,
+                jj,
+                m_total,
+                config,
             )?;
             let n_blocks = config.n_blocks.min(merged.n_snps);
 
@@ -320,9 +328,7 @@ fn merge_pair(
         anyhow::bail!("no common SNPs for trait pair ({j}, {jj})");
     }
 
-    log::info!(
-        "Pair ({j},{jj}): {n_snps} SNPs after merge and chi2 filter"
-    );
+    log::info!("Pair ({j},{jj}): {n_snps} SNPs after merge and chi2 filter");
 
     Ok(PairMergedData {
         z_j,

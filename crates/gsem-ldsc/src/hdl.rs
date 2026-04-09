@@ -505,7 +505,11 @@ fn optimize_gcov_likelihood(
     int_init: f64,
 ) -> (f64, f64) {
     lbfgs_minimize_2d(
-        |p| gcov_neg_loglik(bhat_j, bhat_d, ld_scores, p[0], p[1], n_j, n_d, n0, m, n_ref, h2_j, h2_d),
+        |p| {
+            gcov_neg_loglik(
+                bhat_j, bhat_d, ld_scores, p[0], p[1], n_j, n_d, n0, m, n_ref, h2_j, h2_d,
+            )
+        },
         [(-0.9999, 0.9999), (-5.0, 5.0)],
         [gcov_init, int_init],
     )

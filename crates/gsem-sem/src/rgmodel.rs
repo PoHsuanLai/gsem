@@ -184,7 +184,9 @@ fn fit_user_model_on_stand(
     model_str: &str,
     std_lv: bool,
 ) -> Result<crate::SemResult> {
-    use crate::{ParamEstimate, estimator, fit_indices, model::Model, sandwich, syntax::parse_model};
+    use crate::{
+        ParamEstimate, estimator, fit_indices, model::Model, sandwich, syntax::parse_model,
+    };
     use statrs::distribution::{ChiSquared, ContinuousCDF};
 
     let k = s_stand.nrows();
@@ -198,11 +200,17 @@ fn fit_user_model_on_stand(
 
     let fit = match estimation {
         crate::EstimationMethod::Ml => estimator::fit_ml(&mut model, s_stand, 1000, None),
-        crate::EstimationMethod::Dwls => estimator::fit_dwls(&mut model, s_stand, &v_diag, 1000, None),
+        crate::EstimationMethod::Dwls => {
+            estimator::fit_dwls(&mut model, s_stand, &v_diag, 1000, None)
+        }
     };
 
     let w = Mat::from_fn(kstar, kstar, |i, j| {
-        if i == j && v_diag[i] > 1e-30 { 1.0 / v_diag[i] } else { 0.0 }
+        if i == j && v_diag[i] > 1e-30 {
+            1.0 / v_diag[i]
+        } else {
+            0.0
+        }
     });
     let (se_vec, _) = sandwich::sandwich_se(&mut model, &w, v_stand);
 
@@ -221,8 +229,13 @@ fn fit_user_model_on_stand(
                 1.0
             };
             parameters.push(ParamEstimate {
-                lhs: row.lhs.clone(), op: row.op, rhs: row.rhs.clone(),
-                est, se, z, p,
+                lhs: row.lhs.clone(),
+                op: row.op,
+                rhs: row.rhs.clone(),
+                est,
+                se,
+                z,
+                p,
             });
             free_idx += 1;
         }
@@ -233,7 +246,11 @@ fn fit_user_model_on_stand(
     let df = kstar.saturating_sub(n_free);
     let model_fit = fit_indices::compute_fit(s_stand, &sigma_hat, v_stand, df, n_free, None, None);
 
-    Ok(crate::SemResult { parameters, fit: model_fit, implied_cov: sigma_hat })
+    Ok(crate::SemResult {
+        parameters,
+        fit: model_fit,
+        implied_cov: sigma_hat,
+    })
 }
 
 /// Compute sampling covariance of the correlation matrix via delta method.
@@ -316,7 +333,10 @@ mod tests {
 
         let result = run_rgmodel(&s, &v, crate::EstimationMethod::Dwls).unwrap();
         let expected_r12 = 0.42 / (0.60_f64.sqrt() * 0.50_f64.sqrt());
-        eprintln!("Real-scale V: r[0,1]={:.4} expected ~{expected_r12:.4}", result.r[(0, 1)]);
+        eprintln!(
+            "Real-scale V: r[0,1]={:.4} expected ~{expected_r12:.4}",
+            result.r[(0, 1)]
+        );
         assert!(
             (result.r[(0, 1)] - expected_r12).abs() < 0.1,
             "r[0,1]={} expected ~{expected_r12} (real-scale V)",

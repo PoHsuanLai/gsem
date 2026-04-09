@@ -80,12 +80,7 @@ fn apply_step(
     bounds: &[Option<f64>],
     out: &mut [f64],
 ) {
-    for (((o, &p), &d), bound) in out
-        .iter_mut()
-        .zip(params)
-        .zip(direction)
-        .zip(bounds)
-    {
+    for (((o, &p), &d), bound) in out.iter_mut().zip(params).zip(direction).zip(bounds) {
         *o = p + step * d;
         if let Some(lb) = bound {
             *o = o.max(*lb);
