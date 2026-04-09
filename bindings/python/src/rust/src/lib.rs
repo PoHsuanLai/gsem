@@ -485,7 +485,13 @@ fn user_gwas(
         q_snp,
         fix_measurement,
     };
-    let _ = (printwarn, cores, toler, parallel, mpi);
+    let _ = (printwarn, toler, parallel, mpi);
+    if let Some(n) = cores {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .ok(); // ignore if already initialized
+    }
 
     let mut results = gsem::gwas::user_gwas::run_user_gwas(
         &config, &ldsc_result.s, &ldsc_result.v, &i_ld,

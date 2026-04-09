@@ -10,7 +10,7 @@
 #' @param std.lv Standardize latent variables (default FALSE)
 #' @param imp_cov Use model-implied covariance (ignored in gsemr)
 #' @param fix_resid Fix residual variances to be positive (default TRUE)
-#' @param toler Tolerance for optimization (ignored in gsemr)
+#' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
 #' @param Q_Factor Compute Q factor (ignored in gsemr)
 #' @return A list with components:
 #'   \item{results}{Data frame of parameter estimates}
@@ -27,9 +27,8 @@ usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
   if (!identical(imp_cov, FALSE)) {
     message("Note: 'imp_cov' is ignored in gsemr -- not implemented")
   }
-  if (!is.null(toler)) {
-    message("Note: 'toler' is ignored in gsemr -- Rust uses its own convergence criteria")
-  }
+  # Note: 'toler' is accepted but convergence tolerance is controlled by the
+  # L-BFGS optimizer internally in the Rust backend.
   if (!identical(Q_Factor, FALSE)) {
     message("Note: 'Q_Factor' is ignored in gsemr -- not implemented")
   }

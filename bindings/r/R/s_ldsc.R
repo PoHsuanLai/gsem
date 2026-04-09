@@ -52,5 +52,35 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
     stop("gsemr::s_ldsc error: ", result$error)
   }
 
+  # Apply trait names to S and V matrices if present
+  if (!is.null(result$S)) {
+    S <- as.matrix(result$S)
+    if (nrow(S) == length(trait.names)) {
+      rownames(S) <- colnames(S) <- trait.names
+    }
+    result$S <- S
+  }
+  if (!is.null(result$V)) {
+    V <- as.matrix(result$V)
+    k <- length(trait.names)
+    vpairs <- c()
+    for (i in seq_len(k)) {
+      for (j in i:k) {
+        vpairs <- c(vpairs, paste0(trait.names[i], "_", trait.names[j]))
+      }
+    }
+    if (nrow(V) == length(vpairs)) {
+      rownames(V) <- colnames(V) <- vpairs
+    }
+    result$V <- V
+  }
+  if (!is.null(result$I)) {
+    I <- as.matrix(result$I)
+    if (nrow(I) == length(trait.names)) {
+      rownames(I) <- colnames(I) <- trait.names
+    }
+    result$I <- I
+  }
+
   result
 }

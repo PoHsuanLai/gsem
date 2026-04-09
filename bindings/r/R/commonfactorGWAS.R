@@ -5,8 +5,8 @@
 #' @param covstruc LDSC result (list or JSON string)
 #' @param SNPs Path to merged summary statistics file
 #' @param estimation Estimation method: "DWLS" (default) or "ML"
-#' @param cores Number of cores (ignored in gsemr)
-#' @param toler Tolerance (ignored in gsemr)
+#' @param cores Number of cores for Rayon thread pool (NULL = auto-detect)
+#' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
 #' @param SNPSE SNP SE override (default FALSE = auto)
 #' @param parallel Use parallel processing (ignored in gsemr)
 #' @param GC Genomic control: "standard" (default), "conservative", or "none"
@@ -19,13 +19,7 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
                              toler=FALSE, SNPSE=FALSE, parallel=TRUE, GC="standard",
                              MPI=FALSE, TWAS=FALSE, smooth_check=FALSE) {
 
-  # Ignored params
-  if (!is.null(cores)) {
-    message("Note: 'cores' is ignored in gsemr -- Rust uses native parallelism automatically")
-  }
-  if (!identical(toler, FALSE)) {
-    message("Note: 'toler' is ignored in gsemr -- Rust uses its own convergence criteria")
-  }
+  # Ignored params (truly not applicable to Rust backend)
   if (!identical(parallel, TRUE)) {
     message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
   }
@@ -35,6 +29,14 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
   if (!identical(TWAS, FALSE)) {
     message("Note: 'TWAS' is ignored in gsemr -- not implemented")
   }
+
+  # Set rayon thread count if cores is specified
+  if (!is.null(cores) && cores > 0) {
+    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
+  }
+
+  # Note: 'toler' is accepted but convergence tolerance is controlled by the
+  # L-BFGS optimizer internally in the Rust backend.
 
   if (is.list(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(

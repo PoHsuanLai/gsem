@@ -42,6 +42,19 @@ hdl <- function(traits, sample.prev=NA, population.prev=NA, trait.names=NULL,
   rownames(S) <- colnames(S) <- trait.names
 
   V <- as.matrix(result$v)
+  # V is the sampling covariance matrix of the vectorized S elements;
+  # label with trait-pair names for interpretability
+  k <- length(trait.names)
+  vpairs <- c()
+  for (i in seq_len(k)) {
+    for (j in i:k) {
+      vpairs <- c(vpairs, paste0(trait.names[i], "_", trait.names[j]))
+    }
+  }
+  if (nrow(V) == length(vpairs)) {
+    rownames(V) <- colnames(V) <- vpairs
+  }
+
   I <- as.matrix(result$i_mat)
   rownames(I) <- colnames(I) <- trait.names
 

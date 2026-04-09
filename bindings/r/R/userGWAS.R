@@ -8,8 +8,8 @@
 #' @param model lavaan-style model syntax
 #' @param printwarn Print warnings (ignored in gsemr)
 #' @param sub Subset of results to return (default FALSE = all)
-#' @param cores Number of cores (ignored in gsemr)
-#' @param toler Tolerance (ignored in gsemr)
+#' @param cores Number of cores for Rayon thread pool (NULL = auto-detect)
+#' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
 #' @param SNPSE SNP SE override (default FALSE = auto)
 #' @param parallel Use parallel processing (ignored in gsemr)
 #' @param GC Genomic control: "standard" (default), "conservative", or "none"
@@ -17,8 +17,8 @@
 #' @param smooth_check Check for non-positive-definite matrices (default FALSE)
 #' @param TWAS TWAS mode (ignored in gsemr)
 #' @param std.lv Standardize latent variables (default FALSE)
-#' @param fix_measurement Fix measurement model (ignored in gsemr)
-#' @param Q_SNP Compute Q_SNP heterogeneity statistic (ignored in gsemr)
+#' @param fix_measurement Fix measurement model (default TRUE)
+#' @param Q_SNP Compute Q_SNP heterogeneity statistic (default FALSE)
 #' @return Data frame of per-SNP results
 #' @export
 userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
@@ -26,15 +26,9 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
                      parallel=TRUE, GC="standard", MPI=FALSE, smooth_check=FALSE,
                      TWAS=FALSE, std.lv=FALSE, fix_measurement=TRUE, Q_SNP=FALSE) {
 
-  # Ignored params
+  # Ignored params (truly not applicable to Rust backend)
   if (!identical(printwarn, TRUE)) {
     message("Note: 'printwarn' is ignored in gsemr -- warnings are always printed")
-  }
-  if (!is.null(cores)) {
-    message("Note: 'cores' is ignored in gsemr -- Rust uses native parallelism automatically")
-  }
-  if (!identical(toler, FALSE)) {
-    message("Note: 'toler' is ignored in gsemr -- Rust uses its own convergence criteria")
   }
   if (!identical(parallel, TRUE)) {
     message("Note: 'parallel' is ignored in gsemr -- Rust uses native parallelism automatically")
@@ -45,12 +39,14 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
   if (!identical(TWAS, FALSE)) {
     message("Note: 'TWAS' is ignored in gsemr -- not implemented")
   }
-  if (!identical(fix_measurement, TRUE)) {
-    message("Note: 'fix_measurement' is ignored in gsemr -- not implemented")
+
+  # Set rayon thread count if cores is specified
+  if (!is.null(cores) && cores > 0) {
+    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
   }
-  if (!identical(Q_SNP, FALSE)) {
-    message("Note: 'Q_SNP' is ignored in gsemr -- not implemented")
-  }
+
+  # Note: 'toler' is accepted but convergence tolerance is controlled by the
+  # L-BFGS optimizer internally in the Rust backend.
 
   if (is.list(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(
@@ -70,6 +66,7 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
   json <- .Call("wrap__user_gwas_rust",
     as.character(covstruc_json), as.character(SNPs),
     as.character(model), as.character(estimation), as.character(GC),
-    as.character(sub_str), snp_se_val, as.logical(smooth_check), as.logical(std.lv))
+    as.character(sub_str), snp_se_val, as.logical(smooth_check), as.logical(std.lv),
+    as.logical(fix_measurement), as.logical(Q_SNP))
   jsonlite::fromJSON(json)
 }
