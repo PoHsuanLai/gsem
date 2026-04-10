@@ -156,6 +156,7 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResul
 #[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=None, chisq_max=None, parallel=true, cores=None))]
 #[allow(unused_variables)]
 fn ldsc(
+    py: Python<'_>,
     traits: Vec<String>,
     sample_prev: Vec<Option<f64>>,
     population_prev: Vec<Option<f64>>,
@@ -213,18 +214,24 @@ fn ldsc(
         }
     };
 
-    let result = gsem_ldsc::ldsc(
-        &trait_data,
-        &sample_prev,
-        &population_prev,
-        &ld_scores,
-        &ld_data.w_ld,
-        &ld_snps,
-        ld_data.total_m,
-        &config,
-        Some(&cb),
-    )
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    // Release the GIL while rayon runs the parallel jackknife. Without this,
+    // worker threads that try to log via pyo3_log block on the GIL while the
+    // main thread sits inside this FFI call holding the GIL — classic deadlock.
+    let result = py
+        .detach(|| {
+            gsem_ldsc::ldsc(
+                &trait_data,
+                &sample_prev,
+                &population_prev,
+                &ld_scores,
+                &ld_data.w_ld,
+                &ld_snps,
+                ld_data.total_m,
+                &config,
+                Some(&cb),
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
     Ok(ldsc_result_to_py(&result, stand))
 }
 
@@ -417,6 +424,7 @@ fn sumstats(
 ))]
 #[allow(unused_variables)]
 fn commonfactor_gwas(
+    py: Python<'_>,
     covstruc_json: &str,
     sumstats_path: &str,
     estimation: &str,
@@ -474,17 +482,20 @@ fn commonfactor_gwas(
         ..Default::default()
     };
 
-    let results = gsem::gwas::common_factor::run_common_factor_gwas(
-        &merged.trait_names,
-        &ldsc_result.s,
-        &ldsc_result.v,
-        &i_ld,
-        &beta_snp,
-        &se_snp,
-        &var_snp,
-        &cf_config,
-        None,
-    );
+    // Release the GIL while rayon runs the per-SNP fits.
+    let results = py.detach(|| {
+        gsem::gwas::common_factor::run_common_factor_gwas(
+            &merged.trait_names,
+            &ldsc_result.s,
+            &ldsc_result.v,
+            &i_ld,
+            &beta_snp,
+            &se_snp,
+            &var_snp,
+            &cf_config,
+            None,
+        )
+    });
     Ok(snp_results_to_json(&results, &valid_snps))
 }
 
@@ -493,6 +504,7 @@ fn commonfactor_gwas(
 #[pyo3(signature = (covstruc_json, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=None, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
 #[allow(unused_variables)]
 fn user_gwas(
+    py: Python<'_>,
     covstruc_json: &str,
     sumstats_path: &str,
     model: &str,
@@ -551,10 +563,13 @@ fn user_gwas(
         log::warn!("MPI is not supported in gsemr — use the cores parameter for thread control");
     }
 
-    let mut results = gsem::gwas::user_gwas::run_user_gwas(
-        &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
-        &beta_snp, &se_snp, &var_snp, None,
-    );
+    // Release the GIL while rayon runs the per-SNP fits.
+    let mut results = py.detach(|| {
+        gsem::gwas::user_gwas::run_user_gwas(
+            &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
+            &beta_snp, &se_snp, &var_snp, None,
+        )
+    });
 
     if let Some(ref patterns) = sub {
         let pats: Vec<String> = patterns.iter()
@@ -579,6 +594,7 @@ fn user_gwas(
 #[pyfunction]
 #[pyo3(signature = (s_json, v_json, r=500, p=None, diag=false, parallel=true, cores=None))]
 fn parallel_analysis(
+    py: Python<'_>,
     s_json: &str,
     v_json: &str,
     r: usize,
@@ -594,15 +610,19 @@ fn parallel_analysis(
 
     let percentile = p.unwrap_or(0.95);
     let num_threads = if parallel { cores } else { Some(1) };
-    let result = gsem::stats::parallel_analysis::parallel_analysis(
-        &s_mat,
-        &v_mat,
-        r,
-        percentile,
-        diag,
-        num_threads,
-        None,
-    );
+    // Defensive: release the GIL while rayon runs simulations. Today the
+    // par_iter has no log calls, but adding one later would deadlock.
+    let result = py.detach(|| {
+        gsem::stats::parallel_analysis::parallel_analysis(
+            &s_mat,
+            &v_mat,
+            r,
+            percentile,
+            diag,
+            num_threads,
+            None,
+        )
+    });
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(
@@ -679,6 +699,7 @@ fn rgmodel(
 #[pyo3(signature = (traits, sample_prev=None, population_prev=None, trait_names=None, ld_path="", n_ref=335265.0, method="piecewise"))]
 #[allow(unused_variables)]
 fn hdl(
+    py: Python<'_>,
     traits: Vec<String>,
     sample_prev: Option<Vec<Option<f64>>>,
     population_prev: Option<Vec<Option<f64>>>,
@@ -717,7 +738,9 @@ fn hdl(
     let ld_pieces = gsem::io::hdl_reader::load_hdl_pieces(ld_dir)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
-    let result = gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config)
+    // Defensive: release the GIL while HDL runs (may be parallelized).
+    let result = py
+        .detach(|| gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
     let ldsc_compat = result.to_ldsc_result();
     let json = ldsc_compat.to_json_string()
@@ -730,6 +753,7 @@ fn hdl(
 #[pyo3(signature = (traits, sample_prev=None, population_prev=None, ld="", wld="", frq="", trait_names=None, n_blocks=200, ldsc_log=None, exclude_cont=true))]
 #[allow(unused_variables)]
 fn s_ldsc(
+    py: Python<'_>,
     traits: Vec<String>,
     sample_prev: Option<Vec<Option<f64>>>,
     population_prev: Option<Vec<Option<f64>>>,
@@ -810,20 +834,24 @@ fn s_ldsc(
         flank_kb: 500,
     };
 
-    let result = gsem_ldsc::stratified::s_ldsc(
-        &trait_data,
-        &sp,
-        &pp,
-        &annot_data.annot_ld,
-        &annot_data.w_ld,
-        &annot_data.snps,
-        &annot_data.annotation_names,
-        &annot_data.m_annot,
-        &config,
-        Some(&annot_data.chr),
-        Some(&annot_data.bp),
-    )
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    // Defensive: release the GIL while stratified LDSC runs (uses rayon).
+    let result = py
+        .detach(|| {
+            gsem_ldsc::stratified::s_ldsc(
+                &trait_data,
+                &sp,
+                &pp,
+                &annot_data.annot_ld,
+                &annot_data.w_ld,
+                &annot_data.snps,
+                &annot_data.annotation_names,
+                &annot_data.m_annot,
+                &config,
+                Some(&annot_data.chr),
+                Some(&annot_data.bp),
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
     result.to_json_string()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
