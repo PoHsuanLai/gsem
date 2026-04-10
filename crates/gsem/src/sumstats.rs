@@ -6,13 +6,14 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 
-use crate::io::gwas_reader;
+use crate::io::column_detect;
+use crate::io::gwas_reader::open_file_reader;
 use crate::munge::allele::{AlleleMatch, alleles_match};
 
 /// Configuration for the sumstats merge pipeline.
@@ -166,11 +167,45 @@ struct RefSnpInfo {
     maf: Option<f64>,
 }
 
+/// Iterator over the fields of a GWAS/reference line.
+///
+/// Tab-delimited is the common case; we fall back to whitespace if no tab is
+/// present (the 1000G reference file ships space-separated). This enum
+/// avoids the heap allocation of a `Box<dyn Iterator>` per line — at ~5M
+/// lines per GWAS file the extra allocation and virtual dispatch are
+/// measurable.
+enum LineFields<'a> {
+    Tab(std::str::Split<'a, char>),
+    Whitespace(std::str::SplitWhitespace<'a>),
+}
+
+impl<'a> Iterator for LineFields<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a str> {
+        match self {
+            LineFields::Tab(it) => it.next().map(|s| s.trim()),
+            LineFields::Whitespace(it) => it.next(),
+        }
+    }
+}
+
+#[inline]
+fn line_fields(line: &str) -> LineFields<'_> {
+    if line.contains('\t') {
+        LineFields::Tab(line.split('\t'))
+    } else {
+        LineFields::Whitespace(line.split_whitespace())
+    }
+}
+
 /// Read reference panel file (like R's `fread(ref)`).
 ///
-/// Expects a tab/whitespace-delimited file with at least SNP column.
-/// Optionally A1, A2, MAF columns for allele alignment.
-/// Filters by MAF if provided.
+/// Streams the file line-by-line instead of materializing a
+/// `Vec<GwasRecord>` first — important because a full 1000G reference is
+/// ~10M rows and allocating one struct-with-Strings per row is a sizable
+/// chunk of the total sumstats runtime.
 ///
 /// Returns a `(HashMap<SNP, info>, Vec<SNP>)` pair: the map for lookups and
 /// the vector for reference-file ordering. Downstream code iterates the
@@ -179,30 +214,83 @@ fn read_reference_file(
     path: &Path,
     maf_filter: f64,
 ) -> Result<(HashMap<String, RefSnpInfo>, Vec<String>)> {
-    let data = gwas_reader::read_gwas_file(path)
-        .with_context(|| format!("failed to read reference file {}", path.display()))?;
+    let mut reader = open_file_reader(path)
+        .with_context(|| format!("failed to open reference file {}", path.display()))?;
 
-    let mut map = HashMap::with_capacity(data.records.len());
-    let mut order = Vec::with_capacity(data.records.len());
-    for rec in &data.records {
-        // Filter by MAF if available (R: ref <- ref[ref$MAF >= maf.filter, ])
-        if let Some(maf) = rec.maf
+    // Parse header.
+    let mut header_line = String::new();
+    reader
+        .read_line(&mut header_line)
+        .with_context(|| format!("failed to read reference header {}", path.display()))?;
+    let headers: Vec<String> = if header_line.contains('\t') {
+        header_line.split('\t').map(|s| s.trim().to_string()).collect()
+    } else {
+        header_line.split_whitespace().map(|s| s.to_string()).collect()
+    };
+
+    let detected = column_detect::detect_columns(&headers);
+    let snp_idx = detected.get("SNP").context("SNP column not found in reference")?;
+    let a1_idx = detected.get("A1");
+    let a2_idx = detected.get("A2");
+    let maf_idx = detected.get("MAF");
+
+    // Reasonable starting capacity: the 1000G reference is ~10M SNPs, but
+    // smaller reference files exist too. The allocator will grow as needed.
+    let mut map: HashMap<String, RefSnpInfo> = HashMap::with_capacity(10_000_000);
+    let mut order: Vec<String> = Vec::with_capacity(10_000_000);
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .with_context(|| format!("failed to read from {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        // Strip trailing newline(s) without reallocating.
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut snp: Option<&str> = None;
+        let mut a1: &str = "";
+        let mut a2: &str = "";
+        let mut maf_val: Option<f64> = None;
+        for (i, field) in line_fields(trimmed).enumerate() {
+            if i == snp_idx {
+                snp = Some(field);
+            } else if a1_idx == Some(i) {
+                a1 = field;
+            } else if a2_idx == Some(i) {
+                a2 = field;
+            } else if maf_idx == Some(i) {
+                maf_val = field.parse().ok();
+            }
+        }
+
+        let Some(snp) = snp else { continue };
+
+        // Filter by MAF if available (R: ref <- ref[ref$MAF >= maf.filter, ]).
+        if let Some(maf) = maf_val
             && maf < maf_filter
         {
             continue;
         }
 
         // Skip duplicate rsIDs so the ordering vector and the map stay in sync.
-        if map.contains_key(&rec.snp) {
+        if map.contains_key(snp) {
             continue;
         }
-        order.push(rec.snp.clone());
+        let snp_owned = snp.to_string();
+        order.push(snp_owned.clone());
         map.insert(
-            rec.snp.clone(),
+            snp_owned,
             RefSnpInfo {
-                a1: rec.a1.as_deref().unwrap_or("").to_uppercase(),
-                a2: rec.a2.as_deref().unwrap_or("").to_uppercase(),
-                maf: rec.maf,
+                a1: a1.to_ascii_uppercase(),
+                a2: a2.to_ascii_uppercase(),
+                maf: maf_val,
             },
         );
     }
@@ -219,74 +307,167 @@ struct QcRecord {
     maf: Option<f64>,
 }
 
-/// Read a GWAS file and apply QC filters.
+/// Indices of the columns the sumstats QC pipeline cares about in a GWAS
+/// file. Computed once per file from the header, then used to drive the
+/// per-line fused parse+QC loop.
+struct GwasColumnPlan {
+    snp: usize,
+    a1: Option<usize>,
+    a2: Option<usize>,
+    effect: usize,
+    se: Option<usize>,
+    info: Option<usize>,
+    maf: Option<usize>,
+}
+
+/// Read a GWAS file and apply QC filters in a single streaming pass.
+///
+/// The previous implementation went through `read_gwas_file_with_overrides`,
+/// which materializes every row as a fully-populated `GwasRecord` (a struct
+/// with three owned `String`s plus seven `Option<f64>` slots) before we
+/// throw most of them away here. At ~5M rows per file that was a dominant
+/// cost. This version parses the header once, then walks each line exactly
+/// once, extracting only the columns sumstats needs and pushing straight
+/// into the QC HashMap.
 fn read_and_qc_gwas(
     path: &Path,
     ref_snps: &HashMap<String, RefSnpInfo>,
     config: &SumstatsConfig,
     trait_idx: usize,
 ) -> Result<HashMap<String, QcRecord>> {
-    // Build column overrides if beta column name is specified for this trait
+    let mut reader =
+        open_file_reader(path).with_context(|| format!("failed to open {}", path.display()))?;
+
+    // Parse header.
+    let mut header_line = String::new();
+    reader
+        .read_line(&mut header_line)
+        .with_context(|| format!("failed to read header from {}", path.display()))?;
+    let headers: Vec<String> = if header_line.contains('\t') {
+        header_line.split('\t').map(|s| s.trim().to_string()).collect()
+    } else {
+        header_line.split_whitespace().map(|s| s.to_string()).collect()
+    };
+
+    // Build column overrides if a beta column name is specified for this trait.
     let col_overrides = config
         .beta_overrides
         .get(trait_idx)
         .and_then(|v| v.as_ref())
         .map(|beta_name| {
-            let mut m = std::collections::HashMap::new();
+            let mut m = HashMap::new();
             m.insert("effect".to_string(), beta_name.clone());
             m
         });
-    let data = gwas_reader::read_gwas_file_with_overrides(path, col_overrides.as_ref())?;
-    let mut records = HashMap::new();
 
-    for rec in data.records {
-        // Must be in reference
-        if !ref_snps.contains_key(&rec.snp) {
+    let detected = column_detect::detect_columns_with_overrides(&headers, col_overrides.as_ref());
+
+    let plan = GwasColumnPlan {
+        snp: detected
+            .get("SNP")
+            .with_context(|| format!("SNP column not found in {}", path.display()))?,
+        a1: detected.get("A1"),
+        a2: detected.get("A2"),
+        effect: detected
+            .get("effect")
+            .with_context(|| format!("effect column not found in {}", path.display()))?,
+        se: detected.get("SE"),
+        info: detected.get("INFO"),
+        maf: detected.get("MAF"),
+    };
+
+    let skip_or_detect = config.se_logit.get(trait_idx).copied().unwrap_or(false)
+        || config.ols.get(trait_idx).copied().unwrap_or(false);
+
+    // Preallocate assuming most reference SNPs will also be present in the
+    // file — close enough that we avoid most resizes.
+    let mut records: HashMap<String, QcRecord> = HashMap::with_capacity(ref_snps.len());
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .with_context(|| format!("failed to read from {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if trimmed.is_empty() {
             continue;
         }
 
-        // Must have effect and SE columns (same as R: stops if missing)
-        let (Some(effect), Some(se)) = (rec.effect, rec.se) else {
-            continue;
-        };
+        let mut snp: Option<&str> = None;
+        let mut a1_str: &str = "";
+        let mut a2_str: &str = "";
+        let mut effect: Option<f64> = None;
+        let mut se: Option<f64> = None;
+        let mut info: Option<f64> = None;
+        let mut maf_raw: Option<f64> = None;
 
+        for (i, field) in line_fields(trimmed).enumerate() {
+            if i == plan.snp {
+                snp = Some(field);
+            } else if i == plan.effect {
+                effect = field.parse().ok();
+            } else if plan.a1 == Some(i) {
+                a1_str = field;
+            } else if plan.a2 == Some(i) {
+                a2_str = field;
+            } else if plan.se == Some(i) {
+                se = field.parse().ok();
+            } else if plan.info == Some(i) {
+                info = field.parse().ok();
+            } else if plan.maf == Some(i) {
+                maf_raw = field.parse().ok();
+            }
+        }
+
+        let Some(snp) = snp else { continue };
+
+        // Must be in reference. Checking early lets us skip most of the
+        // per-row parse work for rows that won't survive the join anyway.
+        if !ref_snps.contains_key(snp) {
+            continue;
+        }
+
+        // Must have effect and SE. R's sumstats stops when these are missing.
+        let Some(effect) = effect else { continue };
+        let Some(se) = se else { continue };
         if !effect.is_finite() || se <= 0.0 || !se.is_finite() {
             continue;
         }
 
-        // A1 required, A2 optional (munged .sumstats.gz may lack A2)
-        let a1 = match rec.a1.as_ref() {
-            Some(a) if !a.is_empty() => a.to_uppercase(),
-            _ => continue,
-        };
-        let a2 = rec.a2.as_deref().unwrap_or("").to_uppercase();
+        // A1 required, A2 optional (munged .sumstats.gz may lack A2).
+        if a1_str.is_empty() {
+            continue;
+        }
+        let a1 = a1_str.to_ascii_uppercase();
+        let a2 = a2_str.to_ascii_uppercase();
 
-        // Allele validation (skip if A2 missing — trust the munged file)
+        // Allele validation (skip if A2 missing — trust the munged file).
         if !a2.is_empty() && !valid_allele_pair(&a1, &a2, config.keep_indel) {
             continue;
         }
 
-        // Ambiguous strand SNP filtering (skip check if A2 missing)
+        // Ambiguous strand SNP filtering (skip check if A2 missing).
         if !a2.is_empty() && !config.keep_ambig && is_ambiguous_snp(&a1, &a2) {
             continue;
         }
 
-        // INFO filter
-        if rec.info.is_some_and(|info| info < config.info_filter) {
+        // INFO filter.
+        if info.is_some_and(|v| v < config.info_filter) {
             continue;
         }
 
-        // MAF filter
-        let maf = rec.maf.map(|m| if m > 0.5 { 1.0 - m } else { m });
+        // MAF filter.
+        let maf = maf_raw.map(|m| if m > 0.5 { 1.0 - m } else { m });
         if maf.is_some_and(|maf_val| maf_val < config.maf_filter) {
             continue;
         }
 
-        // Detect and convert OR to log(OR)
-        // Skip OR auto-detection if se_logit or ols is set for this trait
-        // (effects are already on the correct scale)
-        let skip_or_detect = config.se_logit.get(trait_idx).copied().unwrap_or(false)
-            || config.ols.get(trait_idx).copied().unwrap_or(false);
+        // Detect and convert OR to log(OR). Skip auto-detect if se_logit or
+        // ols is set for this trait (effects are already on the correct scale).
         let beta = if !skip_or_detect && is_or_value(effect) {
             if effect <= 0.0 {
                 continue;
@@ -297,7 +478,7 @@ fn read_and_qc_gwas(
         };
 
         records.insert(
-            rec.snp,
+            snp.to_string(),
             QcRecord {
                 a1,
                 a2,
