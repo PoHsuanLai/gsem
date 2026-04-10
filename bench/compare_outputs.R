@@ -301,7 +301,9 @@ check("munge: produces output", function() {
 # ==========================================================================
 cat("\n--- paLDSC ---\n")
 check("paLDSC: eigenvalues", function() {
-  result <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 3, save.pdf = FALSE)
+  # `p` is the quantile used to summarise the permuted eigenvalue
+  # distribution and must lie in [0, 1] in both gsemr and GenomicSEM.
+  result <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 0.95, save.pdf = FALSE)
   if (is.null(result)) stop("paLDSC returned NULL")
   if (is.null(result$observed)) stop("No observed eigenvalues")
   if (length(result$observed) != 3) stop(sprintf("Expected 3 eigenvalues, got %d", length(result$observed)))
@@ -319,11 +321,14 @@ check("summaryGLS: regression", function() {
   kstar <- k * (k + 1) / 2
   y <- rust_cov$S[lower.tri(rust_cov$S, diag = TRUE)]
   X <- matrix(1:kstar, ncol = 1)
-  result <- gsemr::summaryGLS(Y = y, V_Y = rust_cov$V, PREDICTORS = X, INTERCEPT = TRUE)
-  if (is.null(result)) stop("summaryGLS returned NULL")
-  if (nrow(result) == 0) stop("Empty results")
-  if (!all(c("beta", "se", "z", "p") %in% colnames(result))) stop("Missing columns")
-  if (!all(is.finite(result$beta))) stop("Non-finite betas")
+  result <- utils::capture.output(
+    out <- gsemr::summaryGLS(Y = y, V_Y = rust_cov$V, PREDICTORS = X, INTERCEPT = TRUE)
+  )
+  if (is.null(out)) stop("summaryGLS returned NULL")
+  if (nrow(out) == 0) stop("Empty results")
+  # Drop-in with GenomicSEM::summaryGLS: matrix with columns betas/pvals/SE/Z.
+  if (!all(c("betas", "pvals", "SE", "Z") %in% colnames(out))) stop("Missing columns")
+  if (!all(is.finite(out[, "betas"]))) stop("Non-finite betas")
 })
 
 # ==========================================================================
@@ -331,10 +336,12 @@ check("summaryGLS: regression", function() {
 # ==========================================================================
 cat("\n--- simLDSC ---\n")
 check("simLDSC: generates data", function() {
-  # Simulate from the estimated covariance
+  # Scalar N for drop-in parity with GenomicSEM::simLDSC, which
+  # rejects vector N via an unvectorised `if (N <= 0)` check and
+  # builds the K x K sample-size matrix via `diag(N, k, k)`.
   sim_result <- gsemr::simLDSC(
     covmat = rust_cov$S,
-    N = c(5000, 5000, 5000),
+    N = 5000,
     seed = 42,
     ld = "data/eur_w_ld_chr/"
   )

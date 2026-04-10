@@ -617,19 +617,46 @@ ug_results[["Rust_full"]] <- NULL
 invisible(gc(full = TRUE, verbose = FALSE))
 
 # Equivalence: convergence counts align within 2% across sizes. R's
-# userGWAS returns a flat data frame, so its converged column is
-# top-level; gsemr returns `list(snps, params)` and we read
-# `$snps$converged`.
+# `GenomicSEM::userGWAS` returns a list of per-SNP data frames (one per
+# unique SNP), with no top-level `converged` column — convergence is
+# encoded per frame via the `error` column (0 = converged, non-zero
+# string = lavaan error). gsemr returns `list(snps, params)` and we
+# read `$snps$converged` directly.
+.r_usergwas_n_converged <- function(res) {
+  if (is.null(res)) return(NA_integer_)
+  if (is.data.frame(res)) {
+    if ("converged" %in% names(res)) return(sum(res$converged, na.rm = TRUE))
+    if ("error" %in% names(res)) {
+      # Fallback: collapse per-SNP rows, count unique SNPs whose error is 0.
+      ok <- res$error == 0 | res$error == "0"
+      return(length(unique(res$SNP[ok])))
+    }
+    return(NA_integer_)
+  }
+  if (is.list(res)) {
+    # list-of-per-SNP-frames shape (R's default sub=FALSE return).
+    ok <- vapply(res, function(x) {
+      if (is.null(x) || !is.data.frame(x) || nrow(x) == 0) return(FALSE)
+      if (!"error" %in% names(x)) return(TRUE)
+      e <- x$error[1]
+      isTRUE(e == 0) || isTRUE(e == "0")
+    }, logical(1))
+    return(sum(ok))
+  }
+  NA_integer_
+}
+
 tryCatch({
   notes <- character(0)
   for (n_snp in ug_sizes) {
     a <- ug_results[[sprintf("R_%d",    n_snp)]]
     b <- ug_results[[sprintf("Rust_%d", n_snp)]]
     if (!is.null(a) && !is.null(b)) {
-      ca <- sum(a$converged, na.rm = TRUE)
+      ca <- .r_usergwas_n_converged(a)
       cb <- sum(b$snps$converged, na.rm = TRUE)
-      if (abs(ca - cb) > 0.02 * n_snp) {
-        notes <- c(notes, sprintf("N=%d converged %d(R) vs %d(Rust)", n_snp, ca, cb))
+      if (is.na(ca) || abs(ca - cb) > 0.02 * n_snp) {
+        notes <- c(notes, sprintf("N=%d converged %s(R) vs %d(Rust)",
+                                  n_snp, if (is.na(ca)) "NA" else as.character(ca), cb))
       }
     }
   }
@@ -642,10 +669,11 @@ tryCatch({
 # 10. paLDSC
 # ---------------------------------------------------------------------------
 cat("[10/12] paLDSC\n")
+# `p` is the quantile used to summarise the permuted eigenvalue
+# distribution (must lie in [0, 1]); 0.95 matches `psych::fa.parallel`.
 b <- run_bench(function() {
-  # R GenomicSEM may not have paLDSC; wrap safely
   if (existsFunction("paLDSC", where = asNamespace("GenomicSEM"))) {
-    GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 3, save.pdf = TRUE)
+    GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 0.95, save.pdf = TRUE)
   } else {
     stop("paLDSC not available in R GenomicSEM")
   }
@@ -653,15 +681,15 @@ b <- run_bench(function() {
 add_result("paLDSC", "R", b)
 
 b <- run_bench(function() {
-  gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 3, save.pdf = TRUE)
+  gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 0.95, save.pdf = TRUE)
 })
 add_result("paLDSC", "Rust", b)
 
 # Equivalence: observed eigenvalues should match (both compute on the same S)
 tryCatch({
   if (existsFunction("paLDSC", where = asNamespace("GenomicSEM"))) {
-    r_pa    <- GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 3, save.pdf = FALSE)
-    rust_pa <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 3, save.pdf = FALSE)
+    r_pa    <- GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 0.95, save.pdf = FALSE)
+    rust_pa <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 0.95, save.pdf = FALSE)
     err <- compare_numeric(r_pa$observed, rust_pa$observed, 1e-3, "observed eigenvalues")
     if (nzchar(err)) add_equiv("paLDSC", "FAIL", err)
     else add_equiv("paLDSC", "PASS", "observed eigenvalues within 1e-3")
@@ -695,9 +723,20 @@ add_result("summaryGLS", "Rust", b)
 
 tryCatch({
   if (existsFunction("summaryGLS", where = asNamespace("GenomicSEM"))) {
-    r_gls    <- GenomicSEM::summaryGLS(Y = y_gls, V_Y = r_cov$V, PREDICTORS = X_gls, INTERCEPT = TRUE)
-    rust_gls <- gsemr::summaryGLS(Y = y_gls, V_Y = rust_cov$V, PREDICTORS = X_gls, INTERCEPT = TRUE)
-    err <- compare_numeric(r_gls$beta, rust_gls$beta, 1e-3, "beta")
+    # Both `GenomicSEM::summaryGLS` and `gsemr::summaryGLS` return an
+    # invisible numeric matrix with columns `betas, pvals, SE, Z`, so
+    # the comparison uses the same accessor on each side.
+    r_gls    <- suppressWarnings(utils::capture.output(
+      r_out <- GenomicSEM::summaryGLS(Y = y_gls, V_Y = r_cov$V,
+                                      PREDICTORS = X_gls, INTERCEPT = TRUE)
+    ))
+    rust_gls <- utils::capture.output(
+      rust_out <- gsemr::summaryGLS(Y = y_gls, V_Y = rust_cov$V,
+                                    PREDICTORS = X_gls, INTERCEPT = TRUE)
+    )
+    r_beta    <- as.numeric(r_out[, "betas"])
+    rust_beta <- as.numeric(rust_out[, "betas"])
+    err <- compare_numeric(r_beta, rust_beta, 1e-3, "beta")
     if (nzchar(err)) add_equiv("summaryGLS", "FAIL", err)
     else add_equiv("summaryGLS", "PASS", "beta within 1e-3")
   } else {
@@ -709,10 +748,14 @@ tryCatch({
 # 12. simLDSC
 # ---------------------------------------------------------------------------
 cat("[12/12] simLDSC\n")
+# R `GenomicSEM::simLDSC` validates N with a scalar `if (N <= 0)` and
+# builds the K x K sample-size matrix via `diag(N, k, k)`; a vector
+# triggers "condition has length > 1". Pass a scalar here — gsemr
+# accepts scalar, vector, or matrix and handles the same shape.
 b <- run_bench(function() {
   if (existsFunction("simLDSC", where = asNamespace("GenomicSEM"))) {
     GenomicSEM::simLDSC(
-      covmat = r_cov$S, N = c(5000, 5000, 5000), seed = 42,
+      covmat = r_cov$S, N = 5000, seed = 42,
       ld = "data/eur_w_ld_chr/"
     )
   } else {
@@ -723,7 +766,7 @@ add_result("simLDSC", "R", b)
 
 b <- run_bench(function() {
   gsemr::simLDSC(
-    covmat = rust_cov$S, N = c(5000, 5000, 5000), seed = 42,
+    covmat = rust_cov$S, N = 5000, seed = 42,
     ld = "data/eur_w_ld_chr/"
   )
 })
@@ -732,8 +775,8 @@ add_result("simLDSC", "Rust", b)
 # simLDSC produces stochastic output; only verify both produce data of similar shape
 tryCatch({
   if (existsFunction("simLDSC", where = asNamespace("GenomicSEM"))) {
-    r_sim    <- GenomicSEM::simLDSC(covmat = r_cov$S, N = c(5000, 5000, 5000), seed = 42, ld = "data/eur_w_ld_chr/")
-    rust_sim <- gsemr::simLDSC(covmat = rust_cov$S, N = c(5000, 5000, 5000), seed = 42, ld = "data/eur_w_ld_chr/")
+    r_sim    <- GenomicSEM::simLDSC(covmat = r_cov$S, N = 5000, seed = 42, ld = "data/eur_w_ld_chr/")
+    rust_sim <- gsemr::simLDSC(covmat = rust_cov$S, N = 5000, seed = 42, ld = "data/eur_w_ld_chr/")
     if (max(dim(as.matrix(r_sim))) >= 100 && max(dim(as.matrix(rust_sim))) >= 100) {
       add_equiv("simLDSC", "PASS", "both produced sufficient simulated data")
     } else {
