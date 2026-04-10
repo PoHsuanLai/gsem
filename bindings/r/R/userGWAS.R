@@ -30,18 +30,19 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
   old_rust_log <- Sys.getenv("RUST_LOG", unset = NA)
   if (!identical(printwarn, TRUE)) {
     Sys.setenv(RUST_LOG = "error")
-  }
-  if (!identical(parallel, TRUE)) {
-    Sys.setenv(RAYON_NUM_THREADS = "1")
+    on.exit(
+      if (is.na(old_rust_log)) {
+        Sys.unsetenv("RUST_LOG")
+      } else {
+        Sys.setenv(RUST_LOG = old_rust_log)
+      },
+      add = TRUE
+    )
   }
   if (!identical(MPI, FALSE)) {
     message("Note: 'MPI' is ignored in gsemr -- not applicable to Rust backend")
   }
-
-  # Set rayon thread count if cores is specified
-  if (!is.null(cores) && cores > 0) {
-    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
-  }
+  num_threads <- .resolve_num_threads(parallel, cores)
 
   if (is.list(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(
@@ -72,14 +73,8 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
     as.character(covstruc_json), snp_path,
     as.character(model), as.character(estimation), as.character(GC),
     as.character(sub_str), snp_se_val, as.logical(smooth_check), as.logical(std.lv),
-    as.logical(fix_measurement), as.logical(Q_SNP), as.logical(TWAS))
-
-  # Restore RUST_LOG
-  if (is.na(old_rust_log)) {
-    Sys.unsetenv("RUST_LOG")
-  } else {
-    Sys.setenv(RUST_LOG = old_rust_log)
-  }
+    as.logical(fix_measurement), as.logical(Q_SNP), as.logical(TWAS),
+    num_threads)
 
   jsonlite::fromJSON(json)
 }

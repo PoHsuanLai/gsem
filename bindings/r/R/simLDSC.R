@@ -12,8 +12,9 @@
 #' @param N_overlap Sample overlap proportion (default 0.99)
 #' @param r Number of replications (ignored in gsemr -- returns 1 replication)
 #' @param gzip_output Compress output (ignored in gsemr)
-#' @param parallel Run in parallel (default FALSE)
-#' @param cores Number of cores (default NULL = auto-detect)
+#' @param parallel Accepted for API compatibility; gsemr's simLDSC is currently
+#'   single-threaded so this has no effect.
+#' @param cores Accepted for API compatibility; see \code{parallel}.
 #' @return A matrix of simulated Z-statistics (k traits x n_snps)
 #' @export
 simLDSC <- function(covmat, N, seed = 1234, ld, rPheno = NULL, int = NULL,
@@ -22,10 +23,8 @@ simLDSC <- function(covmat, N, seed = 1234, ld, rPheno = NULL, int = NULL,
   if (r > 1) {
     message("Note: gsemr simLDSC returns 1 replication; 'r' > 1 is ignored")
   }
-  if (identical(parallel, FALSE)) {
-    Sys.setenv(RAYON_NUM_THREADS = "1")
-  } else if (!is.null(cores)) {
-    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
+  if (identical(parallel, TRUE) || (!is.null(cores) && is.numeric(cores) && cores > 1)) {
+    message("Note: gsemr simLDSC is single-threaded; 'parallel'/'cores' are no-ops")
   }
 
   s_mat <- as.matrix(covmat)

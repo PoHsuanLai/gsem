@@ -496,6 +496,7 @@ fn run_ldsc(args: LdscArgs) -> Result<()> {
     let config = gsem_ldsc::LdscConfig {
         n_blocks: args.n_blocks,
         chisq_max: args.chisq_max,
+        num_threads: None,
     };
 
     let n_pairs = k * (k + 1) / 2;
@@ -915,7 +916,7 @@ fn run_gwas_snp(
         snp_se: None,
         variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         q_snp: false,
-        fix_measurement: false,
+        fix_measurement: true,
         num_threads: None,
     };
 
@@ -1101,7 +1102,7 @@ fn run_gwas_twas(
         snp_se: None,
         variant_label: gsem::gwas::user_gwas::VariantLabel::Gene,
         q_snp: false,
-        fix_measurement: false,
+        fix_measurement: true,
         num_threads: None,
     };
 
@@ -1418,6 +1419,7 @@ fn run_parallel_analysis(args: ParallelAnalysisArgs) -> Result<()> {
         n_sim,
         0.95,
         false,
+        None,
         Some(&|| pb.inc(1)),
     );
     pb.finish_with_message("complete");

@@ -14,8 +14,9 @@
 #' @param info.filter INFO score filter (default 0.6)
 #' @param maf.filter MAF filter (default 0.01)
 #' @param keep.indel Keep indels (default FALSE)
-#' @param parallel Use parallel processing (default FALSE; TRUE enables multi-threading)
-#' @param cores Number of cores for parallel processing (default NULL = auto-detect)
+#' @param parallel Accepted for API compatibility; gsemr's sumstats is currently
+#'   single-threaded so this has no effect.
+#' @param cores Accepted for API compatibility; see \code{parallel}.
 #' @param ambig Keep ambiguous SNPs (default FALSE)
 #' @param direct.filter Apply MAF filter directly to GWAS file frequencies (default FALSE)
 #' @return Path to the merged output file
@@ -25,10 +26,8 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
                      keep.indel=FALSE, parallel=FALSE, cores=NULL, ambig=FALSE,
                      direct.filter=FALSE, out="merged_sumstats.tsv") {
 
-  if (identical(parallel, FALSE)) {
-    Sys.setenv(RAYON_NUM_THREADS = "1")
-  } else if (!is.null(cores)) {
-    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
+  if (identical(parallel, TRUE) || (!is.null(cores) && is.numeric(cores) && cores > 1)) {
+    message("Note: gsemr sumstats is single-threaded; 'parallel'/'cores' are no-ops")
   }
 
   if (is.null(trait.names)) {

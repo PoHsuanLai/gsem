@@ -16,13 +16,17 @@
 #' @param fa Use factor analysis instead of eigenvalue comparison (default FALSE; requires psych)
 #' @param fm Factor method for psych::fa (e.g. "minres", "ml", "pa"; default NULL = "minres")
 #' @param nfactors Number of factors to extract when using fa (default NULL = auto from eigenvalue analysis)
+#' @param parallel Use parallel processing for the Monte Carlo simulation
+#'   (default TRUE)
+#' @param cores Number of cores for the Monte Carlo simulation
+#'   (NULL = auto-detect)
 #' @return A list with components:
 #'   \item{observed}{Observed eigenvalues (descending)}
 #'   \item{simulated_95}{Simulated eigenvalues at the given percentile}
 #'   \item{n_factors}{Suggested number of factors}
 #' @export
 paLDSC <- function(S=S, V=V, r=NULL, p=NULL, save.pdf=FALSE, diag=FALSE, fa=FALSE,
-                   fm=NULL, nfactors=NULL) {
+                   fm=NULL, nfactors=NULL, parallel=TRUE, cores=NULL) {
 
   # Default r to 500 if NULL
   if (is.null(r)) r <- 500L
@@ -34,9 +38,11 @@ paLDSC <- function(S=S, V=V, r=NULL, p=NULL, save.pdf=FALSE, diag=FALSE, fa=FALS
   # Convert p: NULL means default 0.95
   p_val <- if (is.null(p)) NaN else as.double(p)
 
+  num_threads <- .resolve_num_threads(parallel, cores)
+
   json <- .Call("wrap__pa_ldsc_rust",
     as.character(s_json), as.character(v_json), as.integer(r),
-    p_val, as.logical(diag))
+    p_val, as.logical(diag), num_threads)
   result <- jsonlite::fromJSON(json)
 
   # Factor analysis mode: delegate to psych::fa() for the actual extraction

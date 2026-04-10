@@ -153,7 +153,7 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResul
 
 /// Run multivariate LDSC.
 #[pyfunction]
-#[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=None, chisq_max=None))]
+#[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=None, chisq_max=None, parallel=true, cores=None))]
 #[allow(unused_variables)]
 fn ldsc(
     traits: Vec<String>,
@@ -169,6 +169,8 @@ fn ldsc(
     stand: bool,
     select: Option<String>,
     chisq_max: Option<f64>,
+    parallel: bool,
+    cores: Option<usize>,
 ) -> PyResult<PyLdscResult> {
     if sep_weights {
         log::info!("sep_weights is always enabled in gsemr — weight LD scores are read from the wld directory");
@@ -198,6 +200,7 @@ fn ldsc(
     let config = gsem_ldsc::LdscConfig {
         n_blocks,
         chisq_max,
+        num_threads: if parallel { cores } else { Some(1) },
     };
 
     let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
@@ -398,64 +401,91 @@ fn sumstats(
 
 /// Run common factor GWAS.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, sumstats_path, estimation="DWLS", cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, twas=false, smooth_check=false))]
+#[pyo3(signature = (
+    covstruc_json,
+    sumstats_path,
+    estimation="DWLS",
+    cores=None,
+    toler=false,
+    snpse=false,
+    parallel=true,
+    gc="standard",
+    mpi=false,
+    twas=false,
+    smooth_check=false,
+    identification="fixed_variance",
+))]
 #[allow(unused_variables)]
 fn commonfactor_gwas(
     covstruc_json: &str,
     sumstats_path: &str,
-    estimation: &str,          // threaded
-    cores: Option<usize>,      // threaded (via num_threads)
-    toler: bool,               // ignored
-    snpse: bool,               // threaded (as snp_se)
-    parallel: bool,            // threaded (via num_threads)
+    estimation: &str,
+    cores: Option<usize>,
+    toler: bool,           // ignored: convergence is controlled internally
+    snpse: bool,
+    parallel: bool,
     gc: &str,
-    mpi: bool,                 // ignored
-    twas: bool,                // ignored
-    smooth_check: bool,        // threaded
+    mpi: bool,             // ignored: not applicable to the Rust backend
+    twas: bool,
+    smooth_check: bool,
+    identification: &str,
 ) -> PyResult<String> {
+    if twas {
+        return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "twas=True is not supported by the Python commonfactor_gwas binding yet; \
+             use the R binding or open an issue if you need this",
+        ));
+    }
+
     let ldsc_result = conversions::json_to_ldsc(covstruc_json)
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
-    let k = ldsc_result.s.nrows();
-    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
-    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
-    let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse()
+        .unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);
 
-    let snp_se_val = if snpse { Some(0.0005) } else { None };
+    // Filter SNPs with zero MAF: var_snp=0 → singular per-SNP matrices.
+    let valid_idx: Vec<usize> = merged.snps.iter().enumerate()
+        .filter(|(_, s)| 2.0 * s.maf * (1.0 - s.maf) > 1e-10)
+        .map(|(i, _)| i)
+        .collect();
+    if valid_idx.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "no SNPs with valid MAF (all MAF=0)",
+        ));
+    }
+    let valid_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
+    let beta_snp: Vec<Vec<f64>> = valid_snps.iter().map(|s| s.beta.clone()).collect();
+    let se_snp: Vec<Vec<f64>> = valid_snps.iter().map(|s| s.se.clone()).collect();
+    let var_snp: Vec<f64> = valid_snps.iter()
+        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+        .collect();
 
-    // Common factor GWAS uses the internal user_gwas path with auto-generated model;
-    // we build a UserGwasConfig to thread estimation, snp_se, smooth_check.
-    let loading = std::iter::once(format!("NA*{}", merged.trait_names[0]))
-        .chain(merged.trait_names[1..].iter().cloned())
-        .collect::<Vec<_>>()
-        .join(" + ");
-    let model_str = format!("F1 =~ {loading}\nF1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP");
-    let model = gsem_sem::syntax::parse_model(&model_str, false)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
-
-    let config = gsem::gwas::user_gwas::UserGwasConfig {
-        model,
+    let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
         estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
-        max_iter: 500,
+        snp_se: if snpse { Some(0.0005) } else { None },
         smooth_check,
-        snp_se: snp_se_val,
-        variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
-        q_snp: false,
-        fix_measurement: false,
+        identification: gsem::gwas::common_factor::Identification::from_str_lossy(identification),
         num_threads: if parallel { cores } else { Some(1) },
+        ..Default::default()
     };
 
-    let results = gsem::gwas::user_gwas::run_user_gwas(
-        &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
-        &beta_snp, &se_snp, &var_snp, None,
+    let results = gsem::gwas::common_factor::run_common_factor_gwas(
+        &merged.trait_names,
+        &ldsc_result.s,
+        &ldsc_result.v,
+        &i_ld,
+        &beta_snp,
+        &se_snp,
+        &var_snp,
+        &cf_config,
+        None,
     );
-    Ok(snp_results_to_json(&results, &merged.snps))
+    Ok(snp_results_to_json(&results, &valid_snps))
 }
 
 /// Run user-specified GWAS.
@@ -547,13 +577,15 @@ fn user_gwas(
 /// Parallel analysis to determine number of factors.
 /// Accepts S and V as JSON strings (2D arrays).
 #[pyfunction]
-#[pyo3(signature = (s_json, v_json, r=500, p=None, diag=false))]
+#[pyo3(signature = (s_json, v_json, r=500, p=None, diag=false, parallel=true, cores=None))]
 fn parallel_analysis(
     s_json: &str,
     v_json: &str,
     r: usize,
     p: Option<f64>,
     diag: bool,
+    parallel: bool,
+    cores: Option<usize>,
 ) -> PyResult<String> {
     let s_mat = json_to_mat(s_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid s_json: {e}")))?;
@@ -561,7 +593,16 @@ fn parallel_analysis(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
 
     let percentile = p.unwrap_or(0.95);
-    let result = gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, r, percentile, diag, None);
+    let num_threads = if parallel { cores } else { Some(1) };
+    let result = gsem::stats::parallel_analysis::parallel_analysis(
+        &s_mat,
+        &v_mat,
+        r,
+        percentile,
+        diag,
+        num_threads,
+        None,
+    );
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
     Ok(format!(

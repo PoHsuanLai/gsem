@@ -11,8 +11,9 @@
 #' @param maf.filter MAF filter threshold (default 0.01)
 #' @param log.name Log file name (ignored in gsemr)
 #' @param column.names Named list of column name overrides
-#' @param parallel Use parallel processing (default FALSE)
-#' @param cores Number of cores (default NULL)
+#' @param parallel Accepted for API compatibility; gsemr's munge is currently
+#'   single-threaded so this has no effect.
+#' @param cores Accepted for API compatibility; see \code{parallel}.
 #' @param overwrite Overwrite existing files (ignored in gsemr)
 #' @return Character vector of output file paths (invisibly)
 #' @export
@@ -20,10 +21,8 @@ munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.fil
                   log.name=NULL, column.names=list(), parallel=FALSE, cores=NULL, overwrite=TRUE) {
 
   # log.name: handled after computation below
-  if (identical(parallel, FALSE)) {
-    Sys.setenv(RAYON_NUM_THREADS = "1")
-  } else if (!is.null(cores)) {
-    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
+  if (identical(parallel, TRUE) || (!is.null(cores) && is.numeric(cores) && cores > 1)) {
+    message("Note: gsemr munge is single-threaded; 'parallel'/'cores' are no-ops")
   }
 
   if (is.null(trait.names)) {

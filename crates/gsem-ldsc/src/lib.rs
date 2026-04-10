@@ -114,6 +114,11 @@ struct PairResult {
 pub struct LdscConfig {
     pub n_blocks: usize,
     pub chisq_max: Option<f64>,
+    /// Number of rayon threads for the per-pair regression loop. `None` or
+    /// `Some(0)` uses the rayon default (all available cores). `Some(1)`
+    /// disables parallelism. Each call builds its own local pool so this
+    /// setting does not leak across calls.
+    pub num_threads: Option<usize>,
 }
 
 impl Default for LdscConfig {
@@ -121,6 +126,7 @@ impl Default for LdscConfig {
         Self {
             n_blocks: 200,
             chisq_max: None,
+            num_threads: None,
         }
     }
 }
@@ -163,67 +169,79 @@ pub fn ldsc(
     // Build (j, jj) pairs in vech order for parallel processing
     let pairs: Vec<(usize, usize)> = (0..k).flat_map(|j| (j..k).map(move |jj| (j, jj))).collect();
 
-    // Run all trait pair regressions in parallel, each with its own per-pair merge
-    let pair_results: Vec<Result<PairResult>> = pairs
-        .par_iter()
-        .map(|&(j, jj)| {
-            // Merge data for this specific pair
-            let merged = merge_pair(
-                traits,
-                ld_snps,
-                ld_scores,
-                w_ld_scores,
-                &trait_maps,
-                j,
-                jj,
-                m_total,
-                config,
-            )?;
-            let n_blocks = config.n_blocks.min(merged.n_snps);
+    // Build a local rayon pool so callers control parallelism per-invocation
+    // and concurrent calls don't share global state.
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(n) = config.num_threads {
+        if n > 0 {
+            builder = builder.num_threads(n);
+        }
+    }
+    let pool = builder.build().expect("failed to build rayon thread pool");
 
-            let pair_result = if j == jj {
-                let result = heritability::estimate_h2(
-                    &merged.z_j,
-                    &merged.n_j,
-                    &merged.ld,
-                    &merged.w_ld,
-                    merged.m,
-                    n_blocks,
-                )?;
-                Ok(PairResult {
+    // Run all trait pair regressions in parallel, each with its own per-pair merge
+    let pair_results: Vec<Result<PairResult>> = pool.install(|| {
+        pairs
+            .par_iter()
+            .map(|&(j, jj)| {
+                // Merge data for this specific pair
+                let merged = merge_pair(
+                    traits,
+                    ld_snps,
+                    ld_scores,
+                    w_ld_scores,
+                    &trait_maps,
                     j,
                     jj,
-                    value: result.h2,
-                    intercept: result.intercept,
-                    mean_n: result.mean_n,
-                    pseudos: result.pseudo_values,
-                })
-            } else {
-                let result = covariance::estimate_gcov(
-                    &merged.z_j,
-                    &merged.z_k,
-                    &merged.n_j,
-                    &merged.n_k,
-                    &merged.ld,
-                    &merged.w_ld,
-                    merged.m,
-                    n_blocks,
+                    m_total,
+                    config,
                 )?;
-                Ok(PairResult {
-                    j,
-                    jj,
-                    value: result.gcov,
-                    intercept: result.intercept,
-                    mean_n: result.mean_n,
-                    pseudos: result.pseudo_values,
-                })
-            };
-            if let Some(cb) = on_pair_done {
-                cb();
-            }
-            pair_result
-        })
-        .collect();
+                let n_blocks = config.n_blocks.min(merged.n_snps);
+
+                let pair_result = if j == jj {
+                    let result = heritability::estimate_h2(
+                        &merged.z_j,
+                        &merged.n_j,
+                        &merged.ld,
+                        &merged.w_ld,
+                        merged.m,
+                        n_blocks,
+                    )?;
+                    Ok(PairResult {
+                        j,
+                        jj,
+                        value: result.h2,
+                        intercept: result.intercept,
+                        mean_n: result.mean_n,
+                        pseudos: result.pseudo_values,
+                    })
+                } else {
+                    let result = covariance::estimate_gcov(
+                        &merged.z_j,
+                        &merged.z_k,
+                        &merged.n_j,
+                        &merged.n_k,
+                        &merged.ld,
+                        &merged.w_ld,
+                        merged.m,
+                        n_blocks,
+                    )?;
+                    Ok(PairResult {
+                        j,
+                        jj,
+                        value: result.gcov,
+                        intercept: result.intercept,
+                        mean_n: result.mean_n,
+                        pseudos: result.pseudo_values,
+                    })
+                };
+                if let Some(cb) = on_pair_done {
+                    cb();
+                }
+                pair_result
+            })
+            .collect()
+    });
 
     // Collect results into matrices (sequential, preserves vech order)
     let mut s = Mat::zeros(k, k);

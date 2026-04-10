@@ -23,14 +23,19 @@ pub struct PaResult {
 ///
 /// `percentile`: quantile threshold (e.g. 0.95 for 95th percentile).
 /// `diag_only`: if true, use only `diag(V)` for simulation (ignore off-diagonal sampling covariance).
+/// `num_threads`: rayon thread count for the Monte Carlo loop. `None` or
+///   `Some(0)` uses the rayon default; `Some(1)` disables parallelism. Each
+///   call builds its own local pool so this setting does not leak across calls.
 ///
 /// Port of GenomicSEM's `paLDSC()`.
+#[allow(clippy::too_many_arguments)]
 pub fn parallel_analysis(
     s: &Mat<f64>,
     v: &Mat<f64>,
     n_sim: usize,
     percentile: f64,
     diag_only: bool,
+    num_threads: Option<usize>,
     on_sim_done: Option<&(dyn Fn() + Sync)>,
 ) -> PaResult {
     let k = s.nrows();
@@ -57,34 +62,45 @@ pub fn parallel_analysis(
     // Cholesky of V for multivariate normal sampling: L such that V = L L'
     let chol_l = compute_cholesky_l(&v_sim, kstar);
 
+    // Build a local rayon pool so callers control parallelism per-invocation.
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(n) = num_threads {
+        if n > 0 {
+            builder = builder.num_threads(n);
+        }
+    }
+    let pool = builder.build().expect("failed to build rayon thread pool");
+
     // Simulate null eigenvalue distributions (parallelized — each iteration is independent)
-    let all_eigs: Vec<Vec<f64>> = (0..n_sim)
-        .into_par_iter()
-        .map(|_| {
-            let mut rng = rand::rng();
-            let mut z = vec![0.0; kstar];
-            let mut sample = vec![0.0; kstar];
+    let all_eigs: Vec<Vec<f64>> = pool.install(|| {
+        (0..n_sim)
+            .into_par_iter()
+            .map(|_| {
+                let mut rng = rand::rng();
+                let mut z = vec![0.0; kstar];
+                let mut sample = vec![0.0; kstar];
 
-            // Generate z ~ N(0, I)
-            for zi in z.iter_mut() {
-                *zi = rng.sample(StandardNormal);
-            }
+                // Generate z ~ N(0, I)
+                for zi in z.iter_mut() {
+                    *zi = rng.sample(StandardNormal);
+                }
 
-            // sample = null_vec + L * z (multivariate normal)
-            for i in 0..kstar {
-                let lz: f64 = (0..kstar).map(|j| chol_l[(i, j)] * z[j]).sum();
-                sample[i] = null_vec[i] + lz;
-            }
+                // sample = null_vec + L * z (multivariate normal)
+                for i in 0..kstar {
+                    let lz: f64 = (0..kstar).map(|j| chol_l[(i, j)] * z[j]).sum();
+                    sample[i] = null_vec[i] + lz;
+                }
 
-            let sim_mat = vech::vech_reverse(&sample, k)
-                .expect("vech_reverse should not fail for valid kstar");
-            let eigs = eigenvalues_sorted(&sim_mat);
-            if let Some(cb) = on_sim_done {
-                cb();
-            }
-            eigs
-        })
-        .collect();
+                let sim_mat = vech::vech_reverse(&sample, k)
+                    .expect("vech_reverse should not fail for valid kstar");
+                let eigs = eigenvalues_sorted(&sim_mat);
+                if let Some(cb) = on_sim_done {
+                    cb();
+                }
+                eigs
+            })
+            .collect()
+    });
 
     // Transpose: from n_sim × k to k × n_sim
     let mut sim_eigenvalues: Vec<Vec<f64>> = vec![Vec::with_capacity(n_sim); k];
@@ -168,7 +184,7 @@ mod tests {
         // Identity correlation matrix: all eigenvalues = 1
         let s = Mat::<f64>::identity(3, 3);
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.01 } else { 0.0 });
-        let result = parallel_analysis(&s, &v, 100, 0.95, false, None);
+        let result = parallel_analysis(&s, &v, 100, 0.95, false, None, None);
         assert_eq!(result.observed.len(), 3);
         for &eig in &result.observed {
             assert!((eig - 1.0).abs() < 1e-10);
@@ -180,7 +196,7 @@ mod tests {
         // Strong 1-factor structure
         let s = faer::mat![[1.0, 0.8, 0.8], [0.8, 1.0, 0.8], [0.8, 0.8, 1.0],];
         let v = Mat::from_fn(6, 6, |i, j| if i == j { 0.001 } else { 0.0 });
-        let result = parallel_analysis(&s, &v, 200, 0.95, false, None);
+        let result = parallel_analysis(&s, &v, 200, 0.95, false, None, None);
         assert!(result.n_factors >= 1);
     }
 }

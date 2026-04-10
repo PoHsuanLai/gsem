@@ -17,6 +17,10 @@
 #' @param stand Standardize output (default FALSE)
 #' @param select Variable selection method (default FALSE)
 #' @param chisq.max Maximum chi-square filter (default NA = auto)
+#' @param parallel Use parallel processing for the per-pair regression loop
+#'   (default TRUE)
+#' @param cores Number of cores for the per-pair regression loop
+#'   (NULL = auto-detect)
 #' @return A list with components:
 #'   \item{S}{Genetic covariance matrix (k x k)}
 #'   \item{V}{Sampling covariance matrix of S (k* x k*, where k* = k(k+1)/2)}
@@ -26,7 +30,8 @@
 #' @export
 ldsc <- function(traits, sample.prev, population.prev, ld, wld,
                  trait.names=NULL, sep_weights=FALSE, chr=22,
-                 n.blocks=200, ldsc.log=NULL, stand=FALSE, select=FALSE, chisq.max=NA) {
+                 n.blocks=200, ldsc.log=NULL, stand=FALSE, select=FALSE,
+                 chisq.max=NA, parallel=TRUE, cores=NULL) {
 
   # sep_weights: when FALSE, use ld directory for weights too (ignore wld)
   if (identical(sep_weights, FALSE)) {
@@ -44,6 +49,8 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
   # Convert chisq.max: NA means auto (pass NaN to Rust)
   chisq_max_val <- if (is.na(chisq.max)) NaN else as.double(chisq.max)
 
+  num_threads <- .resolve_num_threads(parallel, cores)
+
   json <- .Call("wrap__ldsc_rust",
     as.character(traits),
     as.double(sample.prev),
@@ -54,7 +61,8 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
     as.integer(chr),
     chisq_max_val,
     as.logical(stand),
-    as.character(select_str)
+    as.character(select_str),
+    num_threads
   )
 
   result <- jsonlite::fromJSON(json)

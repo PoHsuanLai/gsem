@@ -33,6 +33,19 @@ pub enum Identification {
     MarkerIndicator,
 }
 
+impl Identification {
+    /// Parse from a user-supplied string. Accepts `"marker"`,
+    /// `"marker_indicator"`, `"marker-indicator"`, or `"mi"` (case-insensitive)
+    /// for [`Identification::MarkerIndicator`]; everything else (including
+    /// `"fixed_variance"`) maps to the default [`Identification::FixedVariance`].
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "marker" | "marker_indicator" | "marker-indicator" | "mi" => Self::MarkerIndicator,
+            _ => Self::FixedVariance,
+        }
+    }
+}
+
 /// Configuration for common factor GWAS.
 pub struct CommonFactorGwasConfig {
     /// Estimation method
@@ -45,6 +58,14 @@ pub struct CommonFactorGwasConfig {
     pub smooth_check: bool,
     /// Factor identification strategy. See [`Identification`] for details.
     pub identification: Identification,
+    /// Fix measurement parameters at baseline estimates (fit a no-SNP model
+    /// first, then hold those estimates constant per SNP). The default of
+    /// `true` matches R GenomicSEM's `userGWAS` and is required for numerical
+    /// parity on degenerate per-SNP surfaces.
+    pub fix_measurement: bool,
+    /// Number of rayon threads.  `None` or `Some(0)` uses the rayon default
+    /// (all available cores).  `Some(1)` disables parallelism.
+    pub num_threads: Option<usize>,
 }
 
 impl Default for CommonFactorGwasConfig {
@@ -55,6 +76,8 @@ impl Default for CommonFactorGwasConfig {
             snp_se: None,
             smooth_check: false,
             identification: Identification::default(),
+            fix_measurement: true,
+            num_threads: None,
         }
     }
 }
@@ -100,8 +123,8 @@ pub fn run_common_factor_gwas(
         snp_se: cfg.snp_se,
         variant_label: user_gwas::VariantLabel::Snp,
         q_snp: false,
-        fix_measurement: true,
-        num_threads: None,
+        fix_measurement: cfg.fix_measurement,
+        num_threads: cfg.num_threads,
     };
 
     user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp, on_snp_done)

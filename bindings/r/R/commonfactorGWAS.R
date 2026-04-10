@@ -24,17 +24,10 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
                              MPI=FALSE, TWAS=FALSE, smooth_check=FALSE,
                              identification="fixed_variance") {
 
-  if (!identical(parallel, TRUE)) {
-    Sys.setenv(RAYON_NUM_THREADS = "1")
-  }
   if (!identical(MPI, FALSE)) {
     message("Note: 'MPI' is ignored in gsemr -- not applicable to Rust backend")
   }
-
-  # Set rayon thread count if cores is specified
-  if (!is.null(cores) && cores > 0) {
-    Sys.setenv(RAYON_NUM_THREADS = as.character(cores))
-  }
+  num_threads <- .resolve_num_threads(parallel, cores)
 
   if (is.list(covstruc)) {
     covstruc_json <- jsonlite::toJSON(list(
@@ -61,7 +54,8 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
   json <- .Call("wrap__commonfactor_gwas_rust",
     as.character(covstruc_json), snp_path, as.character(GC),
     as.character(estimation), snp_se_val, as.logical(smooth_check),
-    as.logical(TWAS), as.character(identification))
+    as.logical(TWAS), as.character(identification),
+    num_threads)
   raw <- jsonlite::fromJSON(json)
 
   # Extract the SNP effect row (F1 ~ SNP) from each SNP's params,

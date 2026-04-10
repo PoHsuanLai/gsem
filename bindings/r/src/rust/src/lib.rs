@@ -75,6 +75,22 @@ fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
     }
 }
 
+/// Convert an R integer to the `num_threads` value the in-process API
+/// expects: NA or non-positive → `None` (use rayon default = all cores),
+/// positive → `Some(n)`. R wrappers should pass `NA_integer_` when the
+/// caller wants the default and an explicit positive value otherwise.
+fn rint_to_num_threads(n: Rint) -> Option<usize> {
+    if n.is_na() {
+        return None;
+    }
+    let v = n.inner();
+    if v > 0 {
+        Some(v as usize)
+    } else {
+        None
+    }
+}
+
 /// Run LDSC pipeline.
 ///
 /// @param trait_files Character vector of .sumstats.gz file paths
@@ -100,6 +116,7 @@ fn ldsc_rust(
     chisq_max: Rfloat,
     stand: bool,
     select: &str,
+    num_threads: Rint,
 ) -> String {
     ensure_logger();
     let n_blocks = n_blocks as usize;
@@ -142,6 +159,7 @@ fn ldsc_rust(
     let config = gsem_ldsc::LdscConfig {
         n_blocks,
         chisq_max: chisq_max_opt,
+        num_threads: rint_to_num_threads(num_threads),
     };
 
     let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
@@ -576,6 +594,7 @@ fn commonfactor_gwas_rust(
     smooth_check: bool,
     twas: bool,
     identification: &str,
+    num_threads: Rint,
 ) -> String {
 
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
@@ -595,19 +614,14 @@ fn commonfactor_gwas_rust(
         Some(snp_se.inner())
     };
 
-    let ident = match identification.to_ascii_lowercase().as_str() {
-        "marker" | "marker_indicator" | "marker-indicator" => {
-            gsem::gwas::common_factor::Identification::MarkerIndicator
-        }
-        _ => gsem::gwas::common_factor::Identification::FixedVariance,
-    };
-
     let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
         estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
         snp_se: snp_se_opt,
         smooth_check,
-        identification: ident,
+        identification: gsem::gwas::common_factor::Identification::from_str_lossy(identification),
+        num_threads: rint_to_num_threads(num_threads),
+        ..Default::default()
     };
 
     if twas {
@@ -703,7 +717,9 @@ fn user_gwas_rust(
     fix_measurement: bool,
     q_snp: bool,
     twas: bool,
+    num_threads: Rint,
 ) -> String {
+    let nt = rint_to_num_threads(num_threads);
 
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
         Some(r) => r,
@@ -752,7 +768,7 @@ fn user_gwas_rust(
             q_snp,
             variant_label: gsem::gwas::user_gwas::VariantLabel::Gene,
             max_iter: 500,
-            num_threads: None,
+            num_threads: nt,
         };
 
         let n_genes = var_gene.len();
@@ -806,7 +822,7 @@ fn user_gwas_rust(
         variant_label: gsem::gwas::user_gwas::VariantLabel::Snp,
         fix_measurement,
         q_snp,
-        num_threads: None,
+        num_threads: nt,
     };
 
     let n_snps = var_snp.len();
@@ -848,7 +864,14 @@ fn filter_results_by_sub(results: &mut [gsem::gwas::user_gwas::SnpResult], sub: 
 
 /// Parallel analysis to determine number of factors.
 #[extendr]
-fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32, percentile: Rfloat, diag_only: bool) -> String {
+fn pa_ldsc_rust(
+    s_json: &str,
+    v_json: &str,
+    n_sim: i32,
+    percentile: Rfloat,
+    diag_only: bool,
+    num_threads: Rint,
+) -> String {
     let s_mat = match conversions::json_to_mat(s_json) {
         Some(m) => m,
         None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
@@ -868,8 +891,15 @@ fn pa_ldsc_rust(s_json: &str, v_json: &str, n_sim: i32, percentile: Rfloat, diag
     let n = n_sim as usize;
     let progress = RProgress::new(n);
     let cb = progress.callback();
-    let result =
-        gsem::stats::parallel_analysis::parallel_analysis(&s_mat, &v_mat, n, p, diag_only, Some(&cb));
+    let result = gsem::stats::parallel_analysis::parallel_analysis(
+        &s_mat,
+        &v_mat,
+        n,
+        p,
+        diag_only,
+        rint_to_num_threads(num_threads),
+        Some(&cb),
+    );
 
     let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
     let sim: Vec<String> = result
