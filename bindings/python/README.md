@@ -2,6 +2,10 @@
 
 Rust-accelerated [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) for Python. Multivariate LD Score Regression and Structural Equation Modeling on GWAS summary statistics.
 
+> See [`/API_COMPAT.md`](../../API_COMPAT.md) for parameter compatibility
+> with R GenomicSEM and [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) for
+> algorithmic and performance notes.
+
 ## Install
 
 ```sh

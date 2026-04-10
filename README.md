@@ -22,6 +22,19 @@ Benchmarked against R GenomicSEM on 3 simulated traits (~1.29M SNPs, N=50,000):
 
 S matrix max diff: 1.7e-5. V matrix max diff: 8.2e-8.
 
+See [`ARCHITECTURE.md §2`](./ARCHITECTURE.md#2-why-its-faster) for the
+full performance breakdown.
+
+## Documentation
+
+- **[`API_COMPAT.md`](./API_COMPAT.md)** — which R GenomicSEM parameters
+  are implemented in the Rust port, and which are accepted as stubs.
+- **[`ARCHITECTURE.md`](./ARCHITECTURE.md)** — why the Rust port runs
+  faster than R GenomicSEM, and where its algorithms and numerical
+  outputs diverge from R.
+- **[`CONTRIBUTING.md`](./CONTRIBUTING.md)** — dev setup and
+  contribution guide.
+
 ## Install
 
 ### R (gsemr)

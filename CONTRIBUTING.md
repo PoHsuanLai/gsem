@@ -28,6 +28,11 @@ cargo test --workspace
 | `gsem-r` | R bindings (feature-gated) |
 | `gsem-py` | Python bindings (feature-gated) |
 
+Before hacking on the estimator, sandwich-SE path, or per-SNP GWAS
+loops, read [`ARCHITECTURE.md`](./ARCHITECTURE.md) — it documents the
+design choices and numerical-parity constraints that test changes in
+those areas need to respect.
+
 ## Code Style
 
 - `cargo fmt` enforces formatting
