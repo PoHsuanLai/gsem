@@ -304,13 +304,30 @@ fn process_single_snp(
         }
     }
 
-    let mut model = Model::from_partable(pt, &obs_names);
+    // Fix the SNP's phantom-latent variance (`SNP ~~ SNP`) to the theoretical
+    // 2*maf*(1-maf) per SNP. R GenomicSEM treats SNP variance as known
+    // rather than estimating it jointly with the SNP effect; leaving it free
+    // makes the per-SNP optimization degenerate.
+    let mut pt_snp = pt.clone();
+    for row in pt_snp.rows.iter_mut() {
+        if row.op == Op::Covariance
+            && row.lhs == snp_label
+            && row.rhs == snp_label
+            && row.free > 0
+        {
+            row.free = 0;
+            row.value = var_snp;
+        }
+    }
+
+    let mut model = Model::from_partable(&pt_snp, &obs_names);
 
     // Construct diagonal weight matrix
     let kstar_full = (k + 1) * (k + 2) / 2;
     let v_diag: Vec<f64> = (0..kstar_full).map(|i| v_full[(i, i)]).collect();
 
-    // Fit model
+    // Fit with the strict SEM convergence regime — this matches R GenomicSEM's
+    // `userGWAS` per-SNP estimates when `fix_measurement` is enabled.
     let fit = match config.estimation {
         EstimationMethod::Ml => estimator::fit_ml(&mut model, &s_full, config.max_iter, None),
         EstimationMethod::Dwls => {
@@ -331,11 +348,14 @@ fn process_single_snp(
         }
     });
 
-    // Build a "sandwich model" where every row is marked free, with values set
-    // to either the baseline estimates (for measurement) or the per-SNP fit.
-    let mut sandwich_pt = pt.clone();
+    // Build a "sandwich model" with every row free (values set to the per-SNP
+    // fit or baseline estimates). The SNP~~SNP variance fixed in `pt_snp` is
+    // re-freed here so the SE is computed against the full Delta R uses.
+    let mut sandwich_pt = pt_snp.clone();
     let mut sandwich_free_idx = 0usize;
-    let fit_values: Vec<(String, Op, String, f64)> = pt.rows.iter()
+    let fit_values: Vec<(String, Op, String, f64)> = pt_snp
+        .rows
+        .iter()
         .filter(|r| r.free > 0)
         .enumerate()
         .map(|(i, r)| {
@@ -373,17 +393,17 @@ fn process_single_snp(
 
     let (se_full, _ohtt) = sandwich::sandwich_se(&mut sandwich_model, &w_diag, &v_full);
 
-    // Map se_full back to the original pt's free params
+    // Map se_full back to pt_snp's free params (the parameters we actually fit)
     let sandwich_free_rows: Vec<_> = sandwich_pt.rows.iter().filter(|r| r.free > 0).collect();
-    let orig_free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    let orig_free_rows: Vec<_> = pt_snp.rows.iter().filter(|r| r.free > 0).collect();
     let se: Vec<f64> = orig_free_rows.iter().map(|orig_row| {
         sandwich_free_rows.iter().position(|sr| {
             sr.lhs == orig_row.lhs && sr.op == orig_row.op && sr.rhs == orig_row.rhs
         }).and_then(|i| se_full.get(i).copied()).unwrap_or(f64::NAN)
     }).collect();
 
-    // Build parameter results: only for free parameters
-    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    // Build parameter results: only for free parameters of the per-SNP fit
+    let free_rows: Vec<_> = pt_snp.rows.iter().filter(|r| r.free > 0).collect();
     let params: Vec<SnpParamResult> = free_rows
         .iter()
         .enumerate()

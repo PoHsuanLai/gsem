@@ -198,45 +198,45 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
     //
     // Existing variance rows (whether free or fixed) are left unchanged.
     {
-        // Collect latent variable names (LHS of =~)
-        let mut latents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Collect names in first-occurrence order so auto-added residual rows
+        // land in a deterministic order — L-BFGS's trajectory depends on the
+        // free-parameter ordering and HashSet iteration is process-randomized.
+        let mut latents: Vec<String> = Vec::new();
         for row in &rows {
-            if row.op == Op::Loading {
-                latents.insert(row.lhs.clone());
+            if row.op == Op::Loading && !latents.contains(&row.lhs) {
+                latents.push(row.lhs.clone());
             }
         }
 
-        // Collect observed variable names (RHS of =~, and either side of ~
-        // that isn't a latent).
-        let mut observed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut observed: Vec<String> = Vec::new();
         for row in &rows {
             match row.op {
                 Op::Loading => {
-                    if !latents.contains(&row.rhs) {
-                        observed.insert(row.rhs.clone());
+                    if !latents.contains(&row.rhs) && !observed.contains(&row.rhs) {
+                        observed.push(row.rhs.clone());
                     }
                 }
                 Op::Regression => {
-                    if !latents.contains(&row.lhs) {
-                        observed.insert(row.lhs.clone());
+                    if !latents.contains(&row.lhs) && !observed.contains(&row.lhs) {
+                        observed.push(row.lhs.clone());
                     }
-                    if !latents.contains(&row.rhs) {
-                        observed.insert(row.rhs.clone());
+                    if !latents.contains(&row.rhs) && !observed.contains(&row.rhs) {
+                        observed.push(row.rhs.clone());
                     }
                 }
                 _ => {}
             }
         }
 
-        // Find which variables already have an explicit variance row
-        let mut has_variance: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for row in &rows {
-            if row.op == Op::Covariance && row.lhs == row.rhs {
-                has_variance.insert(row.lhs.clone());
-            }
-        }
+        // Snapshot the variables that already have an explicit variance row,
+        // so the loops below can mutate `rows` without aliasing.
+        let has_variance: Vec<String> = rows
+            .iter()
+            .filter(|r| r.op == Op::Covariance && r.lhs == r.rhs)
+            .map(|r| r.lhs.clone())
+            .collect();
 
-        // Add missing residual variances for observed variables
+        // Add missing residual variances: observed first, then latent.
         for name in &observed {
             if !has_variance.contains(name) {
                 free_counter += 1;
@@ -253,7 +253,6 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
             }
         }
 
-        // Add missing latent variances for latent variables
         for name in &latents {
             if !has_variance.contains(name) {
                 free_counter += 1;
@@ -349,17 +348,27 @@ mod tests {
     fn test_parse_cfa() {
         let model = "F1 =~ V1 + V2 + V3\nF1 ~~ 1*F1";
         let pt = parse_model(model, false).unwrap();
-        // 3 loadings + 1 variance = 4 rows
-        assert_eq!(pt.rows.len(), 4);
+        // 3 loadings + 1 F1 variance + 3 auto-added V1/V2/V3 residual variances = 7 rows
+        assert_eq!(pt.rows.len(), 7);
         // First loading fixed to 1
         assert_eq!(pt.rows[0].free, 0);
         assert_eq!(pt.rows[0].value, 1.0);
-        // Second and third free
+        // Second and third loadings free
         assert!(pt.rows[1].free > 0);
         assert!(pt.rows[2].free > 0);
-        // Variance fixed to 1
+        // Explicit F1 variance fixed to 1
         assert_eq!(pt.rows[3].free, 0);
         assert_eq!(pt.rows[3].value, 1.0);
+        // Auto-added V1/V2/V3 residuals are free
+        let residuals: Vec<_> = pt
+            .rows
+            .iter()
+            .filter(|r| r.op == Op::Covariance && r.lhs == r.rhs && r.lhs != "F1")
+            .collect();
+        assert_eq!(residuals.len(), 3);
+        for r in &residuals {
+            assert!(r.free > 0);
+        }
     }
 
     #[test]

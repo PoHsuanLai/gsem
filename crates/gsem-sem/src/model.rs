@@ -27,7 +27,7 @@ pub struct Model {
 }
 
 /// Which matrix and position a free parameter belongs to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixId {
     Lambda,
     Psi,
@@ -176,7 +176,11 @@ impl Model {
                                 col: ri,
                             });
                             lower_bounds.push(row.lower_bound);
-                            beta[(li, ri)] = 0.1;
+                            // Start the regression slope at row.value (zero by
+                            // default, matching lavaan). Callers that want a
+                            // warm start should set row.value before building
+                            // the model.
+                            beta[(li, ri)] = row.value;
                         } else {
                             beta[(li, ri)] = row.value;
                         }
@@ -293,22 +297,26 @@ mod tests {
         assert_eq!(model.lat_names.len(), 1);
         assert_eq!(model.lambda.nrows(), 3);
         assert_eq!(model.lambda.ncols(), 1);
-        // 3 free loadings (NA* frees first) + 0 psi (fixed to 1) = 3 free params
-        assert_eq!(model.n_free(), 3);
+        // 3 free loadings (NA* frees first) + 3 auto-added V1/V2/V3 residual
+        // variances + 0 F1 variance (fixed to 1) = 6 free params
+        assert_eq!(model.n_free(), 6);
     }
 
     #[test]
     fn test_implied_cov_identity() {
-        // 1-factor model: F =~ 1*V1 + 1*V2, F ~~ 1*F, no theta
+        // 1-factor model: F =~ 1*V1 + V2, F ~~ 1*F.
+        // Parser auto-adds free residual variances V1~~V1, V2~~V2 (start 0.5).
         let pt = parse_model("F1 =~ V1 + V2\nF1 ~~ 1*F1", false).unwrap();
         let model = Model::from_partable(&pt, &[]);
         let sigma = model.implied_cov();
-        // Lambda = [1, free]', Psi = [1], Theta = 0
-        // With first loading fixed to 1 and second free (starts at 0.5):
-        // Sigma[0,0] = 1*1*1 + 0 = 1
-        // Sigma[0,1] = 1*1*0.5 = 0.5
+        // Lambda = [1, 0.5]', Psi = [[1]], Theta = diag(0.5, 0.5)
+        // Sigma = Lambda*Psi*Lambda' + Theta
+        //       = [[1, 0.5], [0.5, 0.25]] + diag(0.5, 0.5)
+        //       = [[1.5, 0.5], [0.5, 0.75]]
         assert_eq!(sigma.nrows(), 2);
-        assert!((sigma[(0, 0)] - 1.0).abs() < 1e-10);
+        assert!((sigma[(0, 0)] - 1.5).abs() < 1e-10, "got {}", sigma[(0, 0)]);
+        assert!((sigma[(0, 1)] - 0.5).abs() < 1e-10, "got {}", sigma[(0, 1)]);
+        assert!((sigma[(1, 1)] - 0.75).abs() < 1e-10, "got {}", sigma[(1, 1)]);
     }
 
     #[test]

@@ -22,8 +22,12 @@ pub fn analytical_jacobian(model: &Model) -> Mat<f64> {
 
     let mut delta = Mat::zeros(kstar, n_free);
 
-    // Check if Beta is non-zero
-    let has_beta = model.beta.col_iter().any(|c| c.iter().any(|&x| x != 0.0));
+    // Use the structural-regression path if the model has ANY Beta parameter
+    // (free or fixed non-zero). A free regression slope starts at 0.0
+    // (matching lavaan) but still needs the Beta Jacobian path — we can't
+    // rely on checking matrix entries alone.
+    let has_beta = model.free_params.iter().any(|p| p.matrix == MatrixId::Beta)
+        || model.beta.col_iter().any(|c| c.iter().any(|&x| x != 0.0));
 
     if has_beta {
         fill_delta_with_beta(model, &mut delta, p, m);

@@ -19,18 +19,71 @@ pub struct FitResult {
     pub converged: bool,
 }
 
+/// Convergence thresholds for L-BFGS.
+///
+/// The default ([`ConvergenceSpec::default_sem`]) is the strict SEM regime
+/// used for every SEM and per-SNP GWAS fit, and is what the test fixture
+/// validates against R GenomicSEM.
+#[derive(Debug, Clone, Copy)]
+pub struct ConvergenceSpec {
+    /// Gradient norm early-exit threshold. Set to `0.0` to disable.
+    pub grad_tol: f64,
+    /// Relative objective change threshold. Set to `f64::INFINITY` to disable.
+    pub rel_obj_tol: f64,
+    /// L2 parameter-step threshold.
+    pub param_dx_tol: f64,
+    /// If `true`, requires BOTH `rel_obj` and `param_dx` to trigger the
+    /// iterate-level stop. If `false`, EITHER suffices.
+    pub require_both: bool,
+}
+
+impl ConvergenceSpec {
+    /// Default SEM fit: strict.
+    pub fn default_sem() -> Self {
+        Self {
+            grad_tol: 1e-6,
+            rel_obj_tol: 1e-8,
+            param_dx_tol: 1e-6,
+            require_both: true,
+        }
+    }
+}
+
+impl Default for ConvergenceSpec {
+    fn default() -> Self {
+        Self::default_sem()
+    }
+}
+
 /// Fit a model using Diagonally Weighted Least Squares (DWLS).
 ///
 /// Minimizes: F = (s - sigma(theta))' W (s - sigma(theta))
 /// where s = vech(S), sigma(theta) = vech(implied_cov), W = diag(V)^{-1}
 ///
 /// `grad_tol`: gradient norm convergence threshold (default 1e-6).
+/// This is a thin wrapper over [`fit_dwls_with`] that uses the
+/// [`ConvergenceSpec::default_sem`] regime with an optional grad-tol override.
 pub fn fit_dwls(
     model: &mut Model,
     s_obs: &Mat<f64>,
     v_diag: &[f64],
     max_iter: usize,
     grad_tol: Option<f64>,
+) -> FitResult {
+    let mut conv = ConvergenceSpec::default_sem();
+    if let Some(g) = grad_tol {
+        conv.grad_tol = g;
+    }
+    fit_dwls_with(model, s_obs, v_diag, max_iter, conv)
+}
+
+/// Fit a model using DWLS with an explicit [`ConvergenceSpec`].
+pub fn fit_dwls_with(
+    model: &mut Model,
+    s_obs: &Mat<f64>,
+    v_diag: &[f64],
+    max_iter: usize,
+    conv: ConvergenceSpec,
 ) -> FitResult {
     let s_vec = vech::vech(s_obs).expect("s_obs must be square");
     let w: Vec<f64> = v_diag
@@ -46,7 +99,7 @@ pub fn fit_dwls(
         dwls_gradient_analytical(model, &s_vec, &w)
     };
 
-    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, grad_tol)
+    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, conv)
 }
 
 /// Fit a model using Maximum Likelihood.
@@ -54,11 +107,27 @@ pub fn fit_dwls(
 /// Minimizes: F = log|Sigma| + tr(S * Sigma^{-1}) - log|S| - p
 ///
 /// `grad_tol`: gradient norm convergence threshold (default 1e-6).
+/// This is a thin wrapper over [`fit_ml_with`] that uses the
+/// [`ConvergenceSpec::default_sem`] regime with an optional grad-tol override.
 pub fn fit_ml(
     model: &mut Model,
     s_obs: &Mat<f64>,
     max_iter: usize,
     grad_tol: Option<f64>,
+) -> FitResult {
+    let mut conv = ConvergenceSpec::default_sem();
+    if let Some(g) = grad_tol {
+        conv.grad_tol = g;
+    }
+    fit_ml_with(model, s_obs, max_iter, conv)
+}
+
+/// Fit a model using ML with an explicit [`ConvergenceSpec`].
+pub fn fit_ml_with(
+    model: &mut Model,
+    s_obs: &Mat<f64>,
+    max_iter: usize,
+    conv: ConvergenceSpec,
 ) -> FitResult {
     let lower_bounds: Vec<Option<f64>> = model.lower_bounds.clone();
     let s_owned = s_obs.to_owned();
@@ -69,7 +138,7 @@ pub fn fit_ml(
         ml_gradient_analytical(model, &s_owned)
     };
 
-    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, grad_tol)
+    lbfgs_minimize(model, max_iter, &lower_bounds, obj_fn, grad_fn, conv)
 }
 
 /// Apply a parameter step with projection onto lower bounds.
@@ -98,13 +167,12 @@ fn lbfgs_minimize<F, G>(
     lower_bounds: &[Option<f64>],
     obj_fn: F,
     mut grad_fn: G,
-    tolerance: Option<f64>,
+    conv: ConvergenceSpec,
 ) -> FitResult
 where
     F: Fn(&Model) -> f64,
     G: FnMut(&mut Model, &[f64]) -> Vec<f64>,
 {
-    let gtol = tolerance.unwrap_or(1e-6);
     let memory_size = 10;
     let c1 = 1e-4; // Armijo condition constant
     let max_ls = 30; // Max line search steps
@@ -130,11 +198,13 @@ where
     let mut converged = false;
 
     for _iter in 0..max_iter {
-        // Check gradient convergence
-        let grad_norm: f64 = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
-        if grad_norm < gtol {
-            converged = true;
-            break;
+        // Check gradient convergence (only if enabled).
+        if conv.grad_tol > 0.0 {
+            let grad_norm: f64 = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+            if grad_norm < conv.grad_tol {
+                converged = true;
+                break;
+            }
         }
 
         // Compute search direction via L-BFGS two-loop recursion
@@ -225,7 +295,14 @@ where
         obj = new_obj;
         grad = new_grad;
 
-        if rel_change < 1e-8 && param_change < 1e-6 {
+        let rel_ok = rel_change < conv.rel_obj_tol;
+        let dx_ok = param_change < conv.param_dx_tol;
+        let stop = if conv.require_both {
+            rel_ok && dx_ok
+        } else {
+            rel_ok || dx_ok
+        };
+        if stop {
             converged = true;
             break;
         }
