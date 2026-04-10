@@ -267,6 +267,7 @@ fn process_single_snp(
     let var_snp_se2 = snp_se.powi(2);
     let mut v_full = add_snps::build_v_full(v_ld, se_snp, var_snp, var_snp_se2, i_ld, config.gc, k);
 
+
     // Smooth if needed
     let s_smoothed = smooth::smooth_if_needed(&mut s_full);
     let v_smoothed = smooth::smooth_if_needed(&mut v_full);
@@ -317,7 +318,11 @@ fn process_single_snp(
         }
     };
 
-    // Compute sandwich SEs
+    // Compute sandwich SEs.
+    //
+    // When fix_measurement is used, the point estimates come from a model where
+    // measurement params are held fixed. The sandwich SE must use the FULL
+    // model Jacobian (all params free) to match R GenomicSEM's behavior.
     let w_diag = Mat::from_fn(kstar_full, kstar_full, |i, j| {
         if i == j && v_diag[i] > 1e-30 {
             1.0 / v_diag[i]
@@ -326,7 +331,56 @@ fn process_single_snp(
         }
     });
 
-    let (se, _ohtt) = sandwich::sandwich_se(&mut model, &w_diag, &v_full);
+    // Build a "sandwich model" where every row is marked free, with values set
+    // to either the baseline estimates (for measurement) or the per-SNP fit.
+    let mut sandwich_pt = pt.clone();
+    let mut sandwich_free_idx = 0usize;
+    let fit_values: Vec<(String, Op, String, f64)> = pt.rows.iter()
+        .filter(|r| r.free > 0)
+        .enumerate()
+        .map(|(i, r)| {
+            (r.lhs.clone(), r.op, r.rhs.clone(), fit.params.get(i).copied().unwrap_or(0.0))
+        })
+        .collect();
+    for row in sandwich_pt.rows.iter_mut() {
+        // Keep identification constraints fixed: factor variance fixed to 1
+        // (i.e., the `1*F1` in our fixed-variance parameterization).
+        let is_identification = row.free == 0
+            && row.op == Op::Covariance
+            && row.lhs == row.rhs
+            && row.value == 1.0
+            && !obs_names.contains(&row.lhs);
+        if row.free == 0 && !is_identification {
+            sandwich_free_idx += 1;
+            row.free = sandwich_free_idx;
+        } else if row.free > 0 {
+            sandwich_free_idx += 1;
+            row.free = sandwich_free_idx;
+            if let Some(fv) = fit_values.iter().find(|(l, o, r, _)| {
+                *l == row.lhs && *o == row.op && *r == row.rhs
+            }) {
+                row.value = fv.3;
+            }
+        }
+    }
+
+    let mut sandwich_model = Model::from_partable(&sandwich_pt, &obs_names);
+    let init_params: Vec<f64> = sandwich_pt.rows.iter()
+        .filter(|r| r.free > 0)
+        .map(|r| r.value)
+        .collect();
+    sandwich_model.set_param_vec(&init_params);
+
+    let (se_full, _ohtt) = sandwich::sandwich_se(&mut sandwich_model, &w_diag, &v_full);
+
+    // Map se_full back to the original pt's free params
+    let sandwich_free_rows: Vec<_> = sandwich_pt.rows.iter().filter(|r| r.free > 0).collect();
+    let orig_free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    let se: Vec<f64> = orig_free_rows.iter().map(|orig_row| {
+        sandwich_free_rows.iter().position(|sr| {
+            sr.lhs == orig_row.lhs && sr.op == orig_row.op && sr.rhs == orig_row.rhs
+        }).and_then(|i| se_full.get(i).copied()).unwrap_or(f64::NAN)
+    }).collect();
 
     // Build parameter results: only for free parameters
     let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
@@ -354,9 +408,18 @@ fn process_single_snp(
         })
         .collect();
 
+    // Compute proper chi-square via eigendecomposition of V
+    // (matches R GenomicSEM's formula, not just the DWLS objective)
+    let sigma_hat = model.implied_cov();
+    let n_free_model = model.n_free();
+    let kstar = (k + 1) * (k + 2) / 2;
+    let df = kstar.saturating_sub(n_free_model);
+    let model_fit = gsem_sem::fit_indices::compute_fit(
+        &s_full, &sigma_hat, &v_full, df, n_free_model, None, None,
+    );
+
     // Compute Q_SNP if requested
     let (q_snp_val, q_snp_df_val, q_snp_p_val) = if config.q_snp {
-        let sigma_hat = model.implied_cov();
         let (q, df, p) = super::q_snp::compute_q_snp(&s_full, &sigma_hat, &v_full)
             .expect("q_snp: matrices must be square");
         (Some(q), Some(df), Some(p))
@@ -367,8 +430,8 @@ fn process_single_snp(
     SnpResult {
         snp_idx,
         params,
-        chisq: fit.objective,
-        chisq_df: model.df(),
+        chisq: model_fit.chisq,
+        chisq_df: model_fit.df,
         converged: fit.converged,
         warning: None,
         q_snp: q_snp_val,

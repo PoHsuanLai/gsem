@@ -279,12 +279,12 @@ cat(sprintf("  Rust subset: %d SNPs\n", nrow(rust_snps)))
 cat("[8/12] commonfactorGWAS\n")
 
 b <- run_bench(function() {
-  GenomicSEM::commonfactorGWAS(covstruc = r_cov, SNPs = r_snps_df, parallel = FALSE)
+  GenomicSEM::commonfactorGWAS(covstruc = r_cov, SNPs = r_snps_df, parallel = TRUE)
 })
 add_result("commonfactorGWAS", "R", b)
 
 b <- run_bench(function() {
-  gsemr::commonfactorGWAS(covstruc = rust_cov, SNPs = rust_subset_path, parallel = FALSE)
+  gsemr::commonfactorGWAS(covstruc = rust_cov, SNPs = rust_subset_path, parallel = TRUE)
 })
 add_result("commonfactorGWAS", "Rust", b)
 
@@ -314,7 +314,7 @@ cat("[10/12] paLDSC\n")
 b <- run_bench(function() {
   # R GenomicSEM may not have paLDSC; wrap safely
   if (existsFunction("paLDSC", where = asNamespace("GenomicSEM"))) {
-    GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 3, save.pdf = FALSE)
+    GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 3, save.pdf = TRUE)
   } else {
     stop("paLDSC not available in R GenomicSEM")
   }
@@ -322,7 +322,7 @@ b <- run_bench(function() {
 add_result("paLDSC", "R", b)
 
 b <- run_bench(function() {
-  gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 3, save.pdf = FALSE)
+  gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 3, save.pdf = TRUE)
 })
 add_result("paLDSC", "Rust", b)
 

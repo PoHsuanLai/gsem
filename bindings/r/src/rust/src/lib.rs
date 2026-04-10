@@ -575,6 +575,7 @@ fn commonfactor_gwas_rust(
     snp_se: Rfloat,
     smooth_check: bool,
     twas: bool,
+    identification: &str,
 ) -> String {
 
     let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
@@ -594,11 +595,19 @@ fn commonfactor_gwas_rust(
         Some(snp_se.inner())
     };
 
+    let ident = match identification.to_ascii_lowercase().as_str() {
+        "marker" | "marker_indicator" | "marker-indicator" => {
+            gsem::gwas::common_factor::Identification::MarkerIndicator
+        }
+        _ => gsem::gwas::common_factor::Identification::FixedVariance,
+    };
+
     let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
         estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
         gc: gc_mode,
         snp_se: snp_se_opt,
         smooth_check,
+        identification: ident,
     };
 
     if twas {

@@ -190,6 +190,87 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
         }
     }
 
+    // Auto-add missing residual variances (matches lavaan behavior).
+    //
+    // For every observed variable appearing as a loading RHS or regression
+    // target, ensure there's a `V ~~ V` row. Similarly for latent variables
+    // appearing as loading LHS or in regressions, ensure `F ~~ F`.
+    //
+    // Existing variance rows (whether free or fixed) are left unchanged.
+    {
+        // Collect latent variable names (LHS of =~)
+        let mut latents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for row in &rows {
+            if row.op == Op::Loading {
+                latents.insert(row.lhs.clone());
+            }
+        }
+
+        // Collect observed variable names (RHS of =~, and either side of ~
+        // that isn't a latent).
+        let mut observed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for row in &rows {
+            match row.op {
+                Op::Loading => {
+                    if !latents.contains(&row.rhs) {
+                        observed.insert(row.rhs.clone());
+                    }
+                }
+                Op::Regression => {
+                    if !latents.contains(&row.lhs) {
+                        observed.insert(row.lhs.clone());
+                    }
+                    if !latents.contains(&row.rhs) {
+                        observed.insert(row.rhs.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Find which variables already have an explicit variance row
+        let mut has_variance: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for row in &rows {
+            if row.op == Op::Covariance && row.lhs == row.rhs {
+                has_variance.insert(row.lhs.clone());
+            }
+        }
+
+        // Add missing residual variances for observed variables
+        for name in &observed {
+            if !has_variance.contains(name) {
+                free_counter += 1;
+                rows.push(ParRow {
+                    lhs: name.clone(),
+                    op: Op::Covariance,
+                    rhs: name.clone(),
+                    free: free_counter,
+                    value: 0.0,
+                    label: None,
+                    expression: None,
+                    lower_bound: None,
+                });
+            }
+        }
+
+        // Add missing latent variances for latent variables
+        for name in &latents {
+            if !has_variance.contains(name) {
+                free_counter += 1;
+                rows.push(ParRow {
+                    lhs: name.clone(),
+                    op: Op::Covariance,
+                    rhs: name.clone(),
+                    free: free_counter,
+                    value: 0.0,
+                    label: None,
+                    expression: None,
+                    lower_bound: None,
+                });
+            }
+        }
+    }
+
     Ok(ParTable { rows })
 }
 
