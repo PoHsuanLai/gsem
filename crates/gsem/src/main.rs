@@ -183,6 +183,13 @@ struct GwasArgs {
     twas: bool,
     #[arg(short, long, default_value = "gwas_result.tsv")]
     out: PathBuf,
+    /// Save a Manhattan plot (SVG) of the first free SNP parameter.
+    /// Requires CHR/BP columns in the merged sumstats input.
+    #[arg(long)]
+    save_plot_manhattan: Option<PathBuf>,
+    /// Save a QQ plot (SVG) of the first free SNP parameter's p-values.
+    #[arg(long)]
+    save_plot_qq: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -197,6 +204,12 @@ struct CommonfactorGwasArgs {
     threads: Option<usize>,
     #[arg(short, long, default_value = "commonfactor_gwas_result.tsv")]
     out: PathBuf,
+    /// Save a Manhattan plot (SVG).  Requires CHR/BP columns in the merged sumstats input.
+    #[arg(long)]
+    save_plot_manhattan: Option<PathBuf>,
+    /// Save a QQ plot (SVG).
+    #[arg(long)]
+    save_plot_qq: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -223,6 +236,9 @@ struct ParallelAnalysisArgs {
     n_sim: usize,
     #[arg(short, long, default_value = "pa_result.tsv")]
     out: PathBuf,
+    /// Save a scree plot (SVG) comparing observed vs simulated eigenvalues.
+    #[arg(long)]
+    save_plot: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -838,6 +854,8 @@ fn run_gwas(args: GwasArgs) -> Result<()> {
             &i_ld,
             &sub_filters,
             &args.out,
+            args.save_plot_manhattan.as_deref(),
+            args.save_plot_qq.as_deref(),
         )
     }
 }
@@ -857,6 +875,8 @@ fn run_gwas_snp(
     i_ld: &Mat<f64>,
     sub_filters: &Option<Vec<String>>,
     out: &Path,
+    save_plot_manhattan: Option<&Path>,
+    save_plot_qq: Option<&Path>,
 ) -> Result<()> {
     // Read merged sumstats
     eprintln!("Reading merged sumstats: {}", sumstats.display());
@@ -956,7 +976,71 @@ fn run_gwas_snp(
         "GWAS complete: {n_snps} SNPs, {n_converged} converged. Results: {}",
         out.display()
     );
+
+    // Generate plots from the first free parameter (or first --sub match) per SNP
+    if save_plot_manhattan.is_some() || save_plot_qq.is_some() {
+        let (p_values, manhattan_pts) = collect_plot_data(&results, &merged.snps, sub_filters);
+        if let Some(qq_path) = save_plot_qq {
+            gsem::plot::qq::qq_plot(&p_values, "GWAS QQ Plot", qq_path)?;
+            eprintln!("QQ plot: {}", qq_path.display());
+        }
+        if let Some(man_path) = save_plot_manhattan {
+            if manhattan_pts.is_empty() {
+                log::warn!(
+                    "Manhattan plot skipped: merged sumstats {} has no CHR/BP columns",
+                    sumstats.display()
+                );
+            } else {
+                gsem::plot::manhattan::manhattan_plot(
+                    &manhattan_pts,
+                    "GWAS Manhattan Plot",
+                    man_path,
+                    Some(100_000),
+                )?;
+                eprintln!("Manhattan plot: {}", man_path.display());
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Collect per-SNP p-values (and optional CHR/BP points) for plotting.
+///
+/// Picks the first free parameter per SNP that matches `sub_filters`
+/// (or just the first free parameter when no filter is set).
+fn collect_plot_data(
+    results: &[gsem::gwas::user_gwas::SnpResult],
+    snps: &[gsem::io::sumstats_reader::MergedSnp],
+    sub_filters: &Option<Vec<String>>,
+) -> (Vec<f64>, Vec<gsem::plot::ManhattanPoint>) {
+    let mut p_values = Vec::with_capacity(results.len());
+    let mut manhattan = Vec::new();
+    for snp_result in results {
+        let param = snp_result.params.iter().find(|p| {
+            if let Some(filters) = sub_filters {
+                let key = format!("{}{}{}", p.lhs, p.op, p.rhs);
+                filters.iter().any(|f| f == &key)
+            } else {
+                true
+            }
+        });
+        let Some(param) = param else { continue };
+        if !param.p_value.is_finite() {
+            continue;
+        }
+        p_values.push(param.p_value);
+        if let Some(snp) = snps.get(snp_result.snp_idx) {
+            if let (Some(chr), Some(bp)) = (snp.chr, snp.bp) {
+                manhattan.push(gsem::plot::ManhattanPoint {
+                    chr,
+                    bp,
+                    neg_log10_p: gsem::plot::neg_log10_p(param.p_value),
+                });
+            }
+        }
+    }
+    (p_values, manhattan)
 }
 
 /// TWAS mode: uses Gene/Panel/HSQ instead of SNP/A1/A2/MAF.
@@ -1231,6 +1315,30 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
         "Common factor GWAS complete: {n_snps} SNPs, {n_converged} converged. Results: {}",
         args.out.display()
     );
+
+    if args.save_plot_manhattan.is_some() || args.save_plot_qq.is_some() {
+        let (p_values, manhattan_pts) = collect_plot_data(&results, &merged.snps, &None);
+        if let Some(qq_path) = args.save_plot_qq.as_deref() {
+            gsem::plot::qq::qq_plot(&p_values, "Common Factor GWAS QQ Plot", qq_path)?;
+            eprintln!("QQ plot: {}", qq_path.display());
+        }
+        if let Some(man_path) = args.save_plot_manhattan.as_deref() {
+            if manhattan_pts.is_empty() {
+                log::warn!(
+                    "Manhattan plot skipped: merged sumstats has no CHR/BP columns"
+                );
+            } else {
+                gsem::plot::manhattan::manhattan_plot(
+                    &manhattan_pts,
+                    "Common Factor GWAS Manhattan Plot",
+                    man_path,
+                    Some(100_000),
+                )?;
+                eprintln!("Manhattan plot: {}", man_path.display());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1332,6 +1440,23 @@ fn run_parallel_analysis(args: ParallelAnalysisArgs) -> Result<()> {
         .with_context(|| format!("failed to write {}", args.out.display()))?;
 
     eprintln!("Results written to {}", args.out.display());
+
+    if let Some(plot_path) = args.save_plot.as_deref() {
+        let points: Vec<gsem::plot::scree::ScreePoint> = result
+            .observed
+            .iter()
+            .zip(result.simulated_95.iter())
+            .enumerate()
+            .map(|(i, (obs, sim))| gsem::plot::scree::ScreePoint {
+                factor: i + 1,
+                observed: *obs,
+                simulated_95: *sim,
+            })
+            .collect();
+        gsem::plot::scree::scree_plot(&points, "Parallel Analysis Scree Plot", plot_path)?;
+        eprintln!("Scree plot: {}", plot_path.display());
+    }
+
     Ok(())
 }
 

@@ -41,6 +41,9 @@ flate2 = "1.1"
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 
+# Plotting (SVG-only to avoid system deps)
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "area_series"] }
+
 # Random
 rand = "0.10"
 rand_distr = "0.6"

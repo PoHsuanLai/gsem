@@ -857,6 +857,7 @@ dependencies = [
  "gsem-sem",
  "indicatif",
  "log",
+ "plotters",
  "rand 0.10.0",
  "rand_distr 0.6.0",
  "rayon",

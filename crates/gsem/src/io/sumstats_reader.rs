@@ -20,6 +20,10 @@ pub struct MergedSnp {
     pub a1: String,
     pub a2: String,
     pub maf: f64,
+    /// Chromosome (if CHR column present in the merged file).
+    pub chr: Option<u8>,
+    /// Base-pair position (if BP column present in the merged file).
+    pub bp: Option<u64>,
     /// beta per trait (length k)
     pub beta: Vec<f64>,
     /// SE per trait (length k)
@@ -56,11 +60,18 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
     let a1_idx = col_idx(&headers, "A1", "merged sumstats")?;
     let a2_idx = col_idx(&headers, "A2", "merged sumstats")?;
     let maf_idx = col_idx(&headers, "MAF", "merged sumstats")?;
+    // CHR and BP are optional (needed only for Manhattan plots)
+    let chr_idx = headers.iter().position(|h| h.eq_ignore_ascii_case("CHR"));
+    let bp_idx = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("BP") || h.eq_ignore_ascii_case("POS"));
 
     let bs = parse_beta_se_columns(&headers, "merged sumstats")?;
 
     let max_idx = *[snp_idx, a1_idx, a2_idx, maf_idx]
         .iter()
+        .chain(chr_idx.iter())
+        .chain(bp_idx.iter())
         .chain(bs.beta_indices.iter())
         .chain(bs.se_indices.iter())
         .max()
@@ -88,11 +99,16 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
             continue;
         };
 
+        let chr = chr_idx.and_then(|i| fields.get(i).and_then(|s| s.trim().parse().ok()));
+        let bp = bp_idx.and_then(|i| fields.get(i).and_then(|s| s.trim().parse().ok()));
+
         snps.push(MergedSnp {
             snp: fields[snp_idx].to_string(),
             a1: fields[a1_idx].to_uppercase(),
             a2: fields[a2_idx].to_uppercase(),
             maf,
+            chr,
+            bp,
             beta,
             se,
         });
