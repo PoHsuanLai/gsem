@@ -21,38 +21,37 @@ the tests and file an issue.
 
 ---
 
-## 1. Purpose
+## 1. What this is
 
-The Rust port is a **from-scratch reimplementation** of the R GenomicSEM
-package. It does not wrap R, lavaan, or any LAPACK library — every
-numerical operation runs in native Rust against
-[`faer`](https://github.com/sarah-quinones/faer-rs) for dense linear
-algebra.
+A from-scratch reimplementation of R GenomicSEM in Rust. No FFI to R or
+lavaan, no BLAS/LAPACK dependency, no shared numerical code. Dense
+linear algebra runs against
+[`faer`](https://github.com/sarah-quinones/faer-rs); parallelism uses
+[`rayon`](https://github.com/rayon-rs/rayon) with per-call local thread
+pools.
 
-The motivation is not pure performance; the R package works correctly on
-the problems it was designed for. The motivation is that *the problems
-people want to run it on today* — millions of SNPs, tens of traits,
-iterative multi-model comparison workflows — push against limits that
-were not part of R GenomicSEM's original design. Specifically:
+Four crates implement the pipeline:
 
-- Per-SNP GWAS via `userGWAS` in R calls `lavaan::sem()` once per SNP,
-  which pays the full lavaan model-construction cost at every iteration.
-  That overhead dominates once you exceed a few thousand SNPs.
-- Parallelism in the R package uses `doParallel`/`foreach` over
-  `makeCluster` fork/PSOCK workers. Starting the cluster, serializing
-  inputs, and `rbind`-combining outputs is a significant fraction of the
-  total runtime for chunked GWAS work, and the MPI branch exists because
-  the authors expected users to go to distributed clusters for anything
-  big.
-- Memory sits in R vectors and S4 objects that are harder to reason about
-  and harder to control. Full-imputation sumstats files (multiple gigabytes)
-  often won't fit alongside lavaan model objects in one R process.
+- `gsem-matrix` — vech, near-PD projection, PSD smoothing
+- `gsem-ldsc`  — LD Score Regression, block jackknife, HDL
+- `gsem-sem`   — SEM engine: partable, implied covariance, L-BFGS DWLS/ML,
+  sandwich SEs, fit indices
+- `gsem`       — I/O, munge, sumstats merge, per-SNP GWAS pipelines, CLI
 
-The Rust port addresses those limits without changing the statistical
-methodology. Where that change is visible — different numerical SEs, a
-different per-SNP parameterization for `commonfactorGWAS`, a different
-optimizer that can land in a different local minimum on pathological
-surfaces — each difference is documented in §3 with its justification.
+Three frontends sit on top of the same core:
+
+- `gsemr`      — R package via [`extendr`](https://extendr.github.io/)
+- `genomicsem` — Python package via [`pyo3`](https://pyo3.rs) + `maturin`
+- `gsem`       — CLI binary
+
+The core runs the same code path regardless of frontend. The frontends
+differ only in how inputs are passed in and how results are serialized
+back (R data frame via JSON, Python objects via PyO3, or TSV to stdout).
+
+Numerical methodology matches R GenomicSEM. The places where outputs do
+not match R byte-for-byte — sandwich vs information-matrix SEs, L-BFGS
+vs nlminb local minima on Heywood cases, the `commonfactorGWAS`
+parameterization — are enumerated in §3 with their justification.
 
 ---
 
