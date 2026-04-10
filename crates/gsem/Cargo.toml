@@ -20,10 +20,8 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
-csv = { workspace = true }
 flate2 = { workspace = true }
 clap = { workspace = true }
 indicatif = { workspace = true }

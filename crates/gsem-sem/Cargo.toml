@@ -10,7 +10,6 @@ repository.workspace = true
 gsem-matrix = { workspace = true }
 faer = { workspace = true }
 statrs = { workspace = true }
-serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
