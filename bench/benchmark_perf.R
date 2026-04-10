@@ -2,11 +2,42 @@
 # Performance benchmark: R GenomicSEM vs gsemr (Rust)
 # Measures wall-clock time and peak memory for each API function.
 #
-# Usage: cd bench && Rscript benchmark_perf.R
+# Usage:
+#   cd bench && Rscript benchmark_perf.R                   # default (safe)
+#   BENCH_CORES=8 Rscript benchmark_perf.R                 # more workers
+#   BENCH_BIG=1 Rscript benchmark_perf.R                   # include 25k-SNP scaling point
+#
+# Environment knobs:
+#   BENCH_CORES        Max worker processes on BOTH sides. Defaults to
+#                      min(4, parallel::detectCores() - 1). Capped to
+#                      prevent the R side from spawning many BLAS-threaded
+#                      workers and blowing out memory (prior runs hit
+#                      80+ GB with 90+ threads via Accelerate BLAS).
+#   BENCH_BIG          If "1", include the 25000-SNP scaling point in the
+#                      userGWAS sweep. Off by default because at that size
+#                      R's parallel path is memory-hungry.
 #
 # Output:
 #   bench/benchmark_results.csv  — timing and memory data
 #   bench/benchmark_plots.pdf    — comparison charts
+
+# ---------------------------------------------------------------------------
+# Thread / memory containment (must run BEFORE any package load so the
+# BLAS library in this process AND every forked worker sees the limit).
+#
+# Previous runs spawned ~90 threads and used ~80 GB of RAM, which was
+# almost entirely Apple Accelerate / OpenBLAS fanning out *inside* each
+# R `parallel::makeCluster(type="FORK")` worker. Clamping to single-
+# threaded BLAS per worker + a small worker count brings memory down to
+# a few GB without losing the parallel speedup story.
+# ---------------------------------------------------------------------------
+Sys.setenv(
+  VECLIB_MAXIMUM_THREADS = "1",  # Apple Accelerate (macOS default BLAS)
+  OPENBLAS_NUM_THREADS   = "1",  # OpenBLAS (Linux default BLAS)
+  MKL_NUM_THREADS        = "1",  # Intel MKL
+  BLIS_NUM_THREADS       = "1",  # BLIS
+  OMP_NUM_THREADS        = "1"   # OpenMP layer used by some matrix libs
+)
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -18,13 +49,36 @@ if (!is.na(script_dir) && nzchar(script_dir)) setwd(script_dir)
 source("setup_data.R")
 ensure_bench_data(bench_dir = ".")
 
-for (pkg in c("GenomicSEM", "gsemr", "ggplot2")) {
+for (pkg in c("GenomicSEM", "gsemr", "ggplot2", "parallel")) {
   if (!requireNamespace(pkg, quietly = TRUE))
     stop(sprintf("Package '%s' not installed.", pkg))
 }
 library(GenomicSEM)
 library(gsemr)
 library(ggplot2)
+
+# Resolve worker-count budget for both R and gsemr.
+.bench_env_int <- function(name, default) {
+  val <- Sys.getenv(name, unset = NA)
+  if (is.na(val) || !nzchar(val)) return(default)
+  n <- suppressWarnings(as.integer(val))
+  if (is.na(n) || n <= 0) default else n
+}
+BENCH_CORES <- .bench_env_int(
+  "BENCH_CORES",
+  max(1L, min(4L, parallel::detectCores() - 1L))
+)
+BENCH_BIG <- identical(Sys.getenv("BENCH_BIG", unset = ""), "1")
+# Also clamp rayon for any gsemr code path that falls back to env vars
+# (the R shim passes `cores=BENCH_CORES` explicitly, but the CLI bench
+# below launches child processes that read RAYON_NUM_THREADS).
+Sys.setenv(RAYON_NUM_THREADS = as.character(BENCH_CORES))
+cat(sprintf(
+  "bench config: BENCH_CORES=%d  BENCH_BIG=%s  detectCores=%d\n",
+  BENCH_CORES,
+  if (BENCH_BIG) "1" else "0",
+  parallel::detectCores()
+))
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -496,17 +550,23 @@ gwas_model <- paste0(
   "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
 )
 
-# SNP-count grid for head-to-head scaling. Chosen to cover the linear regime
-# where R is still tolerable (~25k SNPs ≈ 3 min R) while being meaningful
-# relative to real GWAS deployments. Capped by available SNPs.
-ug_sizes <- c(1000L, 5000L, 10000L, 25000L)
+# SNP-count grid for head-to-head scaling. The 25k point is gated behind
+# BENCH_BIG=1 because at that size R's parallel path is memory-hungry
+# even with BLAS pinned to 1 thread (lavaan itself holds a lot of state
+# per worker). Default grid tops out at 10k which is plenty for a
+# scaling curve fit. Capped by available SNPs.
+ug_sizes <- if (BENCH_BIG) {
+  c(1000L, 5000L, 10000L, 25000L)
+} else {
+  c(1000L, 5000L, 10000L)
+}
 n_rust_available <- length(readLines(rust_ss_path)) - 1L  # minus header
 n_r_available    <- nrow(r_snps_full)
 n_available      <- min(n_rust_available, n_r_available)
 ug_sizes <- unique(pmin(ug_sizes, n_available))
 ug_sizes <- ug_sizes[ug_sizes > 0]
-cat(sprintf("  head-to-head sizes: %s (capped at %d available SNPs)\n",
-            paste(ug_sizes, collapse = ", "), n_available))
+cat(sprintf("  head-to-head sizes: %s (capped at %d available SNPs, cores=%d)\n",
+            paste(ug_sizes, collapse = ", "), n_available, BENCH_CORES))
 
 ug_results <- list()
 for (n_snp in ug_sizes) {
@@ -523,14 +583,16 @@ for (n_snp in ug_sizes) {
   b <- run_bench(function() {
     ug_results[[sprintf("R_%d", n_snp)]] <<-
       GenomicSEM::userGWAS(covstruc = r_cov, SNPs = r_snps_sub,
-                           model = gwas_model, parallel = TRUE)
+                           model = gwas_model, parallel = TRUE,
+                           cores = BENCH_CORES)
   })
   add_result("userGWAS", label_r, b)
 
   b <- run_bench(function() {
     ug_results[[sprintf("Rust_%d", n_snp)]] <<-
       gsemr::userGWAS(covstruc = rust_cov, SNPs = rust_sub_path,
-                      model = gwas_model, parallel = TRUE)
+                      model = gwas_model, parallel = TRUE,
+                      cores = BENCH_CORES)
   })
   add_result("userGWAS", label_rust, b)
 }
@@ -538,12 +600,14 @@ for (n_snp in ug_sizes) {
 # Rust-only "real-world deployment" point: the full sumstats file.
 # Running R at this scale is not feasible on a single machine — the R
 # package recommends MPI for multi-million-SNP GWAS — so we report a
-# Rust-only bar for the headline "can do it on one box" claim.
+# Rust-only bar for the headline "can do it on one box" claim. Uses the
+# same BENCH_CORES budget as the head-to-head sweep for consistency.
 cat(sprintf("  -> Rust-only full-scale: N=%d\n", n_rust_available))
 b <- run_bench(function() {
   ug_results[["Rust_full"]] <<-
     gsemr::userGWAS(covstruc = rust_cov, SNPs = rust_ss_path,
-                    model = gwas_model, parallel = TRUE)
+                    model = gwas_model, parallel = TRUE,
+                    cores = BENCH_CORES)
 })
 add_result("userGWAS", sprintf("Rust (N=%d, full)", n_rust_available), b)
 
@@ -861,7 +925,7 @@ if (!file.exists(cli_bin)) {
   writeLines(gwas_model, cli_gwas_model_file)
   for (par in c(TRUE, FALSE)) {
     tag <- if (par) "par" else "seq"
-    threads_arg <- if (par) character(0) else c("--threads", "1")
+    threads_arg <- if (par) c("--threads", as.character(BENCH_CORES)) else c("--threads", "1")
     b <- run_cli(c(
       "userGWAS",
       "--covstruc", cli_covstruc_self,
