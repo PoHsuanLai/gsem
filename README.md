@@ -123,12 +123,12 @@ result = gsem.ldsc(
     pop_prev=[None, None],
     ld="eur_w_ld_chr/",
 )
-result.S   # np.ndarray
-result.V   # np.ndarray
-result.I   # np.ndarray
+result.s      # np.ndarray
+result.v      # np.ndarray
+result.i_mat  # np.ndarray
 
-cf = gsem.commonfactor(result.to_json())
-um = gsem.usermodel(result.to_json(), model="F1 =~ NA*V1 + V2\nF1 ~~ 1*F1")
+cf = gsem.commonfactor(result)
+um = gsem.usermodel(result, model="F1 =~ NA*V1 + V2\nF1 ~~ 1*F1")
 ```
 
 ### CLI

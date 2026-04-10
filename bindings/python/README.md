@@ -31,18 +31,24 @@ result = gsem.ldsc(
     pop_prev=[None, None],
     ld="eur_w_ld_chr/",
 )
-result.S       # np.ndarray — genetic covariance matrix
-result.V       # np.ndarray — sampling covariance matrix
-result.I       # np.ndarray — intercept matrix
+result.s       # np.ndarray — genetic covariance matrix
+result.v       # np.ndarray — sampling covariance matrix
+result.i_mat   # np.ndarray — intercept matrix
 result.n       # list — sample sizes
 result.m_total # float — number of SNPs
 
+# Every downstream function accepts the `result` object directly — no
+# need to call `result.to_json()`. You can also pass a plain dict with
+# `s`, `v`, `i_mat`, `n_vec`, `m` fields, or a dict using the uppercase
+# `S`, `V`, `I`, `N`, `m` keys that match the R GenomicSEM convention.
+
 # Common factor model
-cf = gsem.commonfactor(result.to_json())
+cf = gsem.commonfactor(result)
+# cf is a dict: {parameters: {lhs, op, rhs, est, se, z, p}, chisq, df, ...}
 
 # User-specified SEM
 um = gsem.usermodel(
-    result.to_json(),
+    result,
     model="F1 =~ NA*V1 + V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2",
     estimation="DWLS",
 )
@@ -61,19 +67,24 @@ gsem.sumstats(
     trait_names=["V1", "V2"],
 )
 
-# GWAS
-gsem.commonfactor_gwas(result.to_json(), "merged_sumstats.tsv")
-gsem.user_gwas(result.to_json(), "merged_sumstats.tsv", model="F1 =~ NA*V1 + V2\nF1 ~ SNP")
+# GWAS — results come back as a columnar dict. Feed it straight into pandas:
+#   import pandas as pd; df = pd.DataFrame({k: v for k, v in res.items() if k != "params"})
+res = gsem.commonfactor_gwas(result, "merged_sumstats.tsv")
+res = gsem.user_gwas(result, "merged_sumstats.tsv", model="F1 =~ NA*V1 + V2\nF1 ~ SNP")
 
 # Parallel analysis
-gsem.parallel_analysis(result.to_json(), n_sim=500)
+gsem.parallel_analysis(result.s, result.v, r=500)
 
 # Auto-generate model syntax
 gsem.write_model(loadings=[[0.7, 0.0], [0.6, 0.0], [0.0, 0.8]], names=["V1", "V2", "V3"])
 
 # Genetic correlation
-gsem.rgmodel(result.to_json())
+gsem.rgmodel(result, model="")
 ```
+
+`result.to_json()` / `gsem.LdscResult.from_json(s)` are still available as
+optional compatibility helpers when you need to checkpoint an LDSC run to
+disk, but they are no longer on the hot path between functions.
 
 ## Functions
 

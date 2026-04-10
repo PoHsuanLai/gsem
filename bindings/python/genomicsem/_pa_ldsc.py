@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
 import numpy as np
@@ -48,11 +47,16 @@ def pa_ldsc_extended(
     -------
     dict with observed, simulated_95, n_factors, and optionally fa results.
     """
-    s_json = json.dumps(S.tolist())
-    v_json = json.dumps(V.tolist())
+    S_arr = np.ascontiguousarray(np.asarray(S, dtype=np.float64))
+    V_arr = np.ascontiguousarray(np.asarray(V, dtype=np.float64))
 
-    result_json = parallel_analysis(s_json, v_json, r, p, diag=diag)
-    result = json.loads(result_json)
+    result = parallel_analysis(S_arr, V_arr, r, p, diag=diag)
+    # Make the returned dict mutable (it already is) and normalize list types.
+    result = {
+        "observed": list(result["observed"]),
+        "simulated_95": list(result["simulated_95"]),
+        "n_factors": int(result["n_factors"]),
+    }
 
     # Factor analysis mode
     if fa or fm is not None:

@@ -1,8 +1,13 @@
+#![allow(clippy::too_many_arguments)]
+
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2};
+use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 
 mod conversions;
+
+use conversions::{mat_to_pyarray, pyany_to_ldsc_result, pyarray_to_mat};
 
 /// Clamp intercept matrix diagonal to >= 1.0 (GenomicSEM convention).
 fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
@@ -11,6 +16,168 @@ fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
             i_mat[(i, i)] = 1.0;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Columnar result-dict builders (the shape returned to Python for per-SNP /
+// per-parameter results now that JSON is out of the picture). Downstream
+// code can feed these directly into `pandas.DataFrame(...)`.
+// ---------------------------------------------------------------------------
+
+/// Build the per-SNP (or per-gene) columnar result dict from a
+/// `Vec<SnpResult>`. `id_key` is "SNP" for standard GWAS or "Gene" for TWAS;
+/// `id_values` is the corresponding per-row identifier vector. `extras` is
+/// an optional set of extra identifier columns (e.g. Panel/HSQ for TWAS).
+///
+/// Output keys:
+///   <id_key>, chisq, df, converged [, Q_chisq, Q_df, Q_pval] [, ...extras],
+///   params = {snp_idx, lhs, op, rhs, est, se, z, p}
+fn snp_results_to_dict<'py>(
+    py: Python<'py>,
+    results: &[gsem::gwas::user_gwas::SnpResult],
+    id_key: &str,
+    id_values: Vec<String>,
+    extras: Vec<(&str, Bound<'py, PyAny>)>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = results.len();
+    let mut chisq: Vec<f64> = Vec::with_capacity(n);
+    let mut df: Vec<i64> = Vec::with_capacity(n);
+    let mut converged: Vec<bool> = Vec::with_capacity(n);
+
+    // Are any Q_SNP fields populated anywhere?
+    let has_q = results
+        .iter()
+        .any(|r| r.q_snp.is_some() || r.q_snp_df.is_some() || r.q_snp_p.is_some());
+    let mut q_chisq: Vec<Option<f64>> = Vec::with_capacity(n);
+    let mut q_df: Vec<Option<i64>> = Vec::with_capacity(n);
+    let mut q_pval: Vec<Option<f64>> = Vec::with_capacity(n);
+
+    // Flat columnar parameter table.
+    let total_params: usize = results.iter().map(|r| r.params.len()).sum();
+    let mut p_snp_idx: Vec<i64> = Vec::with_capacity(total_params);
+    let mut p_lhs: Vec<String> = Vec::with_capacity(total_params);
+    let mut p_op: Vec<String> = Vec::with_capacity(total_params);
+    let mut p_rhs: Vec<String> = Vec::with_capacity(total_params);
+    let mut p_est: Vec<f64> = Vec::with_capacity(total_params);
+    let mut p_se: Vec<f64> = Vec::with_capacity(total_params);
+    let mut p_z: Vec<f64> = Vec::with_capacity(total_params);
+    let mut p_p: Vec<f64> = Vec::with_capacity(total_params);
+
+    for (row_idx, r) in results.iter().enumerate() {
+        chisq.push(r.chisq);
+        df.push(r.chisq_df as i64);
+        converged.push(r.converged);
+        q_chisq.push(r.q_snp);
+        q_df.push(r.q_snp_df.map(|d| d as i64));
+        q_pval.push(r.q_snp_p);
+
+        let idx1 = (row_idx + 1) as i64;
+        for p in &r.params {
+            p_snp_idx.push(idx1);
+            p_lhs.push(p.lhs.clone());
+            p_op.push(p.op.to_string());
+            p_rhs.push(p.rhs.clone());
+            p_est.push(p.est);
+            p_se.push(p.se);
+            p_z.push(p.z_stat);
+            p_p.push(p.p_value);
+        }
+    }
+
+    let params = PyDict::new(py);
+    params.set_item("snp_idx", p_snp_idx)?;
+    params.set_item("lhs", p_lhs)?;
+    params.set_item("op", p_op)?;
+    params.set_item("rhs", p_rhs)?;
+    params.set_item("est", p_est)?;
+    params.set_item("se", p_se)?;
+    params.set_item("z", p_z)?;
+    params.set_item("p", p_p)?;
+
+    let out = PyDict::new(py);
+    out.set_item(id_key, id_values)?;
+    for (k, v) in extras {
+        out.set_item(k, v)?;
+    }
+    out.set_item("chisq", chisq)?;
+    out.set_item("df", df)?;
+    out.set_item("converged", converged)?;
+    if has_q {
+        out.set_item("Q_chisq", q_chisq)?;
+        out.set_item("Q_df", q_df)?;
+        out.set_item("Q_pval", q_pval)?;
+    }
+    out.set_item("params", params)?;
+    Ok(out)
+}
+
+/// Build a columnar dict from a slice of `SnpParamResult`s — used by
+/// `multi_snp` / `multi_gene` where there's a single parameter table
+/// rather than per-SNP grouping.
+fn param_results_to_dict<'py>(
+    py: Python<'py>,
+    params: &[gsem::gwas::user_gwas::SnpParamResult],
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = params.len();
+    let mut lhs: Vec<String> = Vec::with_capacity(n);
+    let mut op: Vec<String> = Vec::with_capacity(n);
+    let mut rhs: Vec<String> = Vec::with_capacity(n);
+    let mut est: Vec<f64> = Vec::with_capacity(n);
+    let mut se: Vec<f64> = Vec::with_capacity(n);
+    let mut z: Vec<f64> = Vec::with_capacity(n);
+    let mut p: Vec<f64> = Vec::with_capacity(n);
+    for r in params {
+        lhs.push(r.lhs.clone());
+        op.push(r.op.to_string());
+        rhs.push(r.rhs.clone());
+        est.push(r.est);
+        se.push(r.se);
+        z.push(r.z_stat);
+        p.push(r.p_value);
+    }
+    let out = PyDict::new(py);
+    out.set_item("lhs", lhs)?;
+    out.set_item("op", op)?;
+    out.set_item("rhs", rhs)?;
+    out.set_item("est", est)?;
+    out.set_item("se", se)?;
+    out.set_item("z", z)?;
+    out.set_item("p", p)?;
+    Ok(out)
+}
+
+/// Columnar dict for SEM-fit `ParamEstimate`s (used by `commonfactor` /
+/// `usermodel` whose engine returns an SE-aware parameter table).
+fn param_estimates_to_dict<'py>(
+    py: Python<'py>,
+    params: &[gsem_sem::ParamEstimate],
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = params.len();
+    let mut lhs: Vec<String> = Vec::with_capacity(n);
+    let mut op: Vec<String> = Vec::with_capacity(n);
+    let mut rhs: Vec<String> = Vec::with_capacity(n);
+    let mut est: Vec<f64> = Vec::with_capacity(n);
+    let mut se: Vec<f64> = Vec::with_capacity(n);
+    let mut z: Vec<f64> = Vec::with_capacity(n);
+    let mut p: Vec<f64> = Vec::with_capacity(n);
+    for r in params {
+        lhs.push(r.lhs.clone());
+        op.push(r.op.to_string());
+        rhs.push(r.rhs.clone());
+        est.push(r.est);
+        se.push(r.se);
+        z.push(r.z);
+        p.push(r.p);
+    }
+    let out = PyDict::new(py);
+    out.set_item("lhs", lhs)?;
+    out.set_item("op", op)?;
+    out.set_item("rhs", rhs)?;
+    out.set_item("est", est)?;
+    out.set_item("se", se)?;
+    out.set_item("z", z)?;
+    out.set_item("p", p)?;
+    Ok(out)
 }
 
 /// Python wrapper for LDSC result.
@@ -285,11 +452,16 @@ fn munge(
 }
 
 /// Fit a user-specified SEM model.
+///
+/// `covstruc` accepts either a `PyLdscResult` returned from `ldsc()` or a
+/// dict with `s`/`v`/`i_mat`/`n_vec`/`m` (or their uppercase aliases)
+/// entries.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, model="", estimation="DWLS", cfi_calc=true, std_lv=false, imp_cov=false, fix_resid=true, toler=None, q_factor=false))]
+#[pyo3(signature = (covstruc, model="", estimation="DWLS", cfi_calc=true, std_lv=false, imp_cov=false, fix_resid=true, toler=None, q_factor=false))]
 #[allow(unused_variables)]
-fn usermodel(
-    covstruc_json: &str,
+fn usermodel<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
     model: &str,
     estimation: &str,
     cfi_calc: bool,         // ignored (CFIcalc)
@@ -298,9 +470,8 @@ fn usermodel(
     fix_resid: bool,        // threaded
     toler: Option<f64>,     // ignored
     q_factor: bool,         // ignored (Q_Factor)
-) -> PyResult<String> {
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+) -> PyResult<Bound<'py, PyDict>> {
+    let ldsc_result = pyany_to_ldsc_result(covstruc)?;
 
     let pt = gsem_sem::syntax::parse_model(model, std_lv)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
@@ -314,59 +485,76 @@ fn usermodel(
 
     let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
     let fit = match est_method {
-        gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None),
-        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None),
+        gsem_sem::EstimationMethod::Ml => {
+            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, None)
+        }
+        gsem_sem::EstimationMethod::Dwls => {
+            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, None)
+        }
     };
 
+    // Build a columnar parameter dict: {lhs, op, rhs, est}. SE/Z/p are not
+    // computed on this code path (matches the R binding's usermodel shape).
     let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
-    let params_json: Vec<String> = free_rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let est = fit.params.get(i).copied().unwrap_or(0.0);
-            format!(
-                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6}}}",
-                row.lhs, row.op, row.rhs, est
-            )
-        })
-        .collect();
+    let mut lhs: Vec<String> = Vec::with_capacity(free_rows.len());
+    let mut op: Vec<String> = Vec::with_capacity(free_rows.len());
+    let mut rhs: Vec<String> = Vec::with_capacity(free_rows.len());
+    let mut est: Vec<f64> = Vec::with_capacity(free_rows.len());
+    for (i, row) in free_rows.iter().enumerate() {
+        lhs.push(row.lhs.clone());
+        op.push(row.op.to_string());
+        rhs.push(row.rhs.clone());
+        est.push(fit.params.get(i).copied().unwrap_or(0.0));
+    }
+    let params = PyDict::new(py);
+    params.set_item("lhs", lhs)?;
+    params.set_item("op", op)?;
+    params.set_item("rhs", rhs)?;
+    params.set_item("est", est)?;
 
-    Ok(format!(
-        "{{\"converged\":{},\"objective\":{:.6},\"parameters\":[{}]}}",
-        fit.converged,
-        fit.objective,
-        params_json.join(",")
-    ))
+    let out = PyDict::new(py);
+    out.set_item("converged", fit.converged)?;
+    out.set_item("objective", fit.objective)?;
+    out.set_item("parameters", params)?;
+    Ok(out)
 }
 
 /// Fit common factor model.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, estimation="DWLS"))]
-fn commonfactor(covstruc_json: &str, estimation: &str) -> PyResult<String> {
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+#[pyo3(signature = (covstruc, estimation="DWLS"))]
+fn commonfactor<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
+    estimation: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let ldsc_result = pyany_to_ldsc_result(covstruc)?;
 
-    let result = gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, gsem_sem::EstimationMethod::from_str_lossy(estimation))
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+    let result = gsem_sem::commonfactor::run_commonfactor(
+        &ldsc_result.s,
+        &ldsc_result.v,
+        gsem_sem::EstimationMethod::from_str_lossy(estimation),
+    )
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
-    let params: Vec<String> = result.parameters.iter().map(|p| {
-        format!(
-            "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-            p.lhs, p.op, p.rhs, p.est, p.se, p.z, p.p
-        )
-    }).collect();
-    Ok(format!(
-        "{{\"parameters\":[{}],\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"cfi\":{:.4},\"srmr\":{:.4}}}",
-        params.join(","), result.fit.chisq, result.fit.df, result.fit.p_chisq,
-        result.fit.aic, result.fit.cfi, result.fit.srmr
-    ))
+    let out = PyDict::new(py);
+    out.set_item("parameters", param_estimates_to_dict(py, &result.parameters)?)?;
+    out.set_item("chisq", result.fit.chisq)?;
+    out.set_item("df", result.fit.df as i64)?;
+    out.set_item("p_chisq", result.fit.p_chisq)?;
+    out.set_item("aic", result.fit.aic)?;
+    out.set_item("cfi", result.fit.cfi)?;
+    out.set_item("srmr", result.fit.srmr)?;
+    Ok(out)
 }
 
 /// Merge GWAS summary statistics.
+///
+/// Returns a dict `{"path": out, "n_snps": n}` describing the written file.
 #[pyfunction]
 #[pyo3(signature = (files, ref_dir, trait_names=None, se_logit=None, ols=None, linprob=None, n=None, betas=None, info_filter=0.6, maf_filter=0.01, keep_indel=false, parallel=false, cores=None, ambig=false, direct_filter=false, out="merged_sumstats.tsv"))]
 #[allow(unused_variables)]
-fn sumstats(
+fn sumstats<'py>(
+    py: Python<'py>,
     files: Vec<String>,
     ref_dir: &str,
     trait_names: Option<Vec<String>>,
@@ -383,7 +571,7 @@ fn sumstats(
     ambig: bool,                   // ignored
     direct_filter: bool,           // ignored
     out: &str,
-) -> PyResult<String> {
+) -> PyResult<Bound<'py, PyDict>> {
     let k = files.len();
     let default_names: Vec<String> = (0..k).map(|i| format!("trait{}", i + 1)).collect();
     let names = trait_names.unwrap_or(default_names);
@@ -396,20 +584,35 @@ fn sumstats(
         se_logit: se_logit.unwrap_or_else(|| vec![false; k]),
         ols: ols.unwrap_or_else(|| vec![false; k]),
         linprob: linprob.unwrap_or_else(|| vec![false; k]),
-        n_overrides: n.map(|v| v.into_iter().map(Some).collect()).unwrap_or_else(|| vec![None; k]),
+        n_overrides: n
+            .map(|v| v.into_iter().map(Some).collect())
+            .unwrap_or_else(|| vec![None; k]),
         beta_overrides: Vec::new(),
         direct_filter: false,
     };
-    let file_refs: Vec<&std::path::Path> = files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
-    gsem::sumstats::merge_sumstats(&file_refs, std::path::Path::new(ref_dir), &names, &config, std::path::Path::new(out))
-        .map(|n_snps| format!("{{\"path\":\"{out}\",\"n_snps\":{n_snps}}}"))
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
+    let file_refs: Vec<&std::path::Path> = files
+        .iter()
+        .map(|p| std::path::Path::new(p.as_str()))
+        .collect();
+    let n_snps = gsem::sumstats::merge_sumstats(
+        &file_refs,
+        std::path::Path::new(ref_dir),
+        &names,
+        &config,
+        std::path::Path::new(out),
+    )
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+
+    let d = PyDict::new(py);
+    d.set_item("path", out)?;
+    d.set_item("n_snps", n_snps as i64)?;
+    Ok(d)
 }
 
 /// Run common factor GWAS.
 #[pyfunction]
 #[pyo3(signature = (
-    covstruc_json,
+    covstruc,
     sumstats_path,
     estimation="DWLS",
     cores=None,
@@ -423,9 +626,9 @@ fn sumstats(
     identification="fixed_variance",
 ))]
 #[allow(unused_variables)]
-fn commonfactor_gwas(
-    py: Python<'_>,
-    covstruc_json: &str,
+fn commonfactor_gwas<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
     sumstats_path: &str,
     estimation: &str,
     cores: Option<usize>,
@@ -437,7 +640,7 @@ fn commonfactor_gwas(
     twas: bool,
     smooth_check: bool,
     identification: &str,
-) -> PyResult<String> {
+) -> PyResult<Bound<'py, PyDict>> {
     if twas {
         return Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "twas=True is not supported by the Python commonfactor_gwas binding yet; \
@@ -445,8 +648,7 @@ fn commonfactor_gwas(
         ));
     }
 
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+    let ldsc_result = pyany_to_ldsc_result(covstruc)?;
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
@@ -496,16 +698,20 @@ fn commonfactor_gwas(
             None,
         )
     });
-    Ok(snp_results_to_json(&results, &valid_snps))
+    let snp_ids: Vec<String> = results
+        .iter()
+        .map(|r| valid_snps[r.snp_idx].snp.clone())
+        .collect();
+    snp_results_to_dict(py, &results, "SNP", snp_ids, Vec::new())
 }
 
 /// Run user-specified GWAS.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=None, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
+#[pyo3(signature = (covstruc, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=None, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
 #[allow(unused_variables)]
-fn user_gwas(
-    py: Python<'_>,
-    covstruc_json: &str,
+fn user_gwas<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
     sumstats_path: &str,
     model: &str,
     estimation: &str,
@@ -522,9 +728,8 @@ fn user_gwas(
     std_lv: bool,
     fix_measurement: bool,
     q_snp: bool,
-) -> PyResult<String> {
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+) -> PyResult<Bound<'py, PyDict>> {
+    let ldsc_result = pyany_to_ldsc_result(covstruc)?;
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
@@ -572,7 +777,8 @@ fn user_gwas(
     });
 
     if let Some(ref patterns) = sub {
-        let pats: Vec<String> = patterns.iter()
+        let pats: Vec<String> = patterns
+            .iter()
             .map(|s| s.trim().replace(' ', ""))
             .filter(|s| !s.is_empty())
             .collect();
@@ -586,27 +792,28 @@ fn user_gwas(
         }
     }
 
-    Ok(snp_results_to_json(&results, &merged.snps))
+    let snp_ids: Vec<String> = results
+        .iter()
+        .map(|r| merged.snps[r.snp_idx].snp.clone())
+        .collect();
+    snp_results_to_dict(py, &results, "SNP", snp_ids, Vec::new())
 }
 
 /// Parallel analysis to determine number of factors.
-/// Accepts S and V as JSON strings (2D arrays).
 #[pyfunction]
-#[pyo3(signature = (s_json, v_json, r=500, p=None, diag=false, parallel=true, cores=None))]
-fn parallel_analysis(
-    py: Python<'_>,
-    s_json: &str,
-    v_json: &str,
+#[pyo3(signature = (s, v, r=500, p=None, diag=false, parallel=true, cores=None))]
+fn parallel_analysis<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    v: PyReadonlyArray2<'py, f64>,
     r: usize,
     p: Option<f64>,
     diag: bool,
     parallel: bool,
     cores: Option<usize>,
-) -> PyResult<String> {
-    let s_mat = json_to_mat(s_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid s_json: {e}")))?;
-    let v_mat = json_to_mat(v_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid v_json: {e}")))?;
+) -> PyResult<Bound<'py, PyDict>> {
+    let s_mat = pyarray_to_mat(&s);
+    let v_mat = pyarray_to_mat(&v);
 
     let percentile = p.unwrap_or(0.95);
     let num_threads = if parallel { cores } else { Some(1) };
@@ -623,12 +830,12 @@ fn parallel_analysis(
             None,
         )
     });
-    let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
-    let sim: Vec<String> = result.simulated_95.iter().map(|v| format!("{v:.6}")).collect();
-    Ok(format!(
-        "{{\"observed\":[{}],\"simulated_95\":[{}],\"n_factors\":{}}}",
-        obs.join(","), sim.join(","), result.n_factors
-    ))
+
+    let out = PyDict::new(py);
+    out.set_item("observed", result.observed)?;
+    out.set_item("simulated_95", result.simulated_95)?;
+    out.set_item("n_factors", result.n_factors as i64)?;
+    Ok(out)
 }
 
 /// Auto-generate model syntax from factor loadings.
@@ -651,50 +858,63 @@ fn write_model(
 }
 
 /// Compute model-implied genetic correlation matrix.
-/// `estimation=True` in R means DWLS; here `estimation=true` maps to "DWLS".
+/// `estimation=True` means DWLS; `estimation=False` means ML.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, model, std_lv=true, estimation=true, sub=None))]
+#[pyo3(signature = (covstruc, model, std_lv=true, estimation=true, sub=None))]
 #[allow(unused_variables)]
-fn rgmodel(
-    covstruc_json: &str,
+fn rgmodel<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
     model: &str,
     std_lv: bool,
     estimation: bool,
-    sub: Option<Vec<String>>,  // not yet used
-) -> PyResult<String> {
-    let est_method = if estimation { gsem_sem::EstimationMethod::Dwls } else { gsem_sem::EstimationMethod::Ml };
+    sub: Option<Vec<String>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let est_method = if estimation {
+        gsem_sem::EstimationMethod::Dwls
+    } else {
+        gsem_sem::EstimationMethod::Ml
+    };
     let model_opt = if model.is_empty() { None } else { Some(model) };
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+    let ldsc_result = pyany_to_ldsc_result(covstruc)?;
+
     let result = if let Some(ref sub_names) = sub {
         let k = ldsc_result.s.nrows();
         let all_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
-        let sub_indices: Vec<usize> = sub_names.iter()
+        let sub_indices: Vec<usize> = sub_names
+            .iter()
             .filter_map(|name| all_names.iter().position(|n| n == name))
             .collect();
         gsem_sem::rgmodel::run_rgmodel_sub(
-            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv, &sub_indices,
+            &ldsc_result.s,
+            &ldsc_result.v,
+            est_method,
+            model_opt,
+            std_lv,
+            &sub_indices,
         )
     } else {
         gsem_sem::rgmodel::run_rgmodel_with_model(
-            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv,
+            &ldsc_result.s,
+            &ldsc_result.v,
+            est_method,
+            model_opt,
+            std_lv,
         )
     }
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
-    let k = result.r.nrows();
-    let kstar = k * (k + 1) / 2;
-    let r_rows: Vec<String> = (0..k).map(|i| {
-        let row: Vec<String> = (0..k).map(|j| format!("{:.6}", result.r[(i, j)])).collect();
-        format!("[{}]", row.join(","))
-    }).collect();
-    let v_rows: Vec<String> = (0..kstar).map(|i| {
-        let row: Vec<String> = (0..kstar).map(|j| format!("{:.6}", result.v_r[(i, j)])).collect();
-        format!("[{}]", row.join(","))
-    }).collect();
-    Ok(format!("{{\"R\":[{}],\"V_R\":[{}]}}", r_rows.join(","), v_rows.join(",")))
+
+    let out = PyDict::new(py);
+    out.set_item("R", mat_to_pyarray(py, &result.r))?;
+    out.set_item("V_R", mat_to_pyarray(py, &result.v_r))?;
+    Ok(out)
 }
 
 /// Run HDL (High-Definition Likelihood) estimation.
+///
+/// Returns a `PyLdscResult` with the same shape as `ldsc()`'s output, so
+/// downstream functions (`usermodel`, `commonfactor`, `rgmodel`, ...) can
+/// consume it directly.
 #[pyfunction]
 #[pyo3(signature = (traits, sample_prev=None, population_prev=None, trait_names=None, ld_path="", n_ref=335265.0, method="piecewise"))]
 #[allow(unused_variables)]
@@ -707,7 +927,7 @@ fn hdl(
     ld_path: &str,
     n_ref: f64,
     method: &str,
-) -> PyResult<String> {
+) -> PyResult<PyLdscResult> {
     use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData};
     if trait_names.is_some() {
         log::info!("trait_names are used for labeling output in the Python wrapper");
@@ -716,7 +936,6 @@ fn hdl(
     let sp: Vec<Option<f64>> = sample_prev.unwrap_or_default();
     let pp: Vec<Option<f64>> = population_prev.unwrap_or_default();
 
-    // Read trait files
     let trait_data: Vec<HdlTraitData> = gsem::io::gwas_reader::load_trait_data(&traits)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?
         .into_iter()
@@ -733,7 +952,6 @@ fn hdl(
         n_ref,
     };
 
-    // Load LD pieces from text format directory
     let ld_dir = std::path::Path::new(ld_path);
     let ld_pieces = gsem::io::hdl_reader::load_hdl_pieces(ld_dir)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
@@ -742,18 +960,15 @@ fn hdl(
     let result = py
         .detach(|| gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
-    let ldsc_compat = result.to_ldsc_result();
-    let json = ldsc_compat.to_json_string()
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
-    Ok(json)
+    Ok(ldsc_result_to_py(&result.to_ldsc_result(), false))
 }
 
 /// Run stratified LDSC (s-LDSC).
 #[pyfunction]
 #[pyo3(signature = (traits, sample_prev=None, population_prev=None, ld="", wld="", frq="", trait_names=None, n_blocks=200, ldsc_log=None, exclude_cont=true))]
 #[allow(unused_variables)]
-fn s_ldsc(
-    py: Python<'_>,
+fn s_ldsc<'py>(
+    py: Python<'py>,
     traits: Vec<String>,
     sample_prev: Option<Vec<Option<f64>>>,
     population_prev: Option<Vec<Option<f64>>>,
@@ -764,7 +979,7 @@ fn s_ldsc(
     n_blocks: usize,
     ldsc_log: Option<String>,
     exclude_cont: bool,
-) -> PyResult<String> {
+) -> PyResult<Bound<'py, PyDict>> {
     if trait_names.is_some() {
         log::info!("trait_names are used for labeling output in the Python wrapper");
     }
@@ -853,78 +1068,56 @@ fn s_ldsc(
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
-    result.to_json_string()
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
-}
-
-/// Helper: parse a JSON 2D array string into a faer Mat.
-fn json_to_mat(json: &str) -> Result<faer::Mat<f64>, String> {
-    let arr: Vec<Vec<f64>> = serde_json::from_str(json)
-        .map_err(|e| format!("JSON parse error: {e}"))?;
-    let nrows = arr.len();
-    if nrows == 0 {
-        return Err("empty matrix".to_string());
+    let s_list = PyList::empty(py);
+    for m in &result.s_annot {
+        s_list.append(mat_to_pyarray(py, m))?;
     }
-    let ncols = arr[0].len();
-    if arr.iter().any(|row| row.len() != ncols) {
-        return Err("jagged matrix".to_string());
+    let v_list = PyList::empty(py);
+    for m in &result.v_annot {
+        v_list.append(mat_to_pyarray(py, m))?;
     }
-    Ok(faer::Mat::from_fn(nrows, ncols, |i, j| arr[i][j]))
-}
 
-/// Helper: serialize GWAS results to JSON.
-fn snp_results_to_json(
-    results: &[gsem::gwas::user_gwas::SnpResult],
-    snps: &[gsem::io::sumstats_reader::MergedSnp],
-) -> String {
-    let entries: Vec<String> = results.iter().map(|r| {
-        let snp_name = &snps[r.snp_idx].snp;
-        let params: Vec<String> = r.params.iter().map(|p| {
-            format!(
-                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
-            )
-        }).collect();
-        format!(
-            "{{\"SNP\":\"{}\",\"chisq\":{:.4},\"df\":{},\"converged\":{},\"params\":[{}]}}",
-            snp_name, r.chisq, r.chisq_df, r.converged, params.join(",")
-        )
-    }).collect();
-    format!("[{}]", entries.join(","))
+    let out = PyDict::new(py);
+    out.set_item("annotations", result.annotations)?;
+    out.set_item("m_annot", result.m_annot)?;
+    out.set_item("m_total", result.m_total)?;
+    out.set_item("prop", result.prop)?;
+    out.set_item("I", mat_to_pyarray(py, &result.i_mat))?;
+    out.set_item("S_annot", s_list)?;
+    out.set_item("V_annot", v_list)?;
+    Ok(out)
 }
 
 /// Enrichment analysis using stratified LDSC results.
+///
+/// `s_annot` / `v_annot` are lists of NumPy 2D arrays (one matrix per
+/// annotation). Returns a columnar dict.
 #[pyfunction]
 #[pyo3(signature = (s_baseline, s_annot, v_annot, annotation_names, m_annot, m_total))]
-fn enrich(
-    s_baseline: Vec<Vec<f64>>,
-    s_annot: Vec<Vec<Vec<f64>>>,
-    v_annot: Vec<Vec<Vec<f64>>>,
+fn enrich<'py>(
+    py: Python<'py>,
+    s_baseline: PyReadonlyArray2<'py, f64>,
+    s_annot: &Bound<'py, PyAny>,
+    v_annot: &Bound<'py, PyAny>,
     annotation_names: Vec<String>,
     m_annot: Vec<f64>,
     m_total: f64,
-) -> PyResult<String> {
-    let nr = s_baseline.len();
-    let nc = if nr > 0 { s_baseline[0].len() } else { 0 };
-    let s_base_mat = faer::Mat::from_fn(nr, nc, |i, j| s_baseline[i][j]);
+) -> PyResult<Bound<'py, PyDict>> {
+    let s_base_mat = pyarray_to_mat(&s_baseline);
 
-    let s_annot_mats: Vec<faer::Mat<f64>> = s_annot
-        .iter()
-        .map(|rows| {
-            let r = rows.len();
-            let c = if r > 0 { rows[0].len() } else { 0 };
-            faer::Mat::from_fn(r, c, |i, j| rows[i][j])
-        })
-        .collect();
-
-    let v_annot_mats: Vec<faer::Mat<f64>> = v_annot
-        .iter()
-        .map(|rows| {
-            let r = rows.len();
-            let c = if r > 0 { rows[0].len() } else { 0 };
-            faer::Mat::from_fn(r, c, |i, j| rows[i][j])
-        })
-        .collect();
+    let extract_mats = |obj: &Bound<'_, PyAny>, label: &str| -> PyResult<Vec<faer::Mat<f64>>> {
+        let mut mats = Vec::new();
+        for (i, item) in obj.try_iter()?.enumerate() {
+            let item = item?;
+            let arr: PyReadonlyArray2<'_, f64> = item.extract().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("{label}[{i}]: {e}"))
+            })?;
+            mats.push(pyarray_to_mat(&arr));
+        }
+        Ok(mats)
+    };
+    let s_annot_mats = extract_mats(s_annot, "s_annot")?;
+    let v_annot_mats = extract_mats(v_annot, "v_annot")?;
 
     let result = gsem::stats::enrich::enrichment_test(
         &s_base_mat,
@@ -935,83 +1128,80 @@ fn enrich(
         m_total,
     );
 
-    let entries: Vec<String> = result
-        .annotations
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            format!(
-                "{{\"annotation\":\"{}\",\"enrichment\":{:.6},\"se\":{:.6},\"p\":{:.6e}}}",
-                name, result.enrichment[i], result.se[i], result.p[i]
-            )
-        })
-        .collect();
-    Ok(format!("[{}]", entries.join(",")))
+    let out = PyDict::new(py);
+    out.set_item("annotation", result.annotations)?;
+    out.set_item("enrichment", result.enrichment)?;
+    out.set_item("se", result.se)?;
+    out.set_item("p", result.p)?;
+    Ok(out)
 }
 
 /// Simulate GWAS summary statistics.
+///
+/// Returns a NumPy 2D array of simulated Z-scores with shape `k × n_snps`.
 #[pyfunction]
 #[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m, intercepts=None, r_pheno=None, n_overlap=0.0))]
-fn sim_ldsc(
-    s_matrix: Vec<Vec<f64>>,
+fn sim_ldsc<'py>(
+    py: Python<'py>,
+    s_matrix: PyReadonlyArray2<'py, f64>,
     n_per_trait: Vec<f64>,
     ld_scores: Vec<f64>,
     m: f64,
-    intercepts: Option<Vec<Vec<f64>>>,
-    r_pheno: Option<Vec<Vec<f64>>>,
+    intercepts: Option<PyReadonlyArray2<'py, f64>>,
+    r_pheno: Option<PyReadonlyArray2<'py, f64>>,
     n_overlap: f64,
-) -> PyResult<Vec<Vec<f64>>> {
-    let nr = s_matrix.len();
-    let nc = if nr > 0 { s_matrix[0].len() } else { 0 };
-    let s_mat = faer::Mat::from_fn(nr, nc, |i, j| s_matrix[i][j]);
-
-    let int_mat = intercepts.map(|rows| {
-        let nr = rows.len();
-        let nc = if nr > 0 { rows[0].len() } else { 0 };
-        faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
-    });
-
-    let r_pheno_mat = r_pheno.map(|rows| {
-        let nr = rows.len();
-        let nc = if nr > 0 { rows[0].len() } else { 0 };
-        faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
-    });
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let s_mat = pyarray_to_mat(&s_matrix);
 
     let config = gsem::stats::simulation::SimConfig {
-        intercepts: int_mat,
-        r_pheno: r_pheno_mat,
+        intercepts: intercepts.as_ref().map(pyarray_to_mat),
+        r_pheno: r_pheno.as_ref().map(pyarray_to_mat),
         n_overlap,
     };
 
-    Ok(gsem::stats::simulation::simulate_sumstats(
+    let result = gsem::stats::simulation::simulate_sumstats(
         &s_mat,
         &n_per_trait,
         &ld_scores,
         m,
         &config,
-    ))
+    );
+    // result is Vec<Vec<f64>> with shape (k × n_snps).
+    let k = result.len();
+    let n_snps = if k == 0 { 0 } else { result[0].len() };
+    let packed = faer::Mat::from_fn(k, n_snps, |i, j| result[i][j]);
+    Ok(mat_to_pyarray(py, &packed))
 }
 
 /// Run multi-SNP analysis.
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, model, beta, se, var_snp, ld_matrix, snp_names, estimation="DWLS", max_iter=1000))]
-fn multi_snp(
-    covstruc_json: &str,
+#[pyo3(signature = (covstruc, model, beta, se, var_snp, ld_matrix, snp_names, estimation="DWLS", max_iter=1000))]
+fn multi_snp<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
     model: &str,
-    beta: Vec<Vec<f64>>,
-    se: Vec<Vec<f64>>,
+    beta: PyReadonlyArray2<'py, f64>,
+    se: PyReadonlyArray2<'py, f64>,
     var_snp: Vec<f64>,
-    ld_matrix: Vec<Vec<f64>>,
+    ld_matrix: PyReadonlyArray2<'py, f64>,
     snp_names: Vec<String>,
     estimation: &str,
     max_iter: usize,
-) -> PyResult<String> {
-    let ldsc_result = conversions::json_to_ldsc(covstruc_json)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid covstruc JSON"))?;
+) -> PyResult<Bound<'py, PyDict>> {
+    let ldsc_result = pyany_to_ldsc_result(covstruc)?;
+    let ld_mat = pyarray_to_mat(&ld_matrix);
 
-    let nr = ld_matrix.len();
-    let nc = if nr > 0 { ld_matrix[0].len() } else { 0 };
-    let ld_mat = faer::Mat::from_fn(nr, nc, |i, j| ld_matrix[i][j]);
+    // beta / se are passed as n_snps × k 2D arrays; unpack into the
+    // Vec<Vec<f64>> layout the engine expects.
+    let pyarray_to_rows = |arr: &PyReadonlyArray2<'_, f64>| -> Vec<Vec<f64>> {
+        let view = arr.as_array();
+        let (n, k) = (view.nrows(), view.ncols());
+        (0..n)
+            .map(|i| (0..k).map(|j| view[[i, j]]).collect())
+            .collect()
+    };
+    let beta_rows = pyarray_to_rows(&beta);
+    let se_rows = pyarray_to_rows(&se);
 
     let pt = gsem_sem::syntax::parse_model(model, false)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
@@ -1026,64 +1216,55 @@ fn multi_snp(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
-        &beta,
-        &se,
+        &beta_rows,
+        &se_rows,
         &var_snp,
         &ld_mat,
         &snp_names,
     );
 
-    let params: Vec<String> = result
-        .params
-        .iter()
-        .map(|p| {
-            format!(
-                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                p.lhs, p.op, p.rhs, p.est, p.se, p.z_stat, p.p_value
-            )
-        })
-        .collect();
-    Ok(format!(
-        "{{\"converged\":{},\"chisq\":{:.4},\"df\":{},\"params\":[{}]}}",
-        result.converged, result.chisq, result.chisq_df, params.join(",")
-    ))
+    let out = PyDict::new(py);
+    out.set_item("converged", result.converged)?;
+    out.set_item("chisq", result.chisq)?;
+    out.set_item("df", result.chisq_df as i64)?;
+    out.set_item("params", param_results_to_dict(py, &result.params)?)?;
+    Ok(out)
 }
 
 /// Run multi-gene analysis (reuses multi-SNP engine).
 #[pyfunction]
-#[pyo3(signature = (covstruc_json, model, beta, se, var_gene, ld_matrix, gene_names, estimation="DWLS", max_iter=1000))]
-fn multi_gene(
-    covstruc_json: &str,
+#[pyo3(signature = (covstruc, model, beta, se, var_gene, ld_matrix, gene_names, estimation="DWLS", max_iter=1000))]
+fn multi_gene<'py>(
+    py: Python<'py>,
+    covstruc: &Bound<'py, PyAny>,
     model: &str,
-    beta: Vec<Vec<f64>>,
-    se: Vec<Vec<f64>>,
+    beta: PyReadonlyArray2<'py, f64>,
+    se: PyReadonlyArray2<'py, f64>,
     var_gene: Vec<f64>,
-    ld_matrix: Vec<Vec<f64>>,
+    ld_matrix: PyReadonlyArray2<'py, f64>,
     gene_names: Vec<String>,
     estimation: &str,
     max_iter: usize,
-) -> PyResult<String> {
+) -> PyResult<Bound<'py, PyDict>> {
     multi_snp(
-        covstruc_json, model, beta, se, var_gene, ld_matrix, gene_names, estimation, max_iter,
+        py, covstruc, model, beta, se, var_gene, ld_matrix, gene_names, estimation, max_iter,
     )
 }
 
 /// Run Generalized Least Squares regression.
+///
+/// Returns a columnar dict `{beta, se, z, p}`.
 #[pyfunction]
 #[pyo3(signature = (x, y, v, intercept=true))]
-fn summary_gls(
-    x: Vec<Vec<f64>>,
+fn summary_gls<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'py, f64>,
     y: Vec<f64>,
-    v: Vec<Vec<f64>>,
+    v: PyReadonlyArray2<'py, f64>,
     intercept: bool,
-) -> PyResult<String> {
-    let nr = x.len();
-    let nc = if nr > 0 { x[0].len() } else { 0 };
-    let mut x_mat = faer::Mat::from_fn(nr, nc, |i, j| x[i][j]);
-
-    let v_nr = v.len();
-    let v_nc = if v_nr > 0 { v[0].len() } else { 0 };
-    let v_mat = faer::Mat::from_fn(v_nr, v_nc, |i, j| v[i][j]);
+) -> PyResult<Bound<'py, PyDict>> {
+    let mut x_mat = pyarray_to_mat(&x);
+    let v_mat = pyarray_to_mat(&v);
 
     if intercept {
         let n = x_mat.nrows();
@@ -1100,18 +1281,12 @@ fn summary_gls(
 
     match gsem::stats::gls::summary_gls(&x_mat, &y, &v_mat) {
         Some(result) => {
-            let entries: Vec<String> = result
-                .beta
-                .iter()
-                .enumerate()
-                .map(|(i, b)| {
-                    format!(
-                        "{{\"beta\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                        b, result.se[i], result.z[i], result.p[i]
-                    )
-                })
-                .collect();
-            Ok(format!("[{}]", entries.join(",")))
+            let out = PyDict::new(py);
+            out.set_item("beta", result.beta)?;
+            out.set_item("se", result.se)?;
+            out.set_item("z", result.z)?;
+            out.set_item("p", result.p)?;
+            Ok(out)
         }
         None => Err(pyo3::exceptions::PyRuntimeError::new_err(
             "GLS failed (singular matrix?)",
