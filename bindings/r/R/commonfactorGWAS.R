@@ -2,7 +2,7 @@
 #'
 #' Runs multivariate GWAS with an auto-generated 1-factor model per SNP.
 #'
-#' @param covstruc LDSC result (list or JSON string)
+#' @param covstruc LDSC result (named list with S, V, I, N, m components)
 #' @param SNPs Path to merged summary statistics file
 #' @param estimation Estimation method: "DWLS" (default) or "ML"
 #' @param cores Number of cores for Rayon thread pool (NULL = auto-detect)
@@ -29,15 +29,6 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
   }
   num_threads <- .resolve_num_threads(parallel, cores)
 
-  if (is.list(covstruc)) {
-    covstruc_json <- jsonlite::toJSON(list(
-      s = covstruc$S, v = covstruc$V, i_mat = covstruc$I,
-      n_vec = covstruc$N, m = covstruc$m
-    ), auto_unbox = TRUE)
-  } else {
-    covstruc_json <- covstruc
-  }
-
   # Convert SNPSE: FALSE means auto (pass NaN), numeric means override
   snp_se_val <- if (is.logical(SNPSE) && !SNPSE) NaN else as.double(SNPSE)
 
@@ -51,29 +42,45 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
     snp_path <- as.character(SNPs)
   }
 
-  json <- .Call("wrap__commonfactor_gwas_rust",
-    as.character(covstruc_json), snp_path, as.character(GC),
+  result <- .Call("wrap__commonfactor_gwas_rust",
+    .covstruc_as_list(covstruc), snp_path, as.character(GC),
     as.character(estimation), snp_se_val, as.logical(smooth_check),
     as.logical(TWAS), as.character(identification),
     num_threads)
-  raw <- jsonlite::fromJSON(json)
 
-  # Extract the SNP effect row (F1 ~ SNP) from each SNP's params,
-  # matching R GenomicSEM's commonfactorGWAS output format.
+  if (!is.null(result$error)) {
+    stop("gsemr::commonfactorGWAS error: ", result$error)
+  }
+
+  raw <- if (isTRUE(TWAS)) {
+    .snp_columnar_to_df(result, id_col = "Gene", extra_cols = c("Panel", "HSQ"))
+  } else {
+    .snp_columnar_to_df(result, id_col = "SNP")
+  }
+
+  # Extract the SNP/Gene effect row (F1 ~ SNP or F1 ~ Gene) from each
+  # row's params, matching R GenomicSEM's commonfactorGWAS output format.
+  id_col <- if (isTRUE(TWAS)) "Gene" else "SNP"
+  target_rhs <- id_col
   n <- nrow(raw)
   out <- data.frame(
-    SNP = raw$SNP,
+    SNP = raw[[id_col]],
     lhs = character(n), op = character(n), rhs = character(n),
     est = numeric(n), se = numeric(n),
     chisq = raw$chisq, df = raw$df,
     converged = raw$converged,
     stringsAsFactors = FALSE
   )
+  if (id_col == "SNP") {
+    names(out)[1] <- "SNP"
+  } else {
+    names(out)[1] <- "Gene"
+  }
 
   for (i in seq_len(n)) {
     p <- raw$params[[i]]
-    # Find the SNP regression row: op == "~" and rhs == "SNP"
-    snp_row <- which(p$op == "~" & p$rhs == "SNP")
+    # Find the SNP/Gene regression row: op == "~" and rhs == target
+    snp_row <- which(p$op == "~" & p$rhs == target_rhs)
     if (length(snp_row) > 0) {
       snp_row <- snp_row[1]
       out$lhs[i] <- p$lhs[snp_row]

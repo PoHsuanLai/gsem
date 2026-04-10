@@ -12,6 +12,5 @@ Description: A Rust-accelerated implementation of GenomicSEM for multivariate
 License: GPL-3
 Encoding: UTF-8
 SystemRequirements: Rust (>= 1.70), cargo
-Imports: jsonlite
 Suggests: bench, psych
 RoxygenNote: 7.3.0

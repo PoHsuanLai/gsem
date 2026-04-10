@@ -33,7 +33,7 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
     population.prev <- rep(NA, length(traits))
   }
 
-  json <- .Call("wrap__s_ldsc_rust",
+  result <- .Call("wrap__s_ldsc_rust",
     as.character(traits),
     as.double(sample.prev),
     as.double(population.prev),
@@ -44,22 +44,28 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
     as.logical(exclude_cont)
   )
 
-  result <- jsonlite::fromJSON(json)
-
   if (!is.null(result$error)) {
     stop("gsemr::s_ldsc error: ", result$error)
   }
 
-  # Apply trait names to S and V matrices if present
-  if (!is.null(result$S)) {
-    S <- as.matrix(result$S)
-    if (nrow(S) == length(trait.names)) {
-      rownames(S) <- colnames(S) <- trait.names
+  # Apply trait names to the intercept matrix and to each per-annotation
+  # S matrix. V matrices are kstar x kstar so they get trait-pair names.
+  if (!is.null(result$I)) {
+    I <- result$I
+    if (nrow(I) == length(trait.names)) {
+      rownames(I) <- colnames(I) <- trait.names
     }
-    result$S <- S
+    result$I <- I
   }
-  if (!is.null(result$V)) {
-    V <- as.matrix(result$V)
+  if (!is.null(result$S_annot)) {
+    result$S_annot <- lapply(result$S_annot, function(S) {
+      if (nrow(S) == length(trait.names)) {
+        rownames(S) <- colnames(S) <- trait.names
+      }
+      S
+    })
+  }
+  if (!is.null(result$V_annot)) {
     k <- length(trait.names)
     vpairs <- c()
     for (i in seq_len(k)) {
@@ -67,17 +73,12 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
         vpairs <- c(vpairs, paste0(trait.names[i], "_", trait.names[j]))
       }
     }
-    if (nrow(V) == length(vpairs)) {
-      rownames(V) <- colnames(V) <- vpairs
-    }
-    result$V <- V
-  }
-  if (!is.null(result$I)) {
-    I <- as.matrix(result$I)
-    if (nrow(I) == length(trait.names)) {
-      rownames(I) <- colnames(I) <- trait.names
-    }
-    result$I <- I
+    result$V_annot <- lapply(result$V_annot, function(V) {
+      if (nrow(V) == length(vpairs)) {
+        rownames(V) <- colnames(V) <- vpairs
+      }
+      V
+    })
   }
 
   # Write log file if requested
@@ -86,13 +87,12 @@ s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
     cat("gsemr Stratified LDSC Results\n")
     cat("=============================\n\n")
     cat("Traits:", paste(traits, collapse=", "), "\n")
-    if (!is.null(result$S)) {
-      cat("\nGenetic Covariance Matrix (S):\n")
-      print(round(result$S, 4))
-    }
     if (!is.null(result$I)) {
       cat("\nIntercept Matrix (I):\n")
       print(round(result$I, 4))
+    }
+    if (!is.null(result$annotations)) {
+      cat("\nAnnotations:", paste(result$annotations, collapse=", "), "\n")
     }
     sink()
     message("s_ldsc log written to: ", ldsc.log)

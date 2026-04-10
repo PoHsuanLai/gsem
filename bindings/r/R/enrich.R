@@ -24,25 +24,28 @@ enrich <- function(s_covstruc, model = "", params = NULL, fix = "regressions",
 
   # If no model specified, use the fast Rust proportional enrichment test
   if (!nzchar(model)) {
-    s_baseline_json <- jsonlite::toJSON(as.matrix(s_covstruc$S_baseline), digits = 15)
-    s_annot_json <- jsonlite::toJSON(lapply(s_covstruc$S_annot, as.matrix), digits = 15)
-    v_annot_json <- jsonlite::toJSON(lapply(s_covstruc$V_annot, as.matrix), digits = 15)
+    as_num_matrix <- function(M) {
+      M <- as.matrix(M)
+      matrix(as.numeric(M), nrow = nrow(M))
+    }
+    s_baseline <- as_num_matrix(s_covstruc$S_baseline)
+    s_annot_mats <- lapply(s_covstruc$S_annot, as_num_matrix)
+    v_annot_mats <- lapply(s_covstruc$V_annot, as_num_matrix)
     annotation_names <- as.character(s_covstruc$annotation_names)
     m_annot <- as.numeric(s_covstruc$m_annot)
     m_total <- as.numeric(s_covstruc$m_total)
 
-    json <- .Call("wrap__enrich_rust",
-      as.character(s_baseline_json),
-      as.character(s_annot_json),
-      as.character(v_annot_json),
+    result <- .Call("wrap__enrich_rust",
+      s_baseline,
+      s_annot_mats,
+      v_annot_mats,
       annotation_names,
       m_annot,
       m_total
     )
 
-    result <- jsonlite::fromJSON(json)
     if (!is.null(result$error)) stop("gsemr::enrich error: ", result$error)
-    return(as.data.frame(result))
+    return(as.data.frame(result, stringsAsFactors = FALSE))
   }
 
   # SEM-based enrichment: fit model per annotation and compare to baseline

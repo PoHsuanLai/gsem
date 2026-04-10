@@ -3,7 +3,7 @@
 #' Fits a model with multiple SNPs simultaneously, accounting for LD between them.
 #' Port of R GenomicSEM's \code{multiSNP()}.
 #'
-#' @param covstruc LDSC result (list with S, V, I components, or JSON string)
+#' @param covstruc LDSC result (named list with S, V, I, N, m components)
 #' @param SNPs Data frame of SNP summary statistics (with beta, se, var columns per SNP)
 #' @param LD LD correlation matrix between SNPs
 #' @param SNPSE SNP SE override (default FALSE = auto, numeric = override)
@@ -11,18 +11,6 @@
 #' @return A list with converged, chisq, df, and params
 #' @export
 multiSNP <- function(covstruc, SNPs, LD, SNPSE = FALSE, SNPlist = NA) {
-
-  if (is.list(covstruc) && !is.character(covstruc)) {
-    covstruc_json <- jsonlite::toJSON(list(
-      s = covstruc$S,
-      v = covstruc$V,
-      i_mat = covstruc$I,
-      n_vec = covstruc$N,
-      m = covstruc$m
-    ), auto_unbox = TRUE)
-  } else {
-    covstruc_json <- covstruc
-  }
 
   # Build model: each SNP predicts all latent factors
   k <- nrow(as.matrix(covstruc$S))
@@ -33,40 +21,35 @@ multiSNP <- function(covstruc, SNPs, LD, SNPSE = FALSE, SNPlist = NA) {
     paste0("SNP", seq_len(n_snps))
   }
 
-  # Extract beta, se, var from SNPs data frame
-  beta_mat <- as.matrix(SNPs$beta)
-  se_mat <- as.matrix(SNPs$se)
+  # Extract beta, se, var from SNPs data frame and coerce to numeric matrices
+  beta_mat <- matrix(as.numeric(as.matrix(SNPs$beta)), nrow = n_snps)
+  se_mat <- matrix(as.numeric(as.matrix(SNPs$se)), nrow = n_snps)
   var_snp <- as.numeric(SNPs$var)
 
   model <- paste0("F1 =~ ", paste0("NA*V", seq_len(k), collapse = " + "),
                    "\n", paste0("F1 ~ ", snp_names, collapse = "\n"),
                    "\nF1 ~~ 1*F1")
 
-  beta_json <- jsonlite::toJSON(beta_mat, digits = 15)
-  se_json <- jsonlite::toJSON(se_mat, digits = 15)
-  ld_json <- jsonlite::toJSON(as.matrix(LD), digits = 15)
-
   # Convert SNPSE: FALSE means auto (pass NaN), numeric means override
   snp_se_val <- if (is.logical(SNPSE) && !SNPSE) NaN else as.double(SNPSE)
 
-  json <- .Call("wrap__multi_snp_rust",
-    as.character(covstruc_json),
+  result <- .Call("wrap__multi_snp_rust",
+    .covstruc_as_list(covstruc),
     as.character(model),
     "DWLS",
-    as.character(beta_json),
-    as.character(se_json),
+    beta_mat,
+    se_mat,
     as.numeric(var_snp),
-    as.character(ld_json),
+    matrix(as.numeric(as.matrix(LD)), nrow = nrow(as.matrix(LD))),
     as.character(snp_names),
     snp_se_val
   )
 
-  result <- jsonlite::fromJSON(json)
   if (!is.null(result$error)) stop("gsemr::multiSNP error: ", result$error)
   list(
     converged = result$converged,
     chisq = result$chisq,
     df = result$df,
-    results = as.data.frame(result$params)
+    results = as.data.frame(result$params, stringsAsFactors = FALSE)
   )
 }

@@ -377,11 +377,16 @@ What grows with **N_SNPs**:
 - The sumstats input (`MergedSumstats`) — loaded fully into memory
   before the GWAS loop starts. ~150 MB at 1.2M SNPs × 3 traits.
 - The per-SNP results vector (`Vec<SnpResult>`) — held resident for the
-  entire run and then serialized. ~400 MB at 1.2M SNPs × 3 traits.
-- In the R and Python bindings, a JSON encoding step that temporarily
+  entire run, then copied into the frontend's native result type
+  (R list of column vectors, Python dict/JSON, or TSV on disk).
+  ~400 MB at 1.2M SNPs × 3 traits.
+- In the Python binding, a JSON encoding step that temporarily
   allocates roughly 3× the final JSON size while building the return
   string. This is the first thing to run out of memory on a laptop at
-  very high N, typically around 10M SNPs.
+  very high N, typically around 10M SNPs. The R binding no longer
+  pays this cost — it returns the per-SNP results as a named list of
+  equal-length R vectors through extendr, allocating roughly 1× the
+  final size with no intermediate string buffer.
 
 What grows with **k (traits)**:
 
@@ -395,11 +400,14 @@ What grows with **k (traits)**:
   scaling to high-k GWAS — replacing it with a diagonal type would save
   both memory and sandwich-SE compute time. Not yet done.
 
-The practical ceiling on the **R binding** (not the Rust core) is
-dictated by the JSON encoding peak. For a standard 3-trait × 1.2M SNP
-GWAS this is fine. For 10M+ SNPs on a laptop, prefer the `gsem` CLI
-which writes TSV directly without a JSON round-trip. The Python binding
-shares the same JSON constraint.
+The practical ceiling on the bindings is the resident `Vec<SnpResult>`
+plus whatever copy the frontend makes to build its return value. For a
+standard 3-trait × 1.2M SNP GWAS this is well under 2 GB. For 10M+ SNPs
+on a laptop, prefer the `gsem` CLI, which writes TSV directly and never
+materializes the full result in memory. The Python binding additionally
+allocates a JSON string during return, which is the first thing to run
+out of memory at very high N; removing that is a planned follow-up to
+mirror the native-types fix already done on the R side.
 
 Streaming output from the bindings is a planned improvement but not
 currently implemented.

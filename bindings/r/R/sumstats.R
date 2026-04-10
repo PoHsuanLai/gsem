@@ -51,21 +51,29 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
     linprob <- rep(FALSE, n_traits)
   }
 
-  # Handle N overrides: convert to JSON
+  # Handle N overrides: serialize into the simple JSON-array format the
+  # Rust side parses (e.g. `[1.0,null,2.5]`). Kept as a string because this
+  # is a low-frequency config argument.
   n_overrides_json <- if (is.null(N)) {
     "[]"
   } else {
-    jsonlite::toJSON(as.list(N), auto_unbox = TRUE)
+    vals <- sapply(N, function(x) {
+      if (is.null(x) || (length(x) == 1 && is.na(x))) "null" else format(as.numeric(x), scientific = FALSE)
+    })
+    paste0("[", paste(vals, collapse = ","), "]")
   }
 
-  # Handle betas: convert named list to JSON object
+  # Handle betas: serialize into `{"trait1":"BETA_COL",...}` format.
   betas_json <- if (is.null(betas)) {
     "{}"
   } else {
-    jsonlite::toJSON(as.list(betas), auto_unbox = TRUE)
+    entries <- mapply(function(k, v) {
+      paste0("\"", k, "\":\"", v, "\"")
+    }, names(betas), betas, USE.NAMES = FALSE)
+    paste0("{", paste(entries, collapse = ","), "}")
   }
 
-  json <- .Call("wrap__sumstats_rust",
+  result <- .Call("wrap__sumstats_rust",
     as.character(files), as.character(ref), as.character(trait.names),
     as.double(info.filter), as.double(maf.filter), as.logical(keep.indel),
     as.character(out),
@@ -75,7 +83,6 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
     as.character(betas_json),
     as.logical(direct.filter)
   )
-  result <- jsonlite::fromJSON(json)
   if (!is.null(result$error)) stop("gsemr::sumstats error: ", result$error)
   result$path
 }

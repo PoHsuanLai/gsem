@@ -17,5 +17,4 @@ gsem-matrix = { path = "../../../../crates/gsem-matrix" }
 gsem-ldsc = { path = "../../../../crates/gsem-ldsc" }
 gsem-sem = { path = "../../../../crates/gsem-sem" }
 faer = "0.24"
-serde_json = "1"
 log = "0.4"

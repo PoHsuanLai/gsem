@@ -24,21 +24,17 @@ summaryGLS <- function(OBJECT = NULL, Y = NULL, V_Y = NULL, PREDICTORS, INTERCEP
   if (is.null(Y)) stop("Y (response vector) must be provided")
   if (is.null(V_Y)) stop("V_Y (covariance matrix) must be provided")
 
-  x_mat <- as.matrix(PREDICTORS)
+  x_mat <- matrix(as.numeric(as.matrix(PREDICTORS)), nrow = nrow(as.matrix(PREDICTORS)))
   y_vec <- as.numeric(Y)
-  v_mat <- as.matrix(V_Y)
+  v_mat <- matrix(as.numeric(as.matrix(V_Y)), nrow = nrow(as.matrix(V_Y)))
 
-  x_json <- jsonlite::toJSON(x_mat, digits = 15)
-  v_json <- jsonlite::toJSON(v_mat, digits = 15)
-
-  json <- .Call("wrap__summary_gls_rust",
-    as.character(x_json),
+  result <- .Call("wrap__summary_gls_rust",
+    x_mat,
     as.numeric(y_vec),
-    as.character(v_json),
+    v_mat,
     as.logical(INTERCEPT)
   )
 
-  result <- jsonlite::fromJSON(json)
   if (!is.null(result$error)) stop("gsemr::summaryGLS error: ", result$error)
-  as.data.frame(result)
+  as.data.frame(result, stringsAsFactors = FALSE)
 }

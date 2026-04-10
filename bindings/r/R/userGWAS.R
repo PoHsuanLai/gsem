@@ -2,7 +2,7 @@
 #'
 #' Runs multivariate GWAS with a user-specified SEM model per SNP.
 #'
-#' @param covstruc LDSC result (list or JSON string)
+#' @param covstruc LDSC result (named list with S, V, I, N, m components)
 #' @param SNPs Path to merged summary statistics file
 #' @param estimation Estimation method: "DWLS" (default) or "ML"
 #' @param model lavaan-style model syntax
@@ -44,15 +44,6 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
   }
   num_threads <- .resolve_num_threads(parallel, cores)
 
-  if (is.list(covstruc)) {
-    covstruc_json <- jsonlite::toJSON(list(
-      s = covstruc$S, v = covstruc$V, i_mat = covstruc$I,
-      n_vec = covstruc$N, m = covstruc$m
-    ), auto_unbox = TRUE)
-  } else {
-    covstruc_json <- covstruc
-  }
-
   # Convert sub: FALSE means no subset, otherwise pass as string
   sub_str <- if (is.logical(sub) && !sub) "" else as.character(sub)
 
@@ -69,12 +60,20 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
     snp_path <- as.character(SNPs)
   }
 
-  json <- .Call("wrap__user_gwas_rust",
-    as.character(covstruc_json), snp_path,
+  result <- .Call("wrap__user_gwas_rust",
+    .covstruc_as_list(covstruc), snp_path,
     as.character(model), as.character(estimation), as.character(GC),
     as.character(sub_str), snp_se_val, as.logical(smooth_check), as.logical(std.lv),
     as.logical(fix_measurement), as.logical(Q_SNP), as.logical(TWAS),
     num_threads)
 
-  jsonlite::fromJSON(json)
+  if (!is.null(result$error)) {
+    stop("gsemr::userGWAS error: ", result$error)
+  }
+
+  if (isTRUE(TWAS)) {
+    .snp_columnar_to_df(result, id_col = "Gene", extra_cols = c("Panel", "HSQ"))
+  } else {
+    .snp_columnar_to_df(result, id_col = "SNP")
+  }
 }

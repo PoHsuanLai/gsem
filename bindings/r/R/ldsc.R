@@ -51,7 +51,7 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
 
   num_threads <- .resolve_num_threads(parallel, cores)
 
-  json <- .Call("wrap__ldsc_rust",
+  result <- .Call("wrap__ldsc_rust",
     as.character(traits),
     as.double(sample.prev),
     as.double(population.prev),
@@ -65,17 +65,15 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
     num_threads
   )
 
-  result <- jsonlite::fromJSON(json)
-
   if (!is.null(result$error)) {
     stop("gsemr::ldsc error: ", result$error)
   }
 
-  S <- as.matrix(result$s)
+  S <- result$s
   rownames(S) <- colnames(S) <- trait.names
 
-  V <- as.matrix(result$v)
-  I <- as.matrix(result$i_mat)
+  V <- result$v
+  I <- result$i_mat
   rownames(I) <- colnames(I) <- trait.names
 
   out <- list(
@@ -85,6 +83,15 @@ ldsc <- function(traits, sample.prev, population.prev, ld, wld,
     N = result$n_vec,
     m = result$m
   )
+
+  if (!is.null(result$s_stand)) {
+    s_stand <- result$s_stand
+    rownames(s_stand) <- colnames(s_stand) <- trait.names
+    out$S_Stand <- s_stand
+  }
+  if (!is.null(result$v_stand)) {
+    out$V_Stand <- result$v_stand
+  }
 
   # Write log file if requested
   if (!is.null(ldsc.log)) {

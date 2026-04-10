@@ -93,17 +93,8 @@ fn rint_to_num_threads(n: Rint) -> Option<usize> {
 
 /// Run LDSC pipeline.
 ///
-/// @param trait_files Character vector of .sumstats.gz file paths
-/// @param sample_prev Numeric vector of sample prevalences (NA for continuous)
-/// @param pop_prev Numeric vector of population prevalences (NA for continuous)
-/// @param ld_dir Path to LD score directory
-/// @param wld_dir Path to weight LD score directory (or same as ld_dir)
-/// @param n_blocks Number of jackknife blocks (default 200)
-/// @param chr Number of chromosomes (default 22)
-/// @param chisq_max Maximum chi-square filter (NaN = auto)
-/// @param stand Standardize output
-/// @param select Variable selection method
-/// @return JSON string with S, V, I matrices, N vector, and m
+/// Returns a named R list with `s`, `v`, `i_mat`, `n_vec`, `m` — plus
+/// `s_stand` and `v_stand` when `stand=TRUE`.
 #[extendr]
 fn ldsc_rust(
     trait_files: Vec<String>,
@@ -117,7 +108,7 @@ fn ldsc_rust(
     stand: bool,
     select: &str,
     num_threads: Rint,
-) -> String {
+) -> List {
     ensure_logger();
     let n_blocks = n_blocks as usize;
     let chr_count = chr as usize;
@@ -127,7 +118,7 @@ fn ldsc_rust(
 
     let trait_data = match gsem::io::gwas_reader::load_trait_data(&trait_files) {
         Ok(d) => d,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let ld_path = std::path::Path::new(ld_dir);
@@ -144,7 +135,7 @@ fn ldsc_rust(
     };
     let ld_data = match gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes) {
         Ok(d) => d,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
@@ -179,30 +170,23 @@ fn ldsc_rust(
     ) {
         Ok(result) => {
             if stand {
-                conversions::ldsc_result_to_json_stand(&result)
+                conversions::ldsc_result_to_list_stand(&result)
             } else {
-                conversions::ldsc_result_to_json(&result)
+                conversions::ldsc_result_to_list(&result)
             }
         }
-        Err(e) => {
-            format!("{{\"error\": \"{e}\"}}")
-        }
+        Err(e) => conversions::error_list(e.to_string()),
     }
 }
 
 /// Fit a user-specified SEM model.
 ///
-/// @param covstruc_json LDSC result as JSON string
-/// @param model lavaan-style model syntax
-/// @param estimation Estimation method: "DWLS" or "ML"
-/// @param std_lv Standardize latent variables
-/// @param fix_resid Fix residual variances to be positive
-/// @param imp_cov Return model-implied covariance matrix
-/// @param q_factor Compute Q_Factor heterogeneity statistic
-/// @return JSON string with converged, objective, and parameter estimates
+/// Takes `covstruc` as a named R list (`s`, `v`, `i_mat`, `n_vec`, `m`) and
+/// returns a named R list containing `converged`, `objective`, `parameters`
+/// (columnar list), fit indices, and optional `implied_cov` / `Q_Factor`.
 #[extendr]
 fn usermodel_rust(
-    covstruc_json: &str,
+    covstruc: List,
     model: &str,
     estimation: &str,
     std_lv: bool,
@@ -211,11 +195,11 @@ fn usermodel_rust(
     q_factor: bool,
     toler: Rfloat,
     cfi_calc: bool,
-) -> String {
+) -> List {
     ensure_logger();
-    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
-        Some(r) => r,
-        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let grad_tol = if toler.is_na() || toler.inner().is_nan() || toler.inner() <= 0.0 {
@@ -226,14 +210,16 @@ fn usermodel_rust(
 
     let mut pt = match gsem_sem::syntax::parse_model(model, std_lv) {
         Ok(pt) => pt,
-        Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+        Err(e) => return conversions::error_list(format!("model parse error: {e}")),
     };
 
     let k = ldsc_result.s.nrows();
     // Extract observed variable names from the model partable.
     // Observed variables = RHS of =~ (loadings), excluding latent factors and SNP.
     let obs_names: Vec<String> = {
-        let latents: std::collections::HashSet<String> = pt.rows.iter()
+        let latents: std::collections::HashSet<String> = pt
+            .rows
+            .iter()
             .filter(|r| r.op == gsem_sem::syntax::Op::Loading)
             .map(|r| r.lhs.clone())
             .collect();
@@ -260,10 +246,13 @@ fn usermodel_rust(
             }
         }
         if names.len() != k {
-            return format!(
-                "{{\"error\": \"model has {} observed variables but S matrix is {}x{}: obs=[{}]\"}}",
-                names.len(), k, k, names.join(", ")
-            );
+            return conversions::error_list(format!(
+                "model has {} observed variables but S matrix is {}x{}: obs=[{}]",
+                names.len(),
+                k,
+                k,
+                names.join(", ")
+            ));
         }
         names
     };
@@ -274,8 +263,16 @@ fn usermodel_rust(
 
     let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
     let fit = match est_method {
-        gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, grad_tol),
-        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, grad_tol),
+        gsem_sem::EstimationMethod::Ml => {
+            gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, grad_tol)
+        }
+        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(
+            &mut sem_model,
+            &ldsc_result.s,
+            &v_diag,
+            1000,
+            grad_tol,
+        ),
     };
 
     // If model failed to converge and fix_resid is true, add lower bounds and retry
@@ -291,26 +288,41 @@ fn usermodel_rust(
         }
         let mut model_retry = gsem_sem::model::Model::from_partable(&pt, &obs_names);
         let fit2 = match est_method {
-            gsem_sem::EstimationMethod::Ml => gsem_sem::estimator::fit_ml(&mut model_retry, &ldsc_result.s, 1000, grad_tol),
-            gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(&mut model_retry, &ldsc_result.s, &v_diag, 1000, grad_tol),
+            gsem_sem::EstimationMethod::Ml => {
+                gsem_sem::estimator::fit_ml(&mut model_retry, &ldsc_result.s, 1000, grad_tol)
+            }
+            gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(
+                &mut model_retry,
+                &ldsc_result.s,
+                &v_diag,
+                1000,
+                grad_tol,
+            ),
         };
         (fit2, pt.clone())
     } else {
         (fit, pt.clone())
     };
 
+    // Build a columnar parameter list from the free rows. We stash the
+    // point estimate into each row so we can reuse the `ParamEstimate`
+    // builder; se/z/p are unavailable for this path, so we fill them with
+    // NaN (which maps to R NA via the default Doubles path).
     let free_rows: Vec<_> = final_pt.rows.iter().filter(|r| r.free > 0).collect();
-    let params_json: Vec<String> = free_rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let est = fit.params.get(i).copied().unwrap_or(0.0);
-            format!(
-                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6}}}",
-                row.lhs, row.op, row.rhs, est
-            )
-        })
-        .collect();
+    let (lhs_col, op_col, rhs_col, est_col): (Vec<String>, Vec<String>, Vec<String>, Vec<f64>) = {
+        let mut lhs = Vec::with_capacity(free_rows.len());
+        let mut op = Vec::with_capacity(free_rows.len());
+        let mut rhs = Vec::with_capacity(free_rows.len());
+        let mut est = Vec::with_capacity(free_rows.len());
+        for (i, row) in free_rows.iter().enumerate() {
+            lhs.push(row.lhs.clone());
+            op.push(row.op.to_string());
+            rhs.push(row.rhs.clone());
+            est.push(fit.params.get(i).copied().unwrap_or(0.0));
+        }
+        (lhs, op, rhs, est)
+    };
+    let parameters = list!(lhs = lhs_col, op = op_col, rhs = rhs_col, est = est_col);
 
     // Build the fitted model for implied_cov / fit indices / Q_Factor
     let mut fitted_model = gsem_sem::model::Model::from_partable(&final_pt, &obs_names);
@@ -331,13 +343,29 @@ fn usermodel_rust(
         if let Ok(null_pt) = gsem_sem::syntax::parse_model(&null_model_str, false) {
             let mut null_model = gsem_sem::model::Model::from_partable(&null_pt, &obs_names);
             match est_method {
-                gsem_sem::EstimationMethod::Ml => { gsem_sem::estimator::fit_ml(&mut null_model, &ldsc_result.s, 1000, None); },
-                gsem_sem::EstimationMethod::Dwls => { gsem_sem::estimator::fit_dwls(&mut null_model, &ldsc_result.s, &v_diag, 1000, None); },
+                gsem_sem::EstimationMethod::Ml => {
+                    gsem_sem::estimator::fit_ml(&mut null_model, &ldsc_result.s, 1000, None);
+                }
+                gsem_sem::EstimationMethod::Dwls => {
+                    gsem_sem::estimator::fit_dwls(
+                        &mut null_model,
+                        &ldsc_result.s,
+                        &v_diag,
+                        1000,
+                        None,
+                    );
+                }
             }
             let null_sigma = null_model.implied_cov();
             let null_df = kstar - k;
             let null_stats = gsem_sem::fit_indices::compute_fit(
-                &ldsc_result.s, &null_sigma, &ldsc_result.v, null_df, k, None, None,
+                &ldsc_result.s,
+                &null_sigma,
+                &ldsc_result.v,
+                null_df,
+                k,
+                None,
+                None,
             );
             (Some(null_stats.chisq), Some(null_df))
         } else {
@@ -348,79 +376,78 @@ fn usermodel_rust(
     };
 
     let model_fit = gsem_sem::fit_indices::compute_fit(
-        &ldsc_result.s, &sigma_hat, &ldsc_result.v, df, n_free, q_null, df_null,
+        &ldsc_result.s,
+        &sigma_hat,
+        &ldsc_result.v,
+        df,
+        n_free,
+        q_null,
+        df_null,
     );
 
-    let fit_json = if cfi_calc {
-        format!(
-            ",\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"cfi\":{:.4},\"srmr\":{:.4}",
-            model_fit.chisq, model_fit.df, model_fit.p_chisq, model_fit.aic, model_fit.cfi, model_fit.srmr
-        )
-    } else {
-        format!(
-            ",\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"srmr\":{:.4}",
-            model_fit.chisq, model_fit.df, model_fit.p_chisq, model_fit.aic, model_fit.srmr
-        )
-    };
+    // Assemble the output list. We build a Vec of (name, Robj) pairs and
+    // let `List::from_pairs` turn them into a named list — this keeps the
+    // conditional CFI / implied_cov / Q_Factor fields readable.
+    let mut pairs: Vec<(&'static str, Robj)> = vec![
+        ("converged", fit.converged.into_robj()),
+        ("objective", fit.objective.into_robj()),
+        ("parameters", parameters.into_robj()),
+        ("chisq", model_fit.chisq.into_robj()),
+        ("df", (model_fit.df as i32).into_robj()),
+        ("p_chisq", model_fit.p_chisq.into_robj()),
+        ("aic", model_fit.aic.into_robj()),
+        ("srmr", model_fit.srmr.into_robj()),
+    ];
+    if cfi_calc {
+        pairs.push(("cfi", model_fit.cfi.into_robj()));
+    }
 
-    // Model-implied covariance
-    let imp_cov_json = if imp_cov {
-        let rows: Vec<String> = (0..k)
-            .map(|i| {
-                let vals: Vec<String> = (0..k).map(|j| format!("{:.6}", sigma_hat[(i, j)])).collect();
-                format!("[{}]", vals.join(","))
-            })
-            .collect();
-        format!(",\"implied_cov\":[{}]", rows.join(","))
-    } else {
-        String::new()
-    };
+    if imp_cov {
+        pairs.push((
+            "implied_cov",
+            conversions::mat_to_rmatrix(&sigma_hat).into_robj(),
+        ));
+    }
 
-    // Q_Factor heterogeneity
-    let q_factor_json = if q_factor {
+    if q_factor {
         let factor_inds = gsem_sem::q_factor::factor_indicators(&final_pt, &obs_names);
         let q_results = gsem_sem::q_factor::compute_q_factor(
             &ldsc_result.s,
             &sigma_hat,
             &ldsc_result.v,
             &factor_inds,
-        ).expect("q_factor: matrices must be square");
-        let entries: Vec<String> = q_results
-            .iter()
-            .map(|q| {
-                format!(
-                    "{{\"factor1\":\"{}\",\"factor2\":\"{}\",\"Q_chisq\":{:.4},\"Q_df\":{},\"Q_p\":{:.6e}}}",
-                    q.factor1, q.factor2, q.q_chisq, q.q_df, q.q_p
-                )
-            })
-            .collect();
-        format!(",\"Q_Factor\":[{}]", entries.join(","))
-    } else {
-        String::new()
-    };
+        )
+        .expect("q_factor: matrices must be square");
+        let mut factor1 = Vec::with_capacity(q_results.len());
+        let mut factor2 = Vec::with_capacity(q_results.len());
+        let mut q_chisq = Vec::with_capacity(q_results.len());
+        let mut q_df = Vec::with_capacity(q_results.len());
+        let mut q_p = Vec::with_capacity(q_results.len());
+        for q in &q_results {
+            factor1.push(q.factor1.clone());
+            factor2.push(q.factor2.clone());
+            q_chisq.push(q.q_chisq);
+            q_df.push(q.q_df as i32);
+            q_p.push(q.q_p);
+        }
+        let q_list = list!(
+            factor1 = factor1,
+            factor2 = factor2,
+            Q_chisq = q_chisq,
+            Q_df = q_df,
+            Q_p = q_p
+        );
+        pairs.push(("Q_Factor", q_list.into_robj()));
+    }
 
-    format!(
-        "{{\"converged\":{},\"objective\":{:.6},\"parameters\":[{}]{}{}{}}}",
-        fit.converged,
-        fit.objective,
-        params_json.join(","),
-        fit_json,
-        imp_cov_json,
-        q_factor_json,
-    )
+    List::from_pairs(pairs)
 }
 
 /// Munge GWAS summary statistics files.
 ///
-/// @param files Character vector of GWAS file paths
-/// @param hm3 Path to HapMap3 SNP list
-/// @param trait_names Character vector of trait names
-/// @param info_filter INFO score filter threshold
-/// @param maf_filter MAF filter threshold
-/// @param out_dir Output directory
-/// @param n_override Sample size override (NaN = no override)
-/// @param column_names_json Column name overrides as JSON string
-/// @return Character vector of output file paths
+/// `column_names_json` is a small JSON object (trait column name overrides);
+/// this boundary is kept as a JSON string because it's low-volume and
+/// infrequent.
 #[extendr]
 fn munge_rust(
     files: Vec<String>,
@@ -449,11 +476,7 @@ fn munge_rust(
     };
 
     let col_overrides: Option<std::collections::HashMap<String, String>> =
-        if column_names_json.is_empty() || column_names_json == "{}" {
-            None
-        } else {
-            serde_json::from_str(column_names_json).ok()
-        };
+        parse_simple_json_map(column_names_json);
 
     let config = gsem::munge::MungeConfig {
         info_filter,
@@ -480,30 +503,90 @@ fn munge_rust(
     output_paths
 }
 
+/// Parse the `{"key":"value","k2":"v2"}` mini-format that the R `munge` and
+/// `sumstats` wrappers emit for column-override options. Returns `None` for
+/// empty/`"{}"` inputs or on any parse error.
+///
+/// This replaces a `serde_json::from_str` call for the few config-string
+/// boundaries we keep as JSON. It only needs to handle the exact shape the
+/// R wrappers produce — not arbitrary JSON.
+fn parse_simple_json_map(s: &str) -> Option<std::collections::HashMap<String, String>> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return None;
+    }
+    let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?;
+    let mut map = std::collections::HashMap::new();
+    // Split on top-level commas (no nesting expected from the R side).
+    for pair in inner.split(',') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let (k, v) = pair.split_once(':')?;
+        let k = unquote(k.trim())?;
+        let v = unquote(v.trim())?;
+        map.insert(k, v);
+    }
+    if map.is_empty() { None } else { Some(map) }
+}
+
+/// Parse a comma-separated list of optional f64 values in the format
+/// emitted by R's `jsonlite::toJSON(as.list(N), auto_unbox=TRUE)`. Accepts
+/// `null` for missing entries.
+fn parse_simple_json_f64_array(s: &str) -> Vec<Option<f64>> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed == "[]" {
+        return Vec::new();
+    }
+    let inner = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    inner
+        .split(',')
+        .map(|v| {
+            let v = v.trim();
+            if v.eq_ignore_ascii_case("null") || v.is_empty() {
+                None
+            } else {
+                v.parse::<f64>().ok()
+            }
+        })
+        .collect()
+}
+
+/// Strip surrounding double quotes from a JSON string token.
+fn unquote(s: &str) -> Option<String> {
+    s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).map(|s| s.to_string())
+}
+
 /// Fit common factor model.
 #[extendr]
-fn commonfactor_rust(covstruc_json: &str, estimation: &str) -> String {
+fn commonfactor_rust(covstruc: List, estimation: &str) -> List {
     ensure_logger();
-    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
-        Some(r) => r,
-        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    match gsem_sem::commonfactor::run_commonfactor(&ldsc_result.s, &ldsc_result.v, gsem_sem::EstimationMethod::from_str_lossy(estimation)) {
+    match gsem_sem::commonfactor::run_commonfactor(
+        &ldsc_result.s,
+        &ldsc_result.v,
+        gsem_sem::EstimationMethod::from_str_lossy(estimation),
+    ) {
         Ok(result) => {
-            let params: Vec<String> = result.parameters.iter().map(|p| {
-                format!(
-                    "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                    p.lhs, p.op, p.rhs, p.est, p.se, p.z, p.p
-                )
-            }).collect();
-            format!(
-                "{{\"parameters\":[{}],\"chisq\":{:.4},\"df\":{},\"p_chisq\":{:.6e},\"aic\":{:.4},\"cfi\":{:.4},\"srmr\":{:.4}}}",
-                params.join(","), result.fit.chisq, result.fit.df, result.fit.p_chisq,
-                result.fit.aic, result.fit.cfi, result.fit.srmr
+            list!(
+                parameters = conversions::param_estimates_to_list(&result.parameters),
+                chisq = result.fit.chisq,
+                df = result.fit.df as i32,
+                p_chisq = result.fit.p_chisq,
+                aic = result.fit.aic,
+                cfi = result.fit.cfi,
+                srmr = result.fit.srmr
             )
         }
-        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => conversions::error_list(e.to_string()),
     }
 }
 
@@ -524,36 +607,30 @@ fn sumstats_rust(
     keep_ambig: bool,
     betas_json: &str,
     direct_filter: bool,
-) -> String {
+) -> List {
     ensure_logger();
     let se_logit_bool: Vec<bool> = se_logit.iter().map(|&v| v != 0).collect();
     let ols_bool: Vec<bool> = ols.iter().map(|&v| v != 0).collect();
     let linprob_bool: Vec<bool> = linprob.iter().map(|&v| v != 0).collect();
 
-    let n_overrides: Vec<Option<f64>> = if n_overrides_json.is_empty() || n_overrides_json == "[]" {
+    let n_overrides: Vec<Option<f64>> = if n_overrides_json.trim().is_empty() {
         vec![None; files.len()]
     } else {
-        let parsed: Vec<serde_json::Value> =
-            serde_json::from_str(n_overrides_json)
-                .unwrap_or_else(|e| panic!("Invalid N overrides JSON: {e}"));
-        parsed
-            .iter()
-            .map(|v| v.as_f64())
-            .collect()
+        let parsed = parse_simple_json_f64_array(n_overrides_json);
+        if parsed.is_empty() {
+            vec![None; files.len()]
+        } else {
+            parsed
+        }
     };
 
     // Parse betas: JSON object like {"trait1":"BETA_COL"} or empty
-    let beta_overrides: Vec<Option<String>> = if betas_json.is_empty() || betas_json == "{}" {
-        Vec::new()
-    } else {
-        // Parse as map of trait_name -> column_name, then align to trait order
-        let betas_map: std::collections::HashMap<String, String> =
-            serde_json::from_str(betas_json)
-                .unwrap_or_else(|e| panic!("Invalid betas JSON: {e}"));
-        trait_names
+    let beta_overrides: Vec<Option<String>> = match parse_simple_json_map(betas_json) {
+        Some(map) => trait_names
             .iter()
-            .map(|name| betas_map.get(name).cloned())
-            .collect()
+            .map(|name| map.get(name).cloned())
+            .collect(),
+        None => Vec::new(),
     };
 
     let config = gsem::sumstats::SumstatsConfig {
@@ -568,8 +645,10 @@ fn sumstats_rust(
         beta_overrides,
         direct_filter,
     };
-    let file_refs: Vec<&std::path::Path> =
-        files.iter().map(|p| std::path::Path::new(p.as_str())).collect();
+    let file_refs: Vec<&std::path::Path> = files
+        .iter()
+        .map(|p| std::path::Path::new(p.as_str()))
+        .collect();
     let out_path = std::path::Path::new(out);
     match gsem::sumstats::merge_sumstats(
         &file_refs,
@@ -578,15 +657,15 @@ fn sumstats_rust(
         &config,
         out_path,
     ) {
-        Ok(n) => format!("{{\"path\":\"{}\",\"n_snps\":{}}}", out, n),
-        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+        Ok(n) => list!(path = out.to_string(), n_snps = n as i32),
+        Err(e) => conversions::error_list(e.to_string()),
     }
 }
 
 /// Run common factor GWAS.
 #[extendr]
 fn commonfactor_gwas_rust(
-    covstruc_json: &str,
+    covstruc: List,
     sumstats_path: &str,
     gc: &str,
     estimation: &str,
@@ -595,15 +674,15 @@ fn commonfactor_gwas_rust(
     twas: bool,
     identification: &str,
     num_threads: Rint,
-) -> String {
-
-    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
-        Some(r) => r,
-        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+) -> List {
+    let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    let gc_mode: gsem::gwas::gc_correction::GcMode =
-        gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc
+        .parse()
+        .unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
 
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);
@@ -625,11 +704,11 @@ fn commonfactor_gwas_rust(
     };
 
     if twas {
-        let twas_data = match gsem::io::twas_reader::read_twas_sumstats(
-            std::path::Path::new(sumstats_path),
-        ) {
+        let twas_data = match gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(
+            sumstats_path,
+        )) {
             Ok(d) => d,
-            Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+            Err(e) => return conversions::error_list(e.to_string()),
         };
 
         let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
@@ -651,18 +730,21 @@ fn commonfactor_gwas_rust(
             Some(&cb),
         );
 
-        return conversions::twas_results_to_json(&results, &twas_data.genes);
+        return conversions::twas_results_to_list(&results, &twas_data.genes);
     }
 
     let merged = match gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(
         sumstats_path,
     )) {
         Ok(m) => m,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     // Filter out SNPs with zero MAF (var_snp=0 causes singular matrices)
-    let valid_idx: Vec<usize> = merged.snps.iter().enumerate()
+    let valid_idx: Vec<usize> = merged
+        .snps
+        .iter()
+        .enumerate()
         .filter(|(_, s)| {
             let v = 2.0 * s.maf * (1.0 - s.maf);
             v > 1e-10
@@ -671,13 +753,14 @@ fn commonfactor_gwas_rust(
         .collect();
 
     if valid_idx.is_empty() {
-        return "{\"error\": \"no SNPs with valid MAF (all MAF=0)\"}".to_string();
+        return conversions::error_list("no SNPs with valid MAF (all MAF=0)");
     }
 
     let filtered_snps: Vec<_> = valid_idx.iter().map(|&i| &merged.snps[i]).collect();
     let beta_snp: Vec<&[f64]> = filtered_snps.iter().map(|s| s.beta.as_slice()).collect();
     let se_snp: Vec<&[f64]> = filtered_snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = filtered_snps.iter()
+    let var_snp: Vec<f64> = filtered_snps
+        .iter()
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
 
@@ -699,13 +782,13 @@ fn commonfactor_gwas_rust(
         Some(&cb),
     );
 
-    conversions::snp_results_to_json(&results, &valid_merged_snps)
+    conversions::snp_results_to_list(&results, &valid_merged_snps)
 }
 
 /// Run user-specified GWAS.
 #[extendr]
 fn user_gwas_rust(
-    covstruc_json: &str,
+    covstruc: List,
     sumstats_path: &str,
     model: &str,
     estimation: &str,
@@ -718,16 +801,17 @@ fn user_gwas_rust(
     q_snp: bool,
     twas: bool,
     num_threads: Rint,
-) -> String {
+) -> List {
     let nt = rint_to_num_threads(num_threads);
 
-    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
-        Some(r) => r,
-        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    let gc_mode: gsem::gwas::gc_correction::GcMode =
-        gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc
+        .parse()
+        .unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
 
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);
@@ -740,11 +824,11 @@ fn user_gwas_rust(
 
     // TWAS mode: read gene-level data instead of SNP-level
     if twas {
-        let twas_data = match gsem::io::twas_reader::read_twas_sumstats(
-            std::path::Path::new(sumstats_path),
-        ) {
+        let twas_data = match gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(
+            sumstats_path,
+        )) {
             Ok(d) => d,
-            Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+            Err(e) => return conversions::error_list(e.to_string()),
         };
 
         let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
@@ -755,7 +839,7 @@ fn user_gwas_rust(
         let twas_model_str = model.replace("SNP", "Gene");
         let twas_pt = match gsem_sem::syntax::parse_model(&twas_model_str, std_lv) {
             Ok(pt) => pt,
-            Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+            Err(e) => return conversions::error_list(format!("model parse error: {e}")),
         };
 
         let config = gsem::gwas::user_gwas::UserGwasConfig {
@@ -789,7 +873,7 @@ fn user_gwas_rust(
             filter_results_by_sub(&mut results, sub);
         }
 
-        return conversions::twas_results_to_json(&results, &twas_data.genes);
+        return conversions::twas_results_to_list(&results, &twas_data.genes);
     }
 
     // Standard SNP mode
@@ -797,7 +881,7 @@ fn user_gwas_rust(
         sumstats_path,
     )) {
         Ok(m) => m,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
@@ -810,7 +894,7 @@ fn user_gwas_rust(
 
     let snp_pt = match gsem_sem::syntax::parse_model(model, std_lv) {
         Ok(pt) => pt,
-        Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+        Err(e) => return conversions::error_list(format!("model parse error: {e}")),
     };
     let config = gsem::gwas::user_gwas::UserGwasConfig {
         model: snp_pt,
@@ -843,7 +927,7 @@ fn user_gwas_rust(
         filter_results_by_sub(&mut results, sub);
     }
 
-    conversions::snp_results_to_json(&results, &merged.snps)
+    conversions::snp_results_to_list(&results, &merged.snps)
 }
 
 fn filter_results_by_sub(results: &mut [gsem::gwas::user_gwas::SnpResult], sub: &str) {
@@ -865,22 +949,15 @@ fn filter_results_by_sub(results: &mut [gsem::gwas::user_gwas::SnpResult], sub: 
 /// Parallel analysis to determine number of factors.
 #[extendr]
 fn pa_ldsc_rust(
-    s_json: &str,
-    v_json: &str,
+    s: RMatrix<f64>,
+    v: RMatrix<f64>,
     n_sim: i32,
     percentile: Rfloat,
     diag_only: bool,
     num_threads: Rint,
-) -> String {
-    let s_mat = match conversions::json_to_mat(s_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
-    };
-
-    let v_mat = match conversions::json_to_mat(v_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse V matrix JSON\"}".to_string(),
-    };
+) -> List {
+    let s_mat = conversions::rmatrix_to_mat(&s);
+    let v_mat = conversions::rmatrix_to_mat(&v);
 
     let p = if percentile.is_na() || percentile.inner().is_nan() {
         0.95
@@ -901,17 +978,10 @@ fn pa_ldsc_rust(
         Some(&cb),
     );
 
-    let obs: Vec<String> = result.observed.iter().map(|v| format!("{v:.6}")).collect();
-    let sim: Vec<String> = result
-        .simulated_95
-        .iter()
-        .map(|v| format!("{v:.6}"))
-        .collect();
-    format!(
-        "{{\"observed\":[{}],\"simulated_95\":[{}],\"n_factors\":{}}}",
-        obs.join(","),
-        sim.join(","),
-        result.n_factors
+    list!(
+        observed = result.observed,
+        simulated_95 = result.simulated_95,
+        n_factors = result.n_factors as i32
     )
 }
 
@@ -931,22 +1001,24 @@ fn write_model_rust(
     let loadings = faer::Mat::from_fn(n_rows as usize, n_cols as usize, |i, j| {
         loadings_flat[i * n_cols as usize + j]
     });
-    gsem_sem::write_model::write_model(&loadings, &names, cutoff, fix_resid, bifactor, mustload, common)
+    gsem_sem::write_model::write_model(
+        &loadings, &names, cutoff, fix_resid, bifactor, mustload, common,
+    )
 }
 
 /// Compute model-implied genetic correlation matrix.
 #[extendr]
 fn rgmodel_rust(
-    covstruc_json: &str,
+    covstruc: List,
     estimation: &str,
     model: &str,
     std_lv: bool,
     sub: &str,
-) -> String {
+) -> List {
     ensure_logger();
-    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
-        Some(r) => r,
-        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let model_opt = if model.is_empty() { None } else { Some(model) };
@@ -955,47 +1027,41 @@ fn rgmodel_rust(
         // Parse sub as comma-separated phenotype names, map to indices
         let k = ldsc_result.s.nrows();
         let all_names: Vec<String> = (0..k).map(|i| format!("V{}", i + 1)).collect();
-        let sub_names: Vec<&str> = sub.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-        let sub_indices: Vec<usize> = sub_names.iter()
+        let sub_names: Vec<&str> = sub
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let sub_indices: Vec<usize> = sub_names
+            .iter()
             .filter_map(|name| all_names.iter().position(|n| n == name))
             .collect();
         let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
         gsem_sem::rgmodel::run_rgmodel_sub(
-            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv, &sub_indices,
+            &ldsc_result.s,
+            &ldsc_result.v,
+            est_method,
+            model_opt,
+            std_lv,
+            &sub_indices,
         )
     } else {
         let est_method = gsem_sem::EstimationMethod::from_str_lossy(estimation);
         gsem_sem::rgmodel::run_rgmodel_with_model(
-            &ldsc_result.s, &ldsc_result.v, est_method, model_opt, std_lv,
+            &ldsc_result.s,
+            &ldsc_result.v,
+            est_method,
+            model_opt,
+            std_lv,
         )
     };
 
     match result {
-        Ok(result) => {
-            let k = result.r.nrows();
-            let r_rows: Vec<String> = (0..k)
-                .map(|i| {
-                    let row: Vec<String> =
-                        (0..k).map(|j| format!("{:.6}", result.r[(i, j)])).collect();
-                    format!("[{}]", row.join(","))
-                })
-                .collect();
-            let kstar = k * (k + 1) / 2;
-            let v_rows: Vec<String> = (0..kstar)
-                .map(|i| {
-                    let row: Vec<String> = (0..kstar)
-                        .map(|j| format!("{:.6}", result.v_r[(i, j)]))
-                        .collect();
-                    format!("[{}]", row.join(","))
-                })
-                .collect();
-            format!(
-                "{{\"R\":[{}],\"V_R\":[{}]}}",
-                r_rows.join(","),
-                v_rows.join(",")
-            )
-        }
-        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+        Ok(result) => list!(
+            R = conversions::mat_to_rmatrix(&result.r),
+            V_R = conversions::mat_to_rmatrix(&result.v_r)
+        ),
+        Err(e) => conversions::error_list(e.to_string()),
     }
 }
 
@@ -1008,7 +1074,7 @@ fn hdl_rust(
     ld_path: &str,
     n_ref: f64,
     method: &str,
-) -> String {
+) -> List {
     ensure_logger();
     use gsem_ldsc::hdl::{HdlConfig, HdlMethod, HdlTraitData};
 
@@ -1018,7 +1084,7 @@ fn hdl_rust(
     // Read trait files
     let trait_data: Vec<HdlTraitData> = match gsem::io::gwas_reader::load_trait_data(&trait_files) {
         Ok(d) => d.into_iter().map(HdlTraitData::from).collect(),
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let hdl_method = match method.to_lowercase().as_str() {
@@ -1035,15 +1101,15 @@ fn hdl_rust(
     let ld_dir = std::path::Path::new(ld_path);
     let ld_pieces = match gsem::io::hdl_reader::load_hdl_pieces(ld_dir) {
         Ok(p) => p,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     match gsem_ldsc::hdl::hdl(&trait_data, &sp, &pp, &ld_pieces, &config) {
         Ok(result) => {
             let ldsc_compat = result.to_ldsc_result();
-            conversions::ldsc_result_to_json(&ldsc_compat)
+            conversions::ldsc_result_to_list(&ldsc_compat)
         }
-        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => conversions::error_list(e.to_string()),
     }
 }
 
@@ -1058,7 +1124,7 @@ fn s_ldsc_rust(
     frq_dir: &str,
     n_blocks: i32,
     exclude_cont: bool,
-) -> String {
+) -> List {
     ensure_logger();
     let sp = rfloat_to_options(&sample_prev);
     let pp = rfloat_to_options(&pop_prev);
@@ -1066,7 +1132,7 @@ fn s_ldsc_rust(
     // Read trait files
     let trait_data = match gsem::io::gwas_reader::load_trait_data(&trait_files) {
         Ok(d) => d,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     let ld = std::path::Path::new(ld_dir);
@@ -1074,9 +1140,10 @@ fn s_ldsc_rust(
     let chromosomes: Vec<usize> = (1..=22).collect();
 
     // Read annotation LD scores
-    let mut annot_data = match gsem_ldsc::annot_reader::read_annot_ld_scores(ld, wld, &chromosomes) {
+    let mut annot_data = match gsem_ldsc::annot_reader::read_annot_ld_scores(ld, wld, &chromosomes)
+    {
         Ok(d) => d,
-        Err(e) => return format!("{{\"error\": \"{e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
     // Filter by frq files (MAF 0.05–0.95) if frq_dir is provided
@@ -1104,16 +1171,21 @@ fn s_ldsc_rust(
                 }
             }
         }
-        let kept_indices: Vec<usize> = keep.iter().enumerate()
-            .filter(|&(_, &k)| k).map(|(i, _)| i).collect();
+        let kept_indices: Vec<usize> = keep
+            .iter()
+            .enumerate()
+            .filter(|&(_, &k)| k)
+            .map(|(i, _)| i)
+            .collect();
         if kept_indices.len() < n_annot {
             let new_annot_ld = faer::Mat::from_fn(n_snps, kept_indices.len(), |i, j| {
                 annot_data.annot_ld[(i, kept_indices[j])]
             });
-            let new_names: Vec<String> = kept_indices.iter()
-                .map(|&i| annot_data.annotation_names[i].clone()).collect();
-            let new_m: Vec<f64> = kept_indices.iter()
-                .map(|&i| annot_data.m_annot[i]).collect();
+            let new_names: Vec<String> = kept_indices
+                .iter()
+                .map(|&i| annot_data.annotation_names[i].clone())
+                .collect();
+            let new_m: Vec<f64> = kept_indices.iter().map(|&i| annot_data.m_annot[i]).collect();
             annot_data.annot_ld = new_annot_ld;
             annot_data.annotation_names = new_names;
             annot_data.m_annot = new_m;
@@ -1139,165 +1211,149 @@ fn s_ldsc_rust(
         Some(&annot_data.chr),
         Some(&annot_data.bp),
     ) {
-        Ok(result) => match result.to_json_string() {
-            Ok(json) => json,
-            Err(e) => format!("{{\"error\": \"{e}\"}}"),
-        },
-        Err(e) => format!("{{\"error\": \"{e}\"}}"),
+        Ok(result) => {
+            let s_annot_list = List::from_values(
+                result.s_annot.iter().map(|m| conversions::mat_to_rmatrix(m)),
+            );
+            let v_annot_list = List::from_values(
+                result.v_annot.iter().map(|m| conversions::mat_to_rmatrix(m)),
+            );
+            list!(
+                annotations = result.annotations,
+                m_annot = result.m_annot,
+                m_total = result.m_total,
+                prop = result.prop,
+                I = conversions::mat_to_rmatrix(&result.i_mat),
+                S_annot = s_annot_list,
+                V_annot = v_annot_list
+            )
+        }
+        Err(e) => conversions::error_list(e.to_string()),
     }
 }
 
 /// Enrichment analysis using stratified LDSC results.
 #[extendr]
 fn enrich_rust(
-    s_baseline_json: &str,
-    s_annot_json: &str,
-    v_annot_json: &str,
+    s_baseline: RMatrix<f64>,
+    s_annot: List,
+    v_annot: List,
     annotation_names: Vec<String>,
     m_annot: Vec<f64>,
     m_total: f64,
-) -> String {
+) -> List {
     ensure_logger();
-    let s_baseline = match conversions::json_to_mat(s_baseline_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse S_baseline JSON\"}".to_string(),
+    let s_baseline_mat = conversions::rmatrix_to_mat(&s_baseline);
+
+    let parse_list_of_matrices = |list: &List, label: &str| -> Result<Vec<faer::Mat<f64>>> {
+        list.values()
+            .enumerate()
+            .map(|(i, obj)| {
+                conversions::robj_to_mat(&obj)
+                    .map_err(|e| Error::Other(format!("{label}[{}]: {e}", i + 1)))
+            })
+            .collect()
     };
 
-    // Parse arrays of matrices from JSON: [[mat1_rows], [mat2_rows], ...]
-    let s_annot_outer: Vec<Vec<Vec<f64>>> = match serde_json::from_str(s_annot_json) {
+    let s_annot_mats = match parse_list_of_matrices(&s_annot, "S_annot") {
         Ok(v) => v,
-        Err(e) => return format!("{{\"error\": \"failed to parse S_annot JSON: {e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
-    let s_annot: Vec<faer::Mat<f64>> = s_annot_outer
-        .iter()
-        .map(|rows| {
-            let nr = rows.len();
-            let nc = if nr > 0 { rows[0].len() } else { 0 };
-            faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
-        })
-        .collect();
-
-    let v_annot_outer: Vec<Vec<Vec<f64>>> = match serde_json::from_str(v_annot_json) {
+    let v_annot_mats = match parse_list_of_matrices(&v_annot, "V_annot") {
         Ok(v) => v,
-        Err(e) => return format!("{{\"error\": \"failed to parse V_annot JSON: {e}\"}}"),
+        Err(e) => return conversions::error_list(e.to_string()),
     };
-    let v_annot: Vec<faer::Mat<f64>> = v_annot_outer
-        .iter()
-        .map(|rows| {
-            let nr = rows.len();
-            let nc = if nr > 0 { rows[0].len() } else { 0 };
-            faer::Mat::from_fn(nr, nc, |i, j| rows[i][j])
-        })
-        .collect();
 
     let result = gsem::stats::enrich::enrichment_test(
-        &s_baseline,
-        &s_annot,
-        &v_annot,
+        &s_baseline_mat,
+        &s_annot_mats,
+        &v_annot_mats,
         &annotation_names,
         &m_annot,
         m_total,
     );
 
-    let entries: Vec<String> = result
-        .annotations
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            format!(
-                "{{\"annotation\":\"{}\",\"enrichment\":{:.6},\"se\":{:.6},\"p\":{:.6e}}}",
-                name, result.enrichment[i], result.se[i], result.p[i]
-            )
-        })
-        .collect();
-    format!("[{}]", entries.join(","))
+    list!(
+        annotation = result.annotations,
+        enrichment = result.enrichment,
+        se = result.se,
+        p = result.p
+    )
 }
 
 /// Simulate GWAS summary statistics.
+///
+/// Returns an `RMatrix<f64>` of simulated Z-scores with shape `k × n_snps`.
 #[extendr]
 fn sim_ldsc_rust(
-    s_json: &str,
+    s: RMatrix<f64>,
     n_per_trait: Vec<f64>,
     ld_scores: Vec<f64>,
     m: f64,
-    int_json: &str,
-    r_pheno_json: &str,
+    int_mat: Nullable<RMatrix<f64>>,
+    r_pheno: Nullable<RMatrix<f64>>,
     n_overlap: f64,
-) -> String {
+) -> Robj {
     ensure_logger();
-    let s_mat = match conversions::json_to_mat(s_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse S matrix JSON\"}".to_string(),
-    };
+    let s_mat = conversions::rmatrix_to_mat(&s);
 
-    let intercepts = if int_json.is_empty() || int_json == "null" {
-        None
-    } else {
-        conversions::json_to_mat(int_json)
+    let intercepts = match int_mat {
+        Nullable::NotNull(m) => Some(conversions::rmatrix_to_mat(&m)),
+        Nullable::Null => None,
     };
-
-    let r_pheno = if r_pheno_json.is_empty() || r_pheno_json == "null" {
-        None
-    } else {
-        conversions::json_to_mat(r_pheno_json)
+    let r_pheno_mat = match r_pheno {
+        Nullable::NotNull(m) => Some(conversions::rmatrix_to_mat(&m)),
+        Nullable::Null => None,
     };
 
     let config = gsem::stats::simulation::SimConfig {
         intercepts,
-        r_pheno,
+        r_pheno: r_pheno_mat,
         n_overlap,
     };
 
-    let result = gsem::stats::simulation::simulate_sumstats(
-        &s_mat,
-        &n_per_trait,
-        &ld_scores,
-        m,
-        &config,
-    );
+    let result =
+        gsem::stats::simulation::simulate_sumstats(&s_mat, &n_per_trait, &ld_scores, m, &config);
 
-    // result is Vec<Vec<f64>> (k traits x n_snps)
-    let trait_json: Vec<String> = result
-        .iter()
-        .map(|trait_z| {
-            let vals: Vec<String> = trait_z.iter().map(|v| format!("{v:.6}")).collect();
-            format!("[{}]", vals.join(","))
-        })
-        .collect();
-    format!("[{}]", trait_json.join(","))
+    // Result is Vec<Vec<f64>> with shape (k × n_snps). Pack it into an
+    // `RMatrix<f64>` directly rather than a nested list.
+    let k = result.len();
+    let n_snps = if k == 0 { 0 } else { result[0].len() };
+    conversions::mat_to_rmatrix(&faer::Mat::from_fn(k, n_snps, |i, j| result[i][j])).into_robj()
 }
 
 /// Run multi-SNP analysis.
 #[extendr]
 fn multi_snp_rust(
-    covstruc_json: &str,
+    covstruc: List,
     model: &str,
     estimation: &str,
-    beta_json: &str,
-    se_json: &str,
+    beta: RMatrix<f64>,
+    se: RMatrix<f64>,
     var_snp: Vec<f64>,
-    ld_matrix_json: &str,
+    ld_matrix: RMatrix<f64>,
     snp_names: Vec<String>,
     snp_se: Rfloat,
-) -> String {
+) -> List {
     ensure_logger();
-    let ldsc_result = match conversions::json_to_ldsc_result(covstruc_json) {
-        Some(r) => r,
-        None => return "{\"error\": \"failed to parse covstruc JSON\"}".to_string(),
+    let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    let beta: Vec<Vec<f64>> = match serde_json::from_str(beta_json) {
-        Ok(v) => v,
-        Err(e) => return format!("{{\"error\": \"failed to parse beta JSON: {e}\"}}"),
+    // beta / se are passed as n_snps × k matrices. Unpack column-major into
+    // the `Vec<Vec<f64>>` layout the engine expects.
+    let rmatrix_to_rows = |r: &RMatrix<f64>| -> Vec<Vec<f64>> {
+        let nrows = r.nrows();
+        let ncols = r.ncols();
+        let data = r.data();
+        (0..nrows)
+            .map(|i| (0..ncols).map(|j| data[i + j * nrows]).collect())
+            .collect()
     };
-    let se: Vec<Vec<f64>> = match serde_json::from_str(se_json) {
-        Ok(v) => v,
-        Err(e) => return format!("{{\"error\": \"failed to parse se JSON: {e}\"}}"),
-    };
-    let ld_matrix = match conversions::json_to_mat(ld_matrix_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse LD matrix JSON\"}".to_string(),
-    };
+    let beta_rows = rmatrix_to_rows(&beta);
+    let se_rows = rmatrix_to_rows(&se);
+    let ld_mat = conversions::rmatrix_to_mat(&ld_matrix);
 
     let snp_var_se = if snp_se.is_na() || snp_se.inner().is_nan() {
         None
@@ -1307,7 +1363,7 @@ fn multi_snp_rust(
 
     let pt = match gsem_sem::syntax::parse_model(model, false) {
         Ok(pt) => pt,
-        Err(e) => return format!("{{\"error\": \"model parse error: {e}\"}}"),
+        Err(e) => return conversions::error_list(format!("model parse error: {e}")),
     };
     let config = gsem::gwas::multi_snp::MultiSnpConfig {
         model: pt,
@@ -1320,76 +1376,51 @@ fn multi_snp_rust(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
-        &beta,
-        &se,
+        &beta_rows,
+        &se_rows,
         &var_snp,
-        &ld_matrix,
+        &ld_mat,
         &snp_names,
     );
 
-    let params: Vec<String> = result
-        .params
-        .iter()
-        .map(|p| {
-            format!(
-                "{{\"lhs\":\"{}\",\"op\":\"{}\",\"rhs\":\"{}\",\"est\":{},\"se\":{},\"z\":{},\"p\":{}}}",
-                p.lhs, p.op, p.rhs,
-                conversions::json_f64(p.est), conversions::json_f64(p.se),
-                conversions::json_f64_4(p.z_stat), conversions::json_f64_e(p.p_value)
-            )
-        })
-        .collect();
-    format!(
-        "{{\"converged\":{},\"chisq\":{},\"df\":{},\"params\":[{}]}}",
-        result.converged, conversions::json_f64_4(result.chisq), result.chisq_df, params.join(",")
+    list!(
+        converged = result.converged,
+        chisq = result.chisq,
+        df = result.chisq_df as i32,
+        params = conversions::param_results_to_list(&result.params)
     )
 }
 
 /// Run multi-gene analysis (reuses multi-SNP engine).
 #[extendr]
 fn multi_gene_rust(
-    covstruc_json: &str,
+    covstruc: List,
     model: &str,
     estimation: &str,
-    beta_json: &str,
-    se_json: &str,
+    beta: RMatrix<f64>,
+    se: RMatrix<f64>,
     var_gene: Vec<f64>,
-    ld_matrix_json: &str,
+    ld_matrix: RMatrix<f64>,
     gene_names: Vec<String>,
     snp_se: Rfloat,
-) -> String {
+) -> List {
     ensure_logger();
-    // multiGene is the same as multiSNP but with gene-level data
     multi_snp_rust(
-        covstruc_json,
-        model,
-        estimation,
-        beta_json,
-        se_json,
-        var_gene,
-        ld_matrix_json,
-        gene_names,
-        snp_se,
+        covstruc, model, estimation, beta, se, var_gene, ld_matrix, gene_names, snp_se,
     )
 }
 
 /// Run Generalized Least Squares regression.
 #[extendr]
 fn summary_gls_rust(
-    x_json: &str,
+    x: RMatrix<f64>,
     y: Vec<f64>,
-    v_json: &str,
+    v: RMatrix<f64>,
     intercept: bool,
-) -> String {
+) -> List {
     ensure_logger();
-    let mut x_mat = match conversions::json_to_mat(x_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse X matrix JSON\"}".to_string(),
-    };
-    let v_mat = match conversions::json_to_mat(v_json) {
-        Some(m) => m,
-        None => return "{\"error\": \"failed to parse V matrix JSON\"}".to_string(),
-    };
+    let mut x_mat = conversions::rmatrix_to_mat(&x);
+    let v_mat = conversions::rmatrix_to_mat(&v);
 
     // Add intercept column if requested
     if intercept {
@@ -1406,21 +1437,13 @@ fn summary_gls_rust(
     }
 
     match gsem::stats::gls::summary_gls(&x_mat, &y, &v_mat) {
-        Some(result) => {
-            let entries: Vec<String> = result
-                .beta
-                .iter()
-                .enumerate()
-                .map(|(i, b)| {
-                    format!(
-                        "{{\"beta\":{:.6},\"se\":{:.6},\"z\":{:.4},\"p\":{:.6e}}}",
-                        b, result.se[i], result.z[i], result.p[i]
-                    )
-                })
-                .collect();
-            format!("[{}]", entries.join(","))
-        }
-        None => "{\"error\": \"GLS failed (singular matrix?)\"}".to_string(),
+        Some(result) => list!(
+            beta = result.beta,
+            se = result.se,
+            z = result.z,
+            p = result.p
+        ),
+        None => conversions::error_list("GLS failed (singular matrix?)"),
     }
 }
 

@@ -3,7 +3,7 @@
 #' Fits a common factor model and computes the model-implied genetic
 #' correlation matrix R and its sampling covariance V_R.
 #'
-#' @param LDSCoutput LDSC result (list or JSON string)
+#' @param LDSCoutput LDSC result (named list with S, V, I, N, m components)
 #' @param model lavaan-style model syntax (optional, uses common factor if missing)
 #' @param std.lv Standardize latent variables (default TRUE)
 #' @param estimation Estimation method: TRUE means "DWLS", "ML" for ML
@@ -30,23 +30,14 @@ rgmodel <- function(LDSCoutput, model, std.lv=TRUE, estimation=TRUE, sub=NULL, .
   # Handle model: if missing, default to empty string (Rust will use common factor)
   if (missing(model)) model <- ""
 
-  if (is.list(LDSCoutput)) {
-    covstruc_json <- jsonlite::toJSON(list(
-      s = LDSCoutput$S, v = LDSCoutput$V, i_mat = LDSCoutput$I,
-      n_vec = LDSCoutput$N, m = LDSCoutput$m
-    ), auto_unbox = TRUE)
-  } else {
-    covstruc_json <- LDSCoutput
-  }
-
-  json <- .Call("wrap__rgmodel_rust",
-    as.character(covstruc_json), as.character(est_str),
+  result <- .Call("wrap__rgmodel_rust",
+    .covstruc_as_list(LDSCoutput), as.character(est_str),
     as.character(model), as.logical(std.lv), as.character(sub_str))
-  result <- jsonlite::fromJSON(json)
+
   if (!is.null(result$error)) stop("gsemr::rgmodel error: ", result$error)
 
   list(
-    R = as.matrix(result$R),
-    V_R = as.matrix(result$V_R)
+    R = result$R,
+    V_R = result$V_R
   )
 }

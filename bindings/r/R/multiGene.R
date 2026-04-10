@@ -3,7 +3,7 @@
 #' Fits a model with multiple genes simultaneously, accounting for LD between them.
 #' Port of R GenomicSEM's \code{multiGene()}. Reuses the multi-SNP engine.
 #'
-#' @param covstruc LDSC result (list with S, V, I components, or JSON string)
+#' @param covstruc LDSC result (named list with S, V, I, N, m components)
 #' @param Genes Data frame of gene summary statistics (with beta, se, var columns per gene)
 #' @param LD LD correlation matrix between genes
 #' @param GeneSE Gene SE override (default "F" = auto, numeric = override)
@@ -11,18 +11,6 @@
 #' @return A list with converged, chisq, df, and params
 #' @export
 multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
-
-  if (is.list(covstruc) && !is.character(covstruc)) {
-    covstruc_json <- jsonlite::toJSON(list(
-      s = covstruc$S,
-      v = covstruc$V,
-      i_mat = covstruc$I,
-      n_vec = covstruc$N,
-      m = covstruc$m
-    ), auto_unbox = TRUE)
-  } else {
-    covstruc_json <- covstruc
-  }
 
   k <- nrow(as.matrix(covstruc$S))
   n_genes <- nrow(as.matrix(LD))
@@ -32,9 +20,10 @@ multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
     paste0("Gene", seq_len(n_genes))
   }
 
-  beta_mat <- as.matrix(Genes$beta)
-  se_mat <- as.matrix(Genes$se)
+  beta_mat <- matrix(as.numeric(as.matrix(Genes$beta)), nrow = n_genes)
+  se_mat <- matrix(as.numeric(as.matrix(Genes$se)), nrow = n_genes)
   var_gene <- as.numeric(Genes$var)
+  ld_mat <- matrix(as.numeric(as.matrix(LD)), nrow = nrow(as.matrix(LD)))
 
   model <- paste0("F1 =~ ", paste0("NA*V", seq_len(k), collapse = " + "),
                    "\n", paste0("F1 ~ ", gene_names, collapse = "\n"),
@@ -48,35 +37,30 @@ multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
       beta_mat <- beta_mat[keep, , drop = FALSE]
       se_mat <- se_mat[keep, , drop = FALSE]
       var_gene <- var_gene[keep]
-      LD <- LD[keep, keep, drop = FALSE]
+      ld_mat <- ld_mat[keep, keep, drop = FALSE]
     }
   }
-
-  beta_json <- jsonlite::toJSON(beta_mat, digits = 15)
-  se_json <- jsonlite::toJSON(se_mat, digits = 15)
-  ld_json <- jsonlite::toJSON(as.matrix(LD), digits = 15)
 
   # Convert GeneSE: "F" means auto (pass NaN), numeric means override
   gene_se_val <- if (identical(GeneSE, "F")) NaN else as.double(GeneSE)
 
-  json <- .Call("wrap__multi_gene_rust",
-    as.character(covstruc_json),
+  result <- .Call("wrap__multi_gene_rust",
+    .covstruc_as_list(covstruc),
     as.character(model),
     "DWLS",
-    as.character(beta_json),
-    as.character(se_json),
+    beta_mat,
+    se_mat,
     as.numeric(var_gene),
-    as.character(ld_json),
+    ld_mat,
     as.character(gene_names),
     gene_se_val
   )
 
-  result <- jsonlite::fromJSON(json)
   if (!is.null(result$error)) stop("gsemr::multiGene error: ", result$error)
   list(
     converged = result$converged,
     chisq = result$chisq,
     df = result$df,
-    results = as.data.frame(result$params)
+    results = as.data.frame(result$params, stringsAsFactors = FALSE)
   )
 }

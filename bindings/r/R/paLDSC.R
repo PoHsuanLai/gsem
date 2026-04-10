@@ -31,19 +31,21 @@ paLDSC <- function(S=S, V=V, r=NULL, p=NULL, save.pdf=FALSE, diag=FALSE, fa=FALS
   # Default r to 500 if NULL
   if (is.null(r)) r <- 500L
 
-  # Convert S and V matrices to JSON
-  s_json <- jsonlite::toJSON(as.matrix(S), digits = 15)
-  v_json <- jsonlite::toJSON(as.matrix(V), digits = 15)
+  s_mat <- matrix(as.numeric(as.matrix(S)), nrow = nrow(as.matrix(S)))
+  v_mat <- matrix(as.numeric(as.matrix(V)), nrow = nrow(as.matrix(V)))
 
   # Convert p: NULL means default 0.95
   p_val <- if (is.null(p)) NaN else as.double(p)
 
   num_threads <- .resolve_num_threads(parallel, cores)
 
-  json <- .Call("wrap__pa_ldsc_rust",
-    as.character(s_json), as.character(v_json), as.integer(r),
+  result <- .Call("wrap__pa_ldsc_rust",
+    s_mat, v_mat, as.integer(r),
     p_val, as.logical(diag), num_threads)
-  result <- jsonlite::fromJSON(json)
+
+  if (!is.null(result$error)) {
+    stop("gsemr::paLDSC error: ", result$error)
+  }
 
   # Factor analysis mode: delegate to psych::fa() for the actual extraction
   if (!identical(fa, FALSE) || !is.null(fm)) {

@@ -32,9 +32,13 @@ munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.fil
   # Convert N to a single double (NA if NULL)
   n_override <- if (is.null(N)) NaN else as.double(N[1])
 
-  # Convert column.names list to JSON string
+  # Convert column.names list to a simple `{"key":"value",...}` string the
+  # Rust side parses in-place (no jsonlite dependency).
   column_names_json <- if (length(column.names) > 0) {
-    jsonlite::toJSON(column.names, auto_unbox = TRUE)
+    entries <- mapply(function(k, v) {
+      paste0("\"", k, "\":\"", v, "\"")
+    }, names(column.names), column.names, USE.NAMES = FALSE)
+    paste0("{", paste(entries, collapse = ","), "}")
   } else {
     "{}"
   }

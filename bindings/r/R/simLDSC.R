@@ -58,26 +58,29 @@ simLDSC <- function(covmat, N, seed = 1234, ld, rPheno = NULL, int = NULL,
   }
   if (m_total == 0) m_total <- length(ld_scores)
 
-  s_json <- jsonlite::toJSON(s_mat, digits = 15)
+  s_mat_num <- matrix(as.numeric(s_mat), nrow = nrow(s_mat))
 
-  # Convert intercept matrix to JSON
-  int_json <- if (is.null(int)) "null" else jsonlite::toJSON(as.matrix(int), digits = 15)
-
-  # Convert phenotypic correlation matrix to JSON
-  r_pheno_json <- if (is.null(rPheno)) "null" else jsonlite::toJSON(as.matrix(rPheno), digits = 15)
+  int_mat <- if (is.null(int)) {
+    NULL
+  } else {
+    matrix(as.numeric(as.matrix(int)), nrow = nrow(as.matrix(int)))
+  }
+  r_pheno_mat <- if (is.null(rPheno)) {
+    NULL
+  } else {
+    matrix(as.numeric(as.matrix(rPheno)), nrow = nrow(as.matrix(rPheno)))
+  }
 
   # N_overlap: use 0 if rPheno is NULL (no effect without it)
   n_overlap_val <- if (is.null(rPheno)) 0.0 else as.double(N_overlap)
 
-  json <- .Call("wrap__sim_ldsc_rust",
-    as.character(s_json),
+  .Call("wrap__sim_ldsc_rust",
+    s_mat_num,
     as.numeric(n_per_trait),
     as.numeric(ld_scores),
     as.numeric(m_total),
-    as.character(int_json),
-    as.character(r_pheno_json),
+    int_mat,
+    r_pheno_mat,
     n_overlap_val
   )
-
-  jsonlite::fromJSON(json)
 }

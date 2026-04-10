@@ -23,7 +23,7 @@ hdl <- function(traits, sample.prev=NA, population.prev=NA, trait.names=NULL,
     trait.names <- paste0("V", seq_along(traits))
   }
 
-  json <- .Call("wrap__hdl_rust",
+  result <- .Call("wrap__hdl_rust",
     as.character(traits),
     as.double(sample.prev),
     as.double(population.prev),
@@ -32,16 +32,14 @@ hdl <- function(traits, sample.prev=NA, population.prev=NA, trait.names=NULL,
     as.character(method)
   )
 
-  result <- jsonlite::fromJSON(json)
-
   if (!is.null(result$error)) {
     stop("gsemr::hdl error: ", result$error)
   }
 
-  S <- as.matrix(result$s)
+  S <- result$s
   rownames(S) <- colnames(S) <- trait.names
 
-  V <- as.matrix(result$v)
+  V <- result$v
   # V is the sampling covariance matrix of the vectorized S elements;
   # label with trait-pair names for interpretability
   k <- length(trait.names)
@@ -55,7 +53,7 @@ hdl <- function(traits, sample.prev=NA, population.prev=NA, trait.names=NULL,
     rownames(V) <- colnames(V) <- vpairs
   }
 
-  I <- as.matrix(result$i_mat)
+  I <- result$i_mat
   rownames(I) <- colnames(I) <- trait.names
 
   list(
