@@ -4,6 +4,9 @@ results.md
 Rplots.pdf
 benchmark_plots.pdf
 benchmark_results.csv
+benchmark_equivalence.csv
+python_results.csv
+python_artifacts.json
 *.tar.bz2
 *.tar.gz
 *.bz2
