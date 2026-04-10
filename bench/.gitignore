@@ -3,8 +3,14 @@ out_bench/
 results.md
 Rplots.pdf
 benchmark_plots.pdf
+benchmark_plots_serial.pdf
 benchmark_results.csv
+benchmark_results_serial.csv
 benchmark_equivalence.csv
+benchmark_equivalence_serial.csv
+userGWAS_paired.csv
+paLDSC_scree.pdf
+cache/
 python_results.csv
 python_artifacts.json
 *.tar.bz2

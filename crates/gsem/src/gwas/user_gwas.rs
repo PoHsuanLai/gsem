@@ -182,11 +182,18 @@ pub fn run_user_gwas(
                 }
             };
             if baseline_fit.converged {
-                // Fix baseline parameters in the full model
+                // Fix baseline parameters in the full model — but only off-diagonal
+                // rows (lhs != rhs), matching R GenomicSEM's behavior:
+                //     Model1$free[p] <- ifelse(Model1$lhs[p] != Model1$rhs[p], 0, Model1$free[p])
+                // This keeps residual variances (lhs == rhs) free so they are
+                // re-estimated per-SNP.
                 let mut free_idx = 0;
+                let mut n_fixed = 0usize;
                 for row in &baseline_pt.rows {
                     if row.free > 0 {
-                        if let Some(&est) = baseline_fit.params.get(free_idx) {
+                        if row.lhs != row.rhs
+                            && let Some(&est) = baseline_fit.params.get(free_idx)
+                        {
                             // Find matching row in full pt and fix it
                             for full_row in &mut pt.rows {
                                 if full_row.lhs == row.lhs
@@ -196,6 +203,7 @@ pub fn run_user_gwas(
                                 {
                                     full_row.free = 0;
                                     full_row.value = est;
+                                    n_fixed += 1;
                                 }
                             }
                         }
@@ -204,7 +212,7 @@ pub fn run_user_gwas(
                 }
                 log::info!(
                     "fix_measurement: fixed {} baseline params, {} remain free",
-                    free_idx,
+                    n_fixed,
                     pt.rows.iter().filter(|r| r.free > 0).count()
                 );
             } else {
@@ -342,11 +350,12 @@ fn process_single_snp(
         }
     };
 
-    // Compute sandwich SEs.
-    //
-    // When fix_measurement is used, the point estimates come from a model where
-    // measurement params are held fixed. The sandwich SE must use the FULL
-    // model Jacobian (all params free) to match R GenomicSEM's behavior.
+    // Compute sandwich SEs directly on the fit model. This matches R
+    // GenomicSEM's `.userGWAS_main`, which uses
+    //   lavInspect(Model1_Results, "delta")
+    // — the delta matrix only covers currently-free parameters, so when
+    // fix_measurement fixes loadings, those columns are absent from delta
+    // and the bread matrix is computed over the free subset only.
     let w_diag = Mat::from_fn(kstar_full, kstar_full, |i, j| {
         if i == j && v_diag[i] > 1e-30 {
             1.0 / v_diag[i]
@@ -355,74 +364,7 @@ fn process_single_snp(
         }
     });
 
-    // Build a "sandwich model" with every row free (values set to the per-SNP
-    // fit or baseline estimates). The SNP~~SNP variance fixed in `pt_snp` is
-    // re-freed here so the SE is computed against the full Delta R uses.
-    let mut sandwich_pt = pt_snp.clone();
-    let mut sandwich_free_idx = 0usize;
-    let fit_values: Vec<(String, Op, String, f64)> = pt_snp
-        .rows
-        .iter()
-        .filter(|r| r.free > 0)
-        .enumerate()
-        .map(|(i, r)| {
-            (
-                r.lhs.clone(),
-                r.op,
-                r.rhs.clone(),
-                fit.params.get(i).copied().unwrap_or(0.0),
-            )
-        })
-        .collect();
-    for row in sandwich_pt.rows.iter_mut() {
-        // Keep identification constraints fixed: factor variance fixed to 1
-        // (i.e., the `1*F1` in our fixed-variance parameterization).
-        let is_identification = row.free == 0
-            && row.op == Op::Covariance
-            && row.lhs == row.rhs
-            && row.value == 1.0
-            && !obs_names.contains(&row.lhs);
-        if row.free == 0 && !is_identification {
-            sandwich_free_idx += 1;
-            row.free = sandwich_free_idx;
-        } else if row.free > 0 {
-            sandwich_free_idx += 1;
-            row.free = sandwich_free_idx;
-            if let Some(fv) = fit_values
-                .iter()
-                .find(|(l, o, r, _)| *l == row.lhs && *o == row.op && *r == row.rhs)
-            {
-                row.value = fv.3;
-            }
-        }
-    }
-
-    let mut sandwich_model = Model::from_partable(&sandwich_pt, &obs_names);
-    let init_params: Vec<f64> = sandwich_pt
-        .rows
-        .iter()
-        .filter(|r| r.free > 0)
-        .map(|r| r.value)
-        .collect();
-    sandwich_model.set_param_vec(&init_params);
-
-    let (se_full, _ohtt) = sandwich::sandwich_se(&mut sandwich_model, &w_diag, &v_full);
-
-    // Map se_full back to pt_snp's free params (the parameters we actually fit)
-    let sandwich_free_rows: Vec<_> = sandwich_pt.rows.iter().filter(|r| r.free > 0).collect();
-    let orig_free_rows: Vec<_> = pt_snp.rows.iter().filter(|r| r.free > 0).collect();
-    let se: Vec<f64> = orig_free_rows
-        .iter()
-        .map(|orig_row| {
-            sandwich_free_rows
-                .iter()
-                .position(|sr| {
-                    sr.lhs == orig_row.lhs && sr.op == orig_row.op && sr.rhs == orig_row.rhs
-                })
-                .and_then(|i| se_full.get(i).copied())
-                .unwrap_or(f64::NAN)
-        })
-        .collect();
+    let (se, _ohtt) = sandwich::sandwich_se(&mut model, &w_diag, &v_full);
 
     // Build parameter results: only for free parameters of the per-SNP fit
     let free_rows: Vec<_> = pt_snp.rows.iter().filter(|r| r.free > 0).collect();
