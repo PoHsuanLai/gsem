@@ -58,9 +58,7 @@ pub fn scree_plot(points: &[ScreePoint], title: &str, out: &Path) -> Result<()> 
     // Observed line (solid blue)
     chart
         .draw_series(LineSeries::new(
-            points
-                .iter()
-                .map(|p| (p.factor as f64, p.observed)),
+            points.iter().map(|p| (p.factor as f64, p.observed)),
             BLUE.stroke_width(2),
         ))
         .map_err(|e| anyhow::anyhow!("observed line: {e}"))?
@@ -79,9 +77,7 @@ pub fn scree_plot(points: &[ScreePoint], title: &str, out: &Path) -> Result<()> 
     // Simulated 95th percentile line (dashed red)
     chart
         .draw_series(LineSeries::new(
-            points
-                .iter()
-                .map(|p| (p.factor as f64, p.simulated_95)),
+            points.iter().map(|p| (p.factor as f64, p.simulated_95)),
             RED.stroke_width(2),
         ))
         .map_err(|e| anyhow::anyhow!("simulated line: {e}"))?
@@ -97,10 +93,7 @@ pub fn scree_plot(points: &[ScreePoint], title: &str, out: &Path) -> Result<()> 
         .map_err(|e| anyhow::anyhow!("simulated markers: {e}"))?;
 
     // Suggested factor count: first k where observed < simulated
-    if let Some(n_factors) = points
-        .iter()
-        .position(|p| p.observed < p.simulated_95)
-    {
+    if let Some(n_factors) = points.iter().position(|p| p.observed < p.simulated_95) {
         // Use the factor *before* the crossover as the suggested count
         let suggest_x = n_factors as f64 + 0.5;
         if suggest_x >= 0.5 && suggest_x <= x_max {
@@ -156,7 +149,11 @@ pub fn read_scree_tsv(path: &Path) -> Result<Vec<ScreePoint>> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        out.push(ScreePoint { factor, observed, simulated_95 });
+        out.push(ScreePoint {
+            factor,
+            observed,
+            simulated_95,
+        });
     }
     Ok(out)
 }
@@ -168,10 +165,26 @@ mod tests {
     #[test]
     fn test_scree_plot_smoke() {
         let points = vec![
-            ScreePoint { factor: 1, observed: 3.5, simulated_95: 1.2 },
-            ScreePoint { factor: 2, observed: 2.0, simulated_95: 1.1 },
-            ScreePoint { factor: 3, observed: 0.9, simulated_95: 1.0 },
-            ScreePoint { factor: 4, observed: 0.6, simulated_95: 0.95 },
+            ScreePoint {
+                factor: 1,
+                observed: 3.5,
+                simulated_95: 1.2,
+            },
+            ScreePoint {
+                factor: 2,
+                observed: 2.0,
+                simulated_95: 1.1,
+            },
+            ScreePoint {
+                factor: 3,
+                observed: 0.9,
+                simulated_95: 1.0,
+            },
+            ScreePoint {
+                factor: 4,
+                observed: 0.6,
+                simulated_95: 0.95,
+            },
         ];
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().with_extension("svg");

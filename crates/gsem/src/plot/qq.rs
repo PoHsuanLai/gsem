@@ -21,11 +21,7 @@ pub fn qq_plot(p_values: &[f64], title: &str, out: &Path) -> Result<()> {
     root.fill(&WHITE)
         .map_err(|e| anyhow::anyhow!("fill: {e}"))?;
 
-    let x_max = points
-        .iter()
-        .map(|p| p.expected)
-        .fold(0.0f64, f64::max)
-        * 1.05;
+    let x_max = points.iter().map(|p| p.expected).fold(0.0f64, f64::max) * 1.05;
     let y_max = points
         .iter()
         .map(|p| p.observed)

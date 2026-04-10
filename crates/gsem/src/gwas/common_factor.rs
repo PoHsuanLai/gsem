@@ -127,5 +127,14 @@ pub fn run_common_factor_gwas(
         num_threads: cfg.num_threads,
     };
 
-    user_gwas::run_user_gwas(&config, s_ld, v_ld, i_ld, beta_snp, se_snp, var_snp, on_snp_done)
+    user_gwas::run_user_gwas(
+        &config,
+        s_ld,
+        v_ld,
+        i_ld,
+        beta_snp,
+        se_snp,
+        var_snp,
+        on_snp_done,
+    )
 }

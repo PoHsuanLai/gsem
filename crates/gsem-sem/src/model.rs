@@ -59,7 +59,8 @@ impl Model {
         // Detect observed variables used as regression predictors (e.g., F1 ~ SNP).
         // These need phantom latents so we can represent the path in the Beta matrix.
         // Phantom latent gets: Lambda[obs, phantom] = 1 (fixed), Theta[obs,obs] = 0 (fixed).
-        let mut phantom_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut phantom_map: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for row in &pt.rows {
             if row.op == Op::Regression {
                 let rhs_is_lat = lat_names.iter().any(|n| n == &row.rhs);
@@ -316,7 +317,11 @@ mod tests {
         assert_eq!(sigma.nrows(), 2);
         assert!((sigma[(0, 0)] - 1.5).abs() < 1e-10, "got {}", sigma[(0, 0)]);
         assert!((sigma[(0, 1)] - 0.5).abs() < 1e-10, "got {}", sigma[(0, 1)]);
-        assert!((sigma[(1, 1)] - 0.75).abs() < 1e-10, "got {}", sigma[(1, 1)]);
+        assert!(
+            (sigma[(1, 1)] - 0.75).abs() < 1e-10,
+            "got {}",
+            sigma[(1, 1)]
+        );
     }
 
     #[test]

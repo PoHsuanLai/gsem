@@ -187,11 +187,15 @@ fn read_annot_ld_file(path: &Path) -> Result<AnnotLdFileData> {
         );
         let mut row = Vec::with_capacity(n_annot);
         for &(col_idx, ref col_name) in &annot_indices {
-            let raw = flds.get(col_idx).ok_or_else(|| {
-                anyhow::anyhow!("Missing column {} in annotation file", col_name)
-            })?;
+            let raw = flds
+                .get(col_idx)
+                .ok_or_else(|| anyhow::anyhow!("Missing column {} in annotation file", col_name))?;
             let val: f64 = raw.parse().map_err(|_| {
-                anyhow::anyhow!("Non-numeric annotation value '{}' in column {}", raw, col_name)
+                anyhow::anyhow!(
+                    "Non-numeric annotation value '{}' in column {}",
+                    raw,
+                    col_name
+                )
             })?;
             row.push(val);
         }

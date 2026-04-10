@@ -172,10 +172,10 @@ pub fn ldsc(
     // Build a local rayon pool so callers control parallelism per-invocation
     // and concurrent calls don't share global state.
     let mut builder = rayon::ThreadPoolBuilder::new();
-    if let Some(n) = config.num_threads {
-        if n > 0 {
-            builder = builder.num_threads(n);
-        }
+    if let Some(n) = config.num_threads
+        && n > 0
+    {
+        builder = builder.num_threads(n);
     }
     let pool = builder.build().expect("failed to build rayon thread pool");
 

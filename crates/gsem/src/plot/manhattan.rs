@@ -4,7 +4,7 @@ use anyhow::Result;
 use plotters::prelude::*;
 use std::path::Path;
 
-use super::{compute_chrom_layout, ManhattanPoint};
+use super::{ManhattanPoint, compute_chrom_layout};
 
 /// Genome-wide significance threshold (5e-8) on -log10 scale.
 pub const GWS_NEG_LOG10: f64 = 7.30103;
@@ -87,7 +87,11 @@ pub fn manhattan_plot(
         .draw_series(points_ref.iter().map(|p| {
             let offset = chrom_offsets.get(&p.chr).copied().unwrap_or(0.0);
             let x = offset + p.bp as f64;
-            let color = if p.chr % 2 == 0 { color_even } else { color_odd };
+            let color = if p.chr % 2 == 0 {
+                color_even
+            } else {
+                color_odd
+            };
             Circle::new((x, p.neg_log10_p), 1, color.filled())
         }))
         .map_err(|e| anyhow::anyhow!("points: {e}"))?;
@@ -95,7 +99,10 @@ pub fn manhattan_plot(
     // Suggestive line (1e-5)
     chart
         .draw_series(std::iter::once(PathElement::new(
-            vec![(0.0, SUGGESTIVE_NEG_LOG10), (layout.total_x, SUGGESTIVE_NEG_LOG10)],
+            vec![
+                (0.0, SUGGESTIVE_NEG_LOG10),
+                (layout.total_x, SUGGESTIVE_NEG_LOG10),
+            ],
             BLUE.mix(0.6).stroke_width(1),
         )))
         .map_err(|e| anyhow::anyhow!("suggestive: {e}"))?;
@@ -134,10 +141,8 @@ pub fn manhattan_plot(
 /// Thin points to `cap`, keeping all with -log10(p) >= 4 (i.e. p <= 1e-4)
 /// and uniformly sampling the rest.
 fn thin_points(points: &[ManhattanPoint], cap: usize) -> Vec<ManhattanPoint> {
-    let (significant, rest): (Vec<_>, Vec<_>) = points
-        .iter()
-        .copied()
-        .partition(|p| p.neg_log10_p >= 4.0);
+    let (significant, rest): (Vec<_>, Vec<_>) =
+        points.iter().copied().partition(|p| p.neg_log10_p >= 4.0);
     if significant.len() >= cap {
         return significant;
     }
@@ -167,11 +172,19 @@ mod tests {
         let mut points = Vec::new();
         // 10 significant points (p < 1e-4)
         for i in 0..10 {
-            points.push(ManhattanPoint { chr: 1, bp: i * 1000, neg_log10_p: 8.0 });
+            points.push(ManhattanPoint {
+                chr: 1,
+                bp: i * 1000,
+                neg_log10_p: 8.0,
+            });
         }
         // 100 null points
         for i in 0..100 {
-            points.push(ManhattanPoint { chr: 1, bp: 100000 + i * 1000, neg_log10_p: 0.5 });
+            points.push(ManhattanPoint {
+                chr: 1,
+                bp: 100000 + i * 1000,
+                neg_log10_p: 0.5,
+            });
         }
         let thinned = thin_points(&points, 30);
         assert!(thinned.len() <= 30);
@@ -193,7 +206,11 @@ mod tests {
             }
         }
         // Add a GW-significant hit
-        points.push(ManhattanPoint { chr: 2, bp: 15_000_000, neg_log10_p: 9.0 });
+        points.push(ManhattanPoint {
+            chr: 2,
+            bp: 15_000_000,
+            neg_log10_p: 9.0,
+        });
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().with_extension("svg");

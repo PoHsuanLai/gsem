@@ -333,7 +333,10 @@ fn test_sem_estimates_match_r() {
             assert!(
                 diff < 0.05,
                 "SEM param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
-                row.lhs, row.op, row.rhs, r_est.3
+                row.lhs,
+                row.op,
+                row.rhs,
+                r_est.3
             );
         } else {
             panic!(
@@ -348,12 +351,19 @@ fn test_sem_estimates_match_r() {
     let kstar = 3 * 4 / 2;
     let v = json_to_mat(&fix["v"]);
     let w = faer::Mat::from_fn(kstar, kstar, |i, j| {
-        if i == j && v_diag[i] > 1e-30 { 1.0 / v_diag[i] } else { 0.0 }
+        if i == j && v_diag[i] > 1e-30 {
+            1.0 / v_diag[i]
+        } else {
+            0.0
+        }
     });
     let (se_vec, _ohtt) = gsem_sem::sandwich::sandwich_se(&mut model, &w, &v);
     assert_eq!(
-        se_vec.len(), r_sandwich_se.len(),
-        "Sandwich SE count mismatch: Rust={} R={}", se_vec.len(), r_sandwich_se.len()
+        se_vec.len(),
+        r_sandwich_se.len(),
+        "Sandwich SE count mismatch: Rust={} R={}",
+        se_vec.len(),
+        r_sandwich_se.len()
     );
     for (i, (&rust_se, &r_se)) in se_vec.iter().zip(r_sandwich_se.iter()).enumerate() {
         let diff = (rust_se - r_se).abs();
@@ -378,12 +388,14 @@ fn test_sem_estimates_match_r() {
     let chisq_diff = (fit_stats.chisq - r_chisq).abs();
     assert!(
         chisq_diff < 1e-4,
-        "1-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}", fit_stats.chisq
+        "1-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
+        fit_stats.chisq
     );
     let srmr_diff = (fit_stats.srmr - r_srmr).abs();
     assert!(
         srmr_diff < 1e-6,
-        "1-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}", fit_stats.srmr
+        "1-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
+        fit_stats.srmr
     );
 
     // Check implied cov approximates S
@@ -460,7 +472,10 @@ fn test_sem_2factor_all_params_match_r() {
             assert!(
                 diff < 0.05,
                 "2-factor param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
-                row.lhs, row.op, row.rhs, r_est.3
+                row.lhs,
+                row.op,
+                row.rhs,
+                r_est.3
             );
         } else {
             panic!(
@@ -475,12 +490,19 @@ fn test_sem_2factor_all_params_match_r() {
     let kstar = 4 * 5 / 2; // 10
     let v = json_to_mat(&fix["v"]);
     let w = faer::Mat::from_fn(kstar, kstar, |i, j| {
-        if i == j && v_diag[i] > 1e-30 { 1.0 / v_diag[i] } else { 0.0 }
+        if i == j && v_diag[i] > 1e-30 {
+            1.0 / v_diag[i]
+        } else {
+            0.0
+        }
     });
     let (se_vec, _ohtt) = gsem_sem::sandwich::sandwich_se(&mut model, &w, &v);
     assert_eq!(
-        se_vec.len(), r_sandwich_se.len(),
-        "2-factor sandwich SE count mismatch: Rust={} R={}", se_vec.len(), r_sandwich_se.len()
+        se_vec.len(),
+        r_sandwich_se.len(),
+        "2-factor sandwich SE count mismatch: Rust={} R={}",
+        se_vec.len(),
+        r_sandwich_se.len()
     );
     for (i, (&rust_se, &r_se)) in se_vec.iter().zip(r_sandwich_se.iter()).enumerate() {
         let diff = (rust_se - r_se).abs();
@@ -505,12 +527,14 @@ fn test_sem_2factor_all_params_match_r() {
     let chisq_diff = (fit_stats.chisq - r_chisq).abs();
     assert!(
         chisq_diff < 1e-4,
-        "2-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}", fit_stats.chisq
+        "2-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
+        fit_stats.chisq
     );
     let srmr_diff = (fit_stats.srmr - r_srmr).abs();
     assert!(
         srmr_diff < 1e-6,
-        "2-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}", fit_stats.srmr
+        "2-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
+        fit_stats.srmr
     );
 }
 
@@ -640,8 +664,8 @@ fn test_commonfactor_matches_r() {
 // ── Test Case 11: GWAS per-SNP vs R (commonfactorGWAS and userGWAS) ─────────
 
 /// Load S, V, I matrices, SNP input data from the gwas_per_snp fixture.
-fn load_gwas_inputs()
--> (
+#[allow(clippy::type_complexity)]
+fn load_gwas_inputs() -> (
     Mat<f64>,
     Mat<f64>,
     Mat<f64>,
@@ -676,7 +700,17 @@ fn load_gwas_inputs()
         se_snp.push(json_to_vec(&snp["se"]));
     }
 
-    (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix)
+    (
+        s,
+        v,
+        i_mat,
+        trait_names,
+        beta_snp,
+        se_snp,
+        var_snp,
+        snp_ids,
+        fix,
+    )
 }
 
 #[test]
@@ -687,9 +721,8 @@ fn test_gwas_baseline_commonfactor_match_r() {
     let s = json_to_mat(&fix["s"]);
     let v = json_to_mat(&fix["v"]);
 
-    let result = gsem_sem::commonfactor::run_commonfactor(
-        &s, &v, gsem_sem::EstimationMethod::Dwls
-    ).unwrap();
+    let result =
+        gsem_sem::commonfactor::run_commonfactor(&s, &v, gsem_sem::EstimationMethod::Dwls).unwrap();
 
     eprintln!("\n==== Rust commonfactor baseline ====");
     for p in &result.parameters {
@@ -703,19 +736,23 @@ fn test_gwas_baseline_commonfactor_match_r() {
     //   F1 =~ OCD = 0.532
     //   F1 =~ PTSD = 0.143
     // With positive signs.
-    let anx_loading = result.parameters.iter()
+    let anx_loading = result
+        .parameters
+        .iter()
         .find(|p| p.lhs == "F1" && p.rhs == "V1")
         .map(|p| p.est)
         .unwrap_or(f64::NAN);
     eprintln!("F1 =~ V1 (ANX) = {anx_loading}");
     // Accept either sign — sign indeterminacy of the common factor is allowed.
-    assert!(anx_loading.abs() > 0.01, "Baseline loading magnitude too small");
+    assert!(
+        anx_loading.abs() > 0.01,
+        "Baseline loading magnitude too small"
+    );
 }
 
 #[test]
 fn test_commonfactor_gwas_per_snp_match_r() {
-    let (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix) =
-        load_gwas_inputs();
+    let (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix) = load_gwas_inputs();
 
     let cfg = gsem::gwas::common_factor::CommonFactorGwasConfig {
         identification: gsem::gwas::common_factor::Identification::FixedVariance,
@@ -764,11 +801,7 @@ fn test_commonfactor_gwas_per_snp_match_r() {
         let snp_param = rust_res
             .params
             .iter()
-            .find(|p| {
-                p.op == gsem_sem::syntax::Op::Regression
-                    && p.lhs == "F1"
-                    && p.rhs == "SNP"
-            })
+            .find(|p| p.op == gsem_sem::syntax::Op::Regression && p.lhs == "F1" && p.rhs == "SNP")
             .unwrap_or_else(|| {
                 panic!(
                     "No F1~SNP parameter in Rust result for SNP {}",
@@ -809,8 +842,7 @@ fn test_commonfactor_gwas_per_snp_match_r() {
 /// R GenomicSEM's parameterization exactly.
 #[test]
 fn test_commonfactor_gwas_marker_indicator_matches_r() {
-    let (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix) =
-        load_gwas_inputs();
+    let (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix) = load_gwas_inputs();
 
     let cfg = gsem::gwas::common_factor::CommonFactorGwasConfig {
         identification: gsem::gwas::common_factor::Identification::MarkerIndicator,
@@ -818,7 +850,15 @@ fn test_commonfactor_gwas_marker_indicator_matches_r() {
     };
 
     let rust_results = gsem::gwas::common_factor::run_common_factor_gwas(
-        &trait_names, &s, &v, &i_mat, &beta_snp, &se_snp, &var_snp, &cfg, None,
+        &trait_names,
+        &s,
+        &v,
+        &i_mat,
+        &beta_snp,
+        &se_snp,
+        &var_snp,
+        &cfg,
+        None,
     );
 
     let r_cf = fix["commonfactor_gwas"].as_array().unwrap();
@@ -837,11 +877,7 @@ fn test_commonfactor_gwas_marker_indicator_matches_r() {
         let snp_param = rust_res
             .params
             .iter()
-            .find(|p| {
-                p.op == gsem_sem::syntax::Op::Regression
-                    && p.lhs == "F1"
-                    && p.rhs == "SNP"
-            })
+            .find(|p| p.op == gsem_sem::syntax::Op::Regression && p.lhs == "F1" && p.rhs == "SNP")
             .unwrap_or_else(|| panic!("No F1~SNP param for SNP {r_snp}"));
 
         n_compared += 1;
@@ -871,8 +907,7 @@ fn test_commonfactor_gwas_marker_indicator_matches_r() {
 
 #[test]
 fn test_user_gwas_per_snp_match_r() {
-    let (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix) =
-        load_gwas_inputs();
+    let (s, v, i_mat, trait_names, beta_snp, se_snp, var_snp, snp_ids, fix) = load_gwas_inputs();
 
     // Residual variances are auto-added by the parser (lavaan behavior).
     let model_str = format!(
@@ -915,11 +950,7 @@ fn test_user_gwas_per_snp_match_r() {
         let snp_param = rust_res
             .params
             .iter()
-            .find(|p| {
-                p.op == gsem_sem::syntax::Op::Regression
-                    && p.lhs == "F1"
-                    && p.rhs == "SNP"
-            })
+            .find(|p| p.op == gsem_sem::syntax::Op::Regression && p.lhs == "F1" && p.rhs == "SNP")
             .unwrap_or_else(|| panic!("No F1~SNP parameter for SNP {r_snp}"));
 
         // Common factor orientation is not identified — compare |est|.
@@ -942,9 +973,5 @@ fn test_user_gwas_per_snp_match_r() {
 
         n_compared += 1;
     }
-    assert!(
-        n_compared >= 15,
-        "Too few SNPs converged ({n_compared}/20)"
-    );
+    assert!(n_compared >= 15, "Too few SNPs converged ({n_compared}/20)");
 }
-

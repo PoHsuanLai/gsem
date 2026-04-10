@@ -134,7 +134,9 @@ pub fn run_user_gwas(
         let snp_label = config.variant_label.as_str();
         // Extract observed variable names from the model syntax (not generic V1,V2,...)
         let obs_names: Vec<String> = {
-            let latents: std::collections::HashSet<String> = pt.rows.iter()
+            let latents: std::collections::HashSet<String> = pt
+                .rows
+                .iter()
                 .filter(|r| r.op == Op::Loading)
                 .map(|r| r.lhs.clone())
                 .collect();
@@ -150,7 +152,9 @@ pub fn run_user_gwas(
             if names.len() != k {
                 log::error!(
                     "fix_measurement: model has {} observed variables but S matrix is {}x{} — cannot fix baseline",
-                    names.len(), k, k
+                    names.len(),
+                    k,
+                    k
                 );
             }
             names
@@ -214,10 +218,10 @@ pub fn run_user_gwas(
     // Build a local thread pool so callers can control parallelism per-invocation
     // without relying on the once-only global pool.
     let mut builder = rayon::ThreadPoolBuilder::new();
-    if let Some(n) = config.num_threads {
-        if n > 0 {
-            builder = builder.num_threads(n);
-        }
+    if let Some(n) = config.num_threads
+        && n > 0
+    {
+        builder = builder.num_threads(n);
     }
     let pool = builder.build().expect("failed to build rayon thread pool");
 
@@ -267,7 +271,6 @@ fn process_single_snp(
     let var_snp_se2 = snp_se.powi(2);
     let mut v_full = add_snps::build_v_full(v_ld, se_snp, var_snp, var_snp_se2, i_ld, config.gc, k);
 
-
     // Smooth if needed
     let s_smoothed = smooth::smooth_if_needed(&mut s_full);
     let v_smoothed = smooth::smooth_if_needed(&mut v_full);
@@ -284,14 +287,19 @@ fn process_single_snp(
     let snp_label = config.variant_label.as_str();
     let mut obs_names = vec![snp_label.to_string()];
     {
-        let latents: std::collections::HashSet<&str> = pt.rows.iter()
+        let latents: std::collections::HashSet<&str> = pt
+            .rows
+            .iter()
             .filter(|r| r.op == Op::Loading)
             .map(|r| r.lhs.as_str())
             .collect();
         for row in &pt.rows {
             if row.op == Op::Loading {
                 let name = row.rhs.as_str();
-                if !latents.contains(name) && name != snp_label && !obs_names.contains(&name.to_string()) {
+                if !latents.contains(name)
+                    && name != snp_label
+                    && !obs_names.contains(&name.to_string())
+                {
                     obs_names.push(name.to_string());
                 }
             }
@@ -299,7 +307,9 @@ fn process_single_snp(
         if obs_names.len() != k + 1 {
             log::error!(
                 "SNP {}: model has {} observed variables but expected {} (k+1) — variable name mismatch",
-                snp_idx, obs_names.len(), k + 1
+                snp_idx,
+                obs_names.len(),
+                k + 1
             );
         }
     }
@@ -310,10 +320,7 @@ fn process_single_snp(
     // makes the per-SNP optimization degenerate.
     let mut pt_snp = pt.clone();
     for row in pt_snp.rows.iter_mut() {
-        if row.op == Op::Covariance
-            && row.lhs == snp_label
-            && row.rhs == snp_label
-            && row.free > 0
+        if row.op == Op::Covariance && row.lhs == snp_label && row.rhs == snp_label && row.free > 0
         {
             row.free = 0;
             row.value = var_snp;
@@ -359,7 +366,12 @@ fn process_single_snp(
         .filter(|r| r.free > 0)
         .enumerate()
         .map(|(i, r)| {
-            (r.lhs.clone(), r.op, r.rhs.clone(), fit.params.get(i).copied().unwrap_or(0.0))
+            (
+                r.lhs.clone(),
+                r.op,
+                r.rhs.clone(),
+                fit.params.get(i).copied().unwrap_or(0.0),
+            )
         })
         .collect();
     for row in sandwich_pt.rows.iter_mut() {
@@ -376,16 +388,19 @@ fn process_single_snp(
         } else if row.free > 0 {
             sandwich_free_idx += 1;
             row.free = sandwich_free_idx;
-            if let Some(fv) = fit_values.iter().find(|(l, o, r, _)| {
-                *l == row.lhs && *o == row.op && *r == row.rhs
-            }) {
+            if let Some(fv) = fit_values
+                .iter()
+                .find(|(l, o, r, _)| *l == row.lhs && *o == row.op && *r == row.rhs)
+            {
                 row.value = fv.3;
             }
         }
     }
 
     let mut sandwich_model = Model::from_partable(&sandwich_pt, &obs_names);
-    let init_params: Vec<f64> = sandwich_pt.rows.iter()
+    let init_params: Vec<f64> = sandwich_pt
+        .rows
+        .iter()
         .filter(|r| r.free > 0)
         .map(|r| r.value)
         .collect();
@@ -396,11 +411,18 @@ fn process_single_snp(
     // Map se_full back to pt_snp's free params (the parameters we actually fit)
     let sandwich_free_rows: Vec<_> = sandwich_pt.rows.iter().filter(|r| r.free > 0).collect();
     let orig_free_rows: Vec<_> = pt_snp.rows.iter().filter(|r| r.free > 0).collect();
-    let se: Vec<f64> = orig_free_rows.iter().map(|orig_row| {
-        sandwich_free_rows.iter().position(|sr| {
-            sr.lhs == orig_row.lhs && sr.op == orig_row.op && sr.rhs == orig_row.rhs
-        }).and_then(|i| se_full.get(i).copied()).unwrap_or(f64::NAN)
-    }).collect();
+    let se: Vec<f64> = orig_free_rows
+        .iter()
+        .map(|orig_row| {
+            sandwich_free_rows
+                .iter()
+                .position(|sr| {
+                    sr.lhs == orig_row.lhs && sr.op == orig_row.op && sr.rhs == orig_row.rhs
+                })
+                .and_then(|i| se_full.get(i).copied())
+                .unwrap_or(f64::NAN)
+        })
+        .collect();
 
     // Build parameter results: only for free parameters of the per-SNP fit
     let free_rows: Vec<_> = pt_snp.rows.iter().filter(|r| r.free > 0).collect();
@@ -435,7 +457,13 @@ fn process_single_snp(
     let kstar = (k + 1) * (k + 2) / 2;
     let df = kstar.saturating_sub(n_free_model);
     let model_fit = gsem_sem::fit_indices::compute_fit(
-        &s_full, &sigma_hat, &v_full, df, n_free_model, None, None,
+        &s_full,
+        &sigma_hat,
+        &v_full,
+        df,
+        n_free_model,
+        None,
+        None,
     );
 
     // Compute Q_SNP if requested

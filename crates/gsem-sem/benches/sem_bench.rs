@@ -1,5 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use faer::Mat;
+use std::hint::black_box;
 
 fn bench_parse_model(c: &mut Criterion) {
     let model = "F1 =~ NA*V1 + V2 + V3 + V4 + V5\n\

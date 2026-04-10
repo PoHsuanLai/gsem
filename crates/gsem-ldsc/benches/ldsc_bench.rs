@@ -1,4 +1,5 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn bench_weights(c: &mut Criterion) {
     let n = 10_000;
@@ -44,7 +45,7 @@ fn bench_h2_estimation(c: &mut Criterion) {
     let n = 50_000;
     let z: Vec<f64> = (0..n)
         .map(|i| {
-            let x = (i as f64 * 2.71828).sin();
+            let x = (i as f64 * std::f64::consts::E).sin();
             x * 1.3
         })
         .collect();

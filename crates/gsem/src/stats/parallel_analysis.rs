@@ -64,10 +64,10 @@ pub fn parallel_analysis(
 
     // Build a local rayon pool so callers control parallelism per-invocation.
     let mut builder = rayon::ThreadPoolBuilder::new();
-    if let Some(n) = num_threads {
-        if n > 0 {
-            builder = builder.num_threads(n);
-        }
+    if let Some(n) = num_threads
+        && n > 0
+    {
+        builder = builder.num_threads(n);
     }
     let pool = builder.build().expect("failed to build rayon thread pool");
 

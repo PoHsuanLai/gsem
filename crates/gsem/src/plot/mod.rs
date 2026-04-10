@@ -47,7 +47,7 @@ pub fn lambda_gc(p_values: &[f64]) -> f64 {
     }
     chisq.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = chisq.len() / 2;
-    let median = if chisq.len() % 2 == 0 {
+    let median = if chisq.len().is_multiple_of(2) {
         0.5 * (chisq[mid - 1] + chisq[mid])
     } else {
         chisq[mid]
@@ -156,9 +156,21 @@ mod tests {
     #[test]
     fn test_chrom_layout_offsets() {
         let pts = vec![
-            ManhattanPoint { chr: 1, bp: 100, neg_log10_p: 1.0 },
-            ManhattanPoint { chr: 1, bp: 500, neg_log10_p: 2.0 },
-            ManhattanPoint { chr: 2, bp: 200, neg_log10_p: 3.0 },
+            ManhattanPoint {
+                chr: 1,
+                bp: 100,
+                neg_log10_p: 1.0,
+            },
+            ManhattanPoint {
+                chr: 1,
+                bp: 500,
+                neg_log10_p: 2.0,
+            },
+            ManhattanPoint {
+                chr: 2,
+                bp: 200,
+                neg_log10_p: 3.0,
+            },
         ];
         let layout = compute_chrom_layout(&pts);
         assert_eq!(layout.chroms.len(), 2);

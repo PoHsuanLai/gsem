@@ -1031,14 +1031,14 @@ fn collect_plot_data(
             continue;
         }
         p_values.push(param.p_value);
-        if let Some(snp) = snps.get(snp_result.snp_idx) {
-            if let (Some(chr), Some(bp)) = (snp.chr, snp.bp) {
-                manhattan.push(gsem::plot::ManhattanPoint {
-                    chr,
-                    bp,
-                    neg_log10_p: gsem::plot::neg_log10_p(param.p_value),
-                });
-            }
+        if let Some(snp) = snps.get(snp_result.snp_idx)
+            && let (Some(chr), Some(bp)) = (snp.chr, snp.bp)
+        {
+            manhattan.push(gsem::plot::ManhattanPoint {
+                chr,
+                bp,
+                neg_log10_p: gsem::plot::neg_log10_p(param.p_value),
+            });
         }
     }
     (p_values, manhattan)
@@ -1325,9 +1325,7 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
         }
         if let Some(man_path) = args.save_plot_manhattan.as_deref() {
             if manhattan_pts.is_empty() {
-                log::warn!(
-                    "Manhattan plot skipped: merged sumstats has no CHR/BP columns"
-                );
+                log::warn!("Manhattan plot skipped: merged sumstats has no CHR/BP columns");
             } else {
                 gsem::plot::manhattan::manhattan_plot(
                     &manhattan_pts,
