@@ -52,7 +52,7 @@ impl RProgress {
     fn callback(&self) -> impl Fn() + Sync + '_ {
         move || {
             let done = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
-            if done == self.total || done % self.interval == 0 {
+            if done == self.total || done.is_multiple_of(self.interval) {
                 reprintln!("Progress: {done}/{}", self.total);
             }
         }
@@ -84,11 +84,7 @@ fn rint_to_num_threads(n: Rint) -> Option<usize> {
         return None;
     }
     let v = n.inner();
-    if v > 0 {
-        Some(v as usize)
-    } else {
-        None
-    }
+    if v > 0 { Some(v as usize) } else { None }
 }
 
 /// Run LDSC pipeline.
@@ -266,13 +262,9 @@ fn usermodel_rust(
         gsem_sem::EstimationMethod::Ml => {
             gsem_sem::estimator::fit_ml(&mut sem_model, &ldsc_result.s, 1000, grad_tol)
         }
-        gsem_sem::EstimationMethod::Dwls => gsem_sem::estimator::fit_dwls(
-            &mut sem_model,
-            &ldsc_result.s,
-            &v_diag,
-            1000,
-            grad_tol,
-        ),
+        gsem_sem::EstimationMethod::Dwls => {
+            gsem_sem::estimator::fit_dwls(&mut sem_model, &ldsc_result.s, &v_diag, 1000, grad_tol)
+        }
     };
 
     // If model failed to converge and fix_resid is true, add lower bounds and retry
@@ -558,7 +550,9 @@ fn parse_simple_json_f64_array(s: &str) -> Vec<Option<f64>> {
 
 /// Strip surrounding double quotes from a JSON string token.
 fn unquote(s: &str) -> Option<String> {
-    s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).map(|s| s.to_string())
+    s.strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .map(|s| s.to_string())
 }
 
 /// Fit common factor model.
@@ -704,12 +698,11 @@ fn commonfactor_gwas_rust(
     };
 
     if twas {
-        let twas_data = match gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(
-            sumstats_path,
-        )) {
-            Ok(d) => d,
-            Err(e) => return conversions::error_list(e.to_string()),
-        };
+        let twas_data =
+            match gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(sumstats_path)) {
+                Ok(d) => d,
+                Err(e) => return conversions::error_list(e.to_string()),
+            };
 
         let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
         let se_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.se.as_slice()).collect();
@@ -824,12 +817,11 @@ fn user_gwas_rust(
 
     // TWAS mode: read gene-level data instead of SNP-level
     if twas {
-        let twas_data = match gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(
-            sumstats_path,
-        )) {
-            Ok(d) => d,
-            Err(e) => return conversions::error_list(e.to_string()),
-        };
+        let twas_data =
+            match gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(sumstats_path)) {
+                Ok(d) => d,
+                Err(e) => return conversions::error_list(e.to_string()),
+            };
 
         let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
         let se_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.se.as_slice()).collect();
@@ -940,7 +932,7 @@ fn filter_results_by_sub(results: &mut [gsem::gwas::user_gwas::SnpResult], sub: 
         for snp_result in results.iter_mut() {
             snp_result.params.retain(|p| {
                 let key = format!("{}{}{}", p.lhs, p.op, p.rhs).replace(' ', "");
-                patterns.iter().any(|pat| key == *pat)
+                patterns.contains(&key)
             });
         }
     }
@@ -1008,13 +1000,7 @@ fn write_model_rust(
 
 /// Compute model-implied genetic correlation matrix.
 #[extendr]
-fn rgmodel_rust(
-    covstruc: List,
-    estimation: &str,
-    model: &str,
-    std_lv: bool,
-    sub: &str,
-) -> List {
+fn rgmodel_rust(covstruc: List, estimation: &str, model: &str, std_lv: bool, sub: &str) -> List {
     ensure_logger();
     let ldsc_result = match conversions::list_to_ldsc_result(&covstruc) {
         Ok(r) => r,
@@ -1162,11 +1148,11 @@ fn s_ldsc_rust(
         let n_snps = annot_data.annot_ld.nrows();
         let n_annot = annot_data.annot_ld.ncols();
         let mut keep: Vec<bool> = vec![true; n_annot];
-        for j in 0..n_annot {
+        for (j, k) in keep.iter_mut().enumerate() {
             for i in 0..n_snps {
                 let v = annot_data.annot_ld[(i, j)];
                 if v != 0.0 && v != 1.0 {
-                    keep[j] = false;
+                    *k = false;
                     break;
                 }
             }
@@ -1185,7 +1171,10 @@ fn s_ldsc_rust(
                 .iter()
                 .map(|&i| annot_data.annotation_names[i].clone())
                 .collect();
-            let new_m: Vec<f64> = kept_indices.iter().map(|&i| annot_data.m_annot[i]).collect();
+            let new_m: Vec<f64> = kept_indices
+                .iter()
+                .map(|&i| annot_data.m_annot[i])
+                .collect();
             annot_data.annot_ld = new_annot_ld;
             annot_data.annotation_names = new_names;
             annot_data.m_annot = new_m;
@@ -1212,12 +1201,10 @@ fn s_ldsc_rust(
         Some(&annot_data.bp),
     ) {
         Ok(result) => {
-            let s_annot_list = List::from_values(
-                result.s_annot.iter().map(|m| conversions::mat_to_rmatrix(m)),
-            );
-            let v_annot_list = List::from_values(
-                result.v_annot.iter().map(|m| conversions::mat_to_rmatrix(m)),
-            );
+            let s_annot_list =
+                List::from_values(result.s_annot.iter().map(conversions::mat_to_rmatrix));
+            let v_annot_list =
+                List::from_values(result.v_annot.iter().map(conversions::mat_to_rmatrix));
             list!(
                 annotations = result.annotations,
                 m_annot = result.m_annot,
@@ -1412,12 +1399,7 @@ fn multi_gene_rust(
 
 /// Run Generalized Least Squares regression.
 #[extendr]
-fn summary_gls_rust(
-    x: RMatrix<f64>,
-    y: Vec<f64>,
-    v: RMatrix<f64>,
-    intercept: bool,
-) -> List {
+fn summary_gls_rust(x: RMatrix<f64>, y: Vec<f64>, v: RMatrix<f64>, intercept: bool) -> List {
     ensure_logger();
     let mut x_mat = conversions::rmatrix_to_mat(&x);
     let v_mat = conversions::rmatrix_to_mat(&v);

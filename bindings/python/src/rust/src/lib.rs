@@ -242,8 +242,9 @@ impl PyLdscResult {
     fn s_stand<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
         match (&self.s_stand_data, self.s_stand_shape) {
             (Some(data), Some(shape)) => {
-                let arr = Array2::from_shape_vec(shape, data.clone())
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("S_Stand shape: {e}")))?;
+                let arr = Array2::from_shape_vec(shape, data.clone()).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("S_Stand shape: {e}"))
+                })?;
                 Ok(Some(arr.into_pyarray(py)))
             }
             _ => Ok(None),
@@ -255,8 +256,9 @@ impl PyLdscResult {
     fn v_stand<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
         match (&self.v_stand_data, self.v_stand_shape) {
             (Some(data), Some(shape)) => {
-                let arr = Array2::from_shape_vec(shape, data.clone())
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("V_Stand shape: {e}")))?;
+                let arr = Array2::from_shape_vec(shape, data.clone()).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("V_Stand shape: {e}"))
+                })?;
                 Ok(Some(arr.into_pyarray(py)))
             }
             _ => Ok(None),
@@ -288,15 +290,25 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResul
         let kstar = k * (k + 1) / 2;
         let s_vec = gsem_matrix::vech::vech(&result.s).expect("S must be square");
         let ss_vec = gsem_matrix::vech::vech(&s_stand).expect("S_Stand must be square");
-        let scale: Vec<f64> = ss_vec.iter().zip(s_vec.iter()).enumerate().map(|(i, (&st, &orig))| {
-            let ratio = if orig.abs() > 1e-30 { st / orig } else { 0.0 };
-            result.v[(i, i)].sqrt() * ratio
-        }).collect();
+        let scale: Vec<f64> = ss_vec
+            .iter()
+            .zip(s_vec.iter())
+            .enumerate()
+            .map(|(i, (&st, &orig))| {
+                let ratio = if orig.abs() > 1e-30 { st / orig } else { 0.0 };
+                result.v[(i, i)].sqrt() * ratio
+            })
+            .collect();
         let v_cor = gsem_matrix::smooth::cov_to_cor(&result.v);
         let v_stand = faer::Mat::from_fn(kstar, kstar, |i, j| scale[i] * v_cor[(i, j)] * scale[j]);
         let (ss_data, ss_r, ss_c) = conversions::mat_to_flat(&s_stand);
         let (vs_data, vs_r, vs_c) = conversions::mat_to_flat(&v_stand);
-        (Some(ss_data), Some((ss_r, ss_c)), Some(vs_data), Some((vs_r, vs_c)))
+        (
+            Some(ss_data),
+            Some((ss_r, ss_c)),
+            Some(vs_data),
+            Some((vs_r, vs_c)),
+        )
     } else {
         (None, None, None, None)
     };
@@ -330,7 +342,7 @@ fn ldsc(
     ld: &str,
     wld: &str,
     trait_names: Option<Vec<String>>,
-    sep_weights: bool,       // ignored
+    sep_weights: bool, // ignored
     chr: usize,
     n_blocks: usize,
     ldsc_log: Option<String>, // ignored
@@ -341,7 +353,9 @@ fn ldsc(
     cores: Option<usize>,
 ) -> PyResult<PyLdscResult> {
     if sep_weights {
-        log::info!("sep_weights is always enabled in gsemr — weight LD scores are read from the wld directory");
+        log::info!(
+            "sep_weights is always enabled in gsemr — weight LD scores are read from the wld directory"
+        );
     }
     if let Some(ref path) = ldsc_log {
         log::info!("ldsc_log='{path}' — file logging is handled at the Python/R wrapper level");
@@ -357,7 +371,10 @@ fn ldsc(
         None | Some("") | Some("FALSE") | Some("false") => (1..=chr).collect(),
         Some("ODD") | Some("odd") => (1..=chr).filter(|c| c % 2 == 1).collect(),
         Some("EVEN") | Some("even") => (1..=chr).filter(|c| c % 2 == 0).collect(),
-        Some(other) => other.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
+        Some(other) => other
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect(),
     };
     let ld_data = gsem::io::ld_reader::read_ld_scores(ld_path, wld_path, &chromosomes)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
@@ -373,10 +390,14 @@ fn ldsc(
 
     let n_pairs = trait_data.len() * (trait_data.len() + 1) / 2;
     let counter = std::sync::atomic::AtomicUsize::new(0);
-    let interval = if n_pairs <= 20 { 1 } else { (n_pairs / 20).max(1) };
+    let interval = if n_pairs <= 20 {
+        1
+    } else {
+        (n_pairs / 20).max(1)
+    };
     let cb = || {
         let done = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if done == n_pairs || done % interval == 0 {
+        if done == n_pairs || done.is_multiple_of(interval) {
             log::info!("LDSC progress: {done}/{n_pairs} trait pairs");
         }
     };
@@ -410,14 +431,14 @@ fn munge(
     files: Vec<String>,
     hm3: &str,
     trait_names: Option<Vec<String>>,
-    n: Option<f64>,                          // threaded (N override)
+    n: Option<f64>, // threaded (N override)
     info_filter: f64,
     maf_filter: f64,
-    log_name: Option<String>,                // ignored
+    log_name: Option<String>, // ignored
     column_names: Option<std::collections::HashMap<String, String>>, // threaded
-    parallel: bool,                          // ignored
-    cores: Option<usize>,                    // ignored
-    overwrite: bool,                         // ignored
+    parallel: bool,           // ignored
+    cores: Option<usize>,     // ignored
+    overwrite: bool,          // ignored
     out: &str,
 ) -> PyResult<Vec<String>> {
     let hm3_path = std::path::Path::new(hm3);
@@ -464,12 +485,12 @@ fn usermodel<'py>(
     covstruc: &Bound<'py, PyAny>,
     model: &str,
     estimation: &str,
-    cfi_calc: bool,         // ignored (CFIcalc)
-    std_lv: bool,           // threaded
-    imp_cov: bool,          // ignored
-    fix_resid: bool,        // threaded
-    toler: Option<f64>,     // ignored
-    q_factor: bool,         // ignored (Q_Factor)
+    cfi_calc: bool,     // ignored (CFIcalc)
+    std_lv: bool,       // threaded
+    imp_cov: bool,      // ignored
+    fix_resid: bool,    // threaded
+    toler: Option<f64>, // ignored
+    q_factor: bool,     // ignored (Q_Factor)
 ) -> PyResult<Bound<'py, PyDict>> {
     let ldsc_result = pyany_to_ldsc_result(covstruc)?;
 
@@ -537,7 +558,10 @@ fn commonfactor<'py>(
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
     let out = PyDict::new(py);
-    out.set_item("parameters", param_estimates_to_dict(py, &result.parameters)?)?;
+    out.set_item(
+        "parameters",
+        param_estimates_to_dict(py, &result.parameters)?,
+    )?;
     out.set_item("chisq", result.fit.chisq)?;
     out.set_item("df", result.fit.df as i64)?;
     out.set_item("p_chisq", result.fit.p_chisq)?;
@@ -558,18 +582,18 @@ fn sumstats<'py>(
     files: Vec<String>,
     ref_dir: &str,
     trait_names: Option<Vec<String>>,
-    se_logit: Option<Vec<bool>>,   // threaded
-    ols: Option<Vec<bool>>,        // threaded (OLS)
-    linprob: Option<Vec<bool>>,    // threaded
-    n: Option<Vec<f64>>,           // threaded (N overrides)
-    betas: Option<Vec<f64>>,       // ignored
+    se_logit: Option<Vec<bool>>, // threaded
+    ols: Option<Vec<bool>>,      // threaded (OLS)
+    linprob: Option<Vec<bool>>,  // threaded
+    n: Option<Vec<f64>>,         // threaded (N overrides)
+    betas: Option<Vec<f64>>,     // ignored
     info_filter: f64,
     maf_filter: f64,
     keep_indel: bool,
-    parallel: bool,                // ignored
-    cores: Option<usize>,          // ignored
-    ambig: bool,                   // ignored
-    direct_filter: bool,           // ignored
+    parallel: bool,       // ignored
+    cores: Option<usize>, // ignored
+    ambig: bool,          // ignored
+    direct_filter: bool,  // ignored
     out: &str,
 ) -> PyResult<Bound<'py, PyDict>> {
     let k = files.len();
@@ -632,11 +656,11 @@ fn commonfactor_gwas<'py>(
     sumstats_path: &str,
     estimation: &str,
     cores: Option<usize>,
-    toler: bool,           // ignored: convergence is controlled internally
+    toler: bool, // ignored: convergence is controlled internally
     snpse: bool,
     parallel: bool,
     gc: &str,
-    mpi: bool,             // ignored: not applicable to the Rust backend
+    mpi: bool, // ignored: not applicable to the Rust backend
     twas: bool,
     smooth_check: bool,
     identification: &str,
@@ -649,16 +673,21 @@ fn commonfactor_gwas<'py>(
     }
 
     let ldsc_result = pyany_to_ldsc_result(covstruc)?;
-    let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+    let merged =
+        gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
-    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse()
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc
+        .parse()
         .unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);
 
     // Filter SNPs with zero MAF: var_snp=0 → singular per-SNP matrices.
-    let valid_idx: Vec<usize> = merged.snps.iter().enumerate()
+    let valid_idx: Vec<usize> = merged
+        .snps
+        .iter()
+        .enumerate()
         .filter(|(_, s)| 2.0 * s.maf * (1.0 - s.maf) > 1e-10)
         .map(|(i, _)| i)
         .collect();
@@ -670,7 +699,8 @@ fn commonfactor_gwas<'py>(
     let valid_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
     let beta_snp: Vec<&[f64]> = valid_snps.iter().map(|s| s.beta.as_slice()).collect();
     let se_snp: Vec<&[f64]> = valid_snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = valid_snps.iter()
+    let var_snp: Vec<f64> = valid_snps
+        .iter()
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
 
@@ -730,19 +760,30 @@ fn user_gwas<'py>(
     q_snp: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let ldsc_result = pyany_to_ldsc_result(covstruc)?;
-    let merged = gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+    let merged =
+        gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
     let k = ldsc_result.s.nrows();
-    let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
+    let gc_mode: gsem::gwas::gc_correction::GcMode = gc
+        .parse()
+        .unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
     let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
     let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
+    let var_snp: Vec<f64> = merged
+        .snps
+        .iter()
+        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+        .collect();
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_val = if snpse { Some(0.0005) } else { None };
-    let variant_label = if twas { gsem::gwas::user_gwas::VariantLabel::Gene } else { gsem::gwas::user_gwas::VariantLabel::Snp };
+    let variant_label = if twas {
+        gsem::gwas::user_gwas::VariantLabel::Gene
+    } else {
+        gsem::gwas::user_gwas::VariantLabel::Snp
+    };
 
     let pt = gsem_sem::syntax::parse_model(model, std_lv)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
@@ -762,7 +803,9 @@ fn user_gwas<'py>(
         log::set_max_level(log::LevelFilter::Error);
     }
     if toler {
-        log::info!("toler — convergence tolerance is controlled by the L-BFGS optimizer internally");
+        log::info!(
+            "toler — convergence tolerance is controlled by the L-BFGS optimizer internally"
+        );
     }
     if mpi {
         log::warn!("MPI is not supported in gsemr — use the cores parameter for thread control");
@@ -771,8 +814,14 @@ fn user_gwas<'py>(
     // Release the GIL while rayon runs the per-SNP fits.
     let mut results = py.detach(|| {
         gsem::gwas::user_gwas::run_user_gwas(
-            &config, &ldsc_result.s, &ldsc_result.v, &i_ld,
-            &beta_snp, &se_snp, &var_snp, None,
+            &config,
+            &ldsc_result.s,
+            &ldsc_result.v,
+            &i_ld,
+            &beta_snp,
+            &se_snp,
+            &var_snp,
+            None,
         )
     });
 
@@ -786,7 +835,7 @@ fn user_gwas<'py>(
             for snp_result in &mut results {
                 snp_result.params.retain(|p| {
                     let key = format!("{}{}{}", p.lhs, p.op, p.rhs).replace(' ', "");
-                    pats.iter().any(|pat| key == *pat)
+                    pats.contains(&key)
                 });
             }
         }
@@ -848,8 +897,8 @@ fn write_model(
     cutoff: f64,
     fix_resid: bool,
     bifactor: bool,
-    mustload: bool,    // ignored
-    common: bool,      // ignored
+    mustload: bool, // ignored
+    common: bool,   // ignored
 ) -> String {
     let n_rows = loadings.len();
     let n_cols = if n_rows > 0 { loadings[0].len() } else { 0 };
@@ -999,8 +1048,9 @@ fn s_ldsc<'py>(
     let chromosomes: Vec<usize> = (1..=22).collect();
 
     // Read annotation LD scores
-    let mut annot_data = gsem_ldsc::annot_reader::read_annot_ld_scores(ld_path, wld_path, &chromosomes)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+    let mut annot_data =
+        gsem_ldsc::annot_reader::read_annot_ld_scores(ld_path, wld_path, &chromosomes)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
     // Filter by frq files (MAF 0.05-0.95) if frq dir is provided
     if !frq.is_empty() {
@@ -1018,25 +1068,33 @@ fn s_ldsc<'py>(
         let n_snps = annot_data.annot_ld.nrows();
         let n_annot = annot_data.annot_ld.ncols();
         let mut keep: Vec<bool> = vec![true; n_annot];
-        for j in 0..n_annot {
+        for (j, k) in keep.iter_mut().enumerate() {
             for i in 0..n_snps {
                 let v = annot_data.annot_ld[(i, j)];
                 if v != 0.0 && v != 1.0 {
-                    keep[j] = false;
+                    *k = false;
                     break;
                 }
             }
         }
-        let kept_indices: Vec<usize> = keep.iter().enumerate()
-            .filter(|&(_, &k)| k).map(|(i, _)| i).collect();
+        let kept_indices: Vec<usize> = keep
+            .iter()
+            .enumerate()
+            .filter(|&(_, &k)| k)
+            .map(|(i, _)| i)
+            .collect();
         if kept_indices.len() < n_annot {
             let new_annot_ld = faer::Mat::from_fn(n_snps, kept_indices.len(), |i, j| {
                 annot_data.annot_ld[(i, kept_indices[j])]
             });
-            let new_names: Vec<String> = kept_indices.iter()
-                .map(|&i| annot_data.annotation_names[i].clone()).collect();
-            let new_m: Vec<f64> = kept_indices.iter()
-                .map(|&i| annot_data.m_annot[i]).collect();
+            let new_names: Vec<String> = kept_indices
+                .iter()
+                .map(|&i| annot_data.annotation_names[i].clone())
+                .collect();
+            let new_m: Vec<f64> = kept_indices
+                .iter()
+                .map(|&i| annot_data.m_annot[i])
+                .collect();
             annot_data.annot_ld = new_annot_ld;
             annot_data.annotation_names = new_names;
             annot_data.m_annot = new_m;
@@ -1159,13 +1217,8 @@ fn sim_ldsc<'py>(
         n_overlap,
     };
 
-    let result = gsem::stats::simulation::simulate_sumstats(
-        &s_mat,
-        &n_per_trait,
-        &ld_scores,
-        m,
-        &config,
-    );
+    let result =
+        gsem::stats::simulation::simulate_sumstats(&s_mat, &n_per_trait, &ld_scores, m, &config);
     // result is Vec<Vec<f64>> with shape (k × n_snps).
     let k = result.len();
     let n_snps = if k == 0 { 0 } else { result[0].len() };

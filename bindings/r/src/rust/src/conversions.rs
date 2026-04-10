@@ -85,7 +85,7 @@ pub fn ldsc_result_to_list_stand(result: &LdscResult) -> List {
 }
 
 /// Look up a field in a named list, accepting either of two possible names.
-fn list_field<'a>(list: &'a List, primary: &str, alt: &str) -> Option<Robj> {
+fn list_field(list: &List, primary: &str, alt: &str) -> Option<Robj> {
     for (name, obj) in list.iter() {
         if name == primary || name == alt {
             return Some(obj);
@@ -105,12 +105,9 @@ pub fn list_to_ldsc_result(list: &List) -> Result<LdscResult> {
     let i = list_field(list, "i_mat", "I")
         .ok_or_else(|| Error::Other("covstruc list missing field 'i_mat' (or 'I')".into()))?;
 
-    let s_mat =
-        robj_to_mat(&s).map_err(|e| Error::Other(format!("covstruc$s: {e}")))?;
-    let v_mat =
-        robj_to_mat(&v).map_err(|e| Error::Other(format!("covstruc$v: {e}")))?;
-    let i_mat =
-        robj_to_mat(&i).map_err(|e| Error::Other(format!("covstruc$i_mat: {e}")))?;
+    let s_mat = robj_to_mat(&s).map_err(|e| Error::Other(format!("covstruc$s: {e}")))?;
+    let v_mat = robj_to_mat(&v).map_err(|e| Error::Other(format!("covstruc$v: {e}")))?;
+    let i_mat = robj_to_mat(&i).map_err(|e| Error::Other(format!("covstruc$i_mat: {e}")))?;
 
     let n_vec: Vec<f64> = match list_field(list, "n_vec", "N") {
         Some(n) if !n.is_null() => {

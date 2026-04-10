@@ -66,28 +66,28 @@ fn pyany_field<'py>(
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
     // Try as a dict first.
     if let Ok(dict) = obj.cast::<PyDict>() {
-        if let Some(v) = dict.get_item(primary)? {
-            if !v.is_none() {
-                return Ok(Some(v));
-            }
+        if let Some(v) = dict.get_item(primary)?
+            && !v.is_none()
+        {
+            return Ok(Some(v));
         }
-        if let Some(v) = dict.get_item(alt)? {
-            if !v.is_none() {
-                return Ok(Some(v));
-            }
+        if let Some(v) = dict.get_item(alt)?
+            && !v.is_none()
+        {
+            return Ok(Some(v));
         }
         return Ok(None);
     }
     // Fall back to attribute access (covers PyLdscResult and any user class).
-    if let Ok(v) = obj.getattr(primary) {
-        if !v.is_none() {
-            return Ok(Some(v));
-        }
+    if let Ok(v) = obj.getattr(primary)
+        && !v.is_none()
+    {
+        return Ok(Some(v));
     }
-    if let Ok(v) = obj.getattr(alt) {
-        if !v.is_none() {
-            return Ok(Some(v));
-        }
+    if let Ok(v) = obj.getattr(alt)
+        && !v.is_none()
+    {
+        return Ok(Some(v));
     }
     Ok(None)
 }
@@ -101,8 +101,9 @@ pub fn pyany_to_ldsc_result(obj: &Bound<'_, PyAny>) -> PyResult<LdscResult> {
     let v_obj = pyany_field(obj, "v", "V")?
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("covstruc missing 'v' (or 'V')"))?;
     // i_mat is exposed as `i_mat` on PyLdscResult; fall back to `I` for dict users.
-    let i_obj = pyany_field(obj, "i_mat", "I")?
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("covstruc missing 'i_mat' (or 'I')"))?;
+    let i_obj = pyany_field(obj, "i_mat", "I")?.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err("covstruc missing 'i_mat' (or 'I')")
+    })?;
 
     let s = robj_to_mat(&s_obj).map_err(prepend_err("covstruc.s"))?;
     let v = robj_to_mat(&v_obj).map_err(prepend_err("covstruc.v"))?;
