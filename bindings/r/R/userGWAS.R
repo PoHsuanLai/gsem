@@ -19,7 +19,23 @@
 #' @param std.lv Standardize latent variables (default FALSE)
 #' @param fix_measurement Fix measurement model (default TRUE)
 #' @param Q_SNP Compute Q_SNP heterogeneity statistic (default FALSE)
-#' @return Data frame of per-SNP (or per-Gene if TWAS=TRUE) results
+#' @return A two-element list in normalized relational form:
+#'   \describe{
+#'     \item{\code{snps}}{One row per SNP with columns \code{SNP, CHR, BP,
+#'       MAF, A1, A2, chisq, df, converged} (plus \code{Q_chisq, Q_df,
+#'       Q_pval} when \code{Q_SNP = TRUE}).}
+#'     \item{\code{params}}{Flat parameter table with columns \code{SNP,
+#'       lhs, op, rhs, est, se, z, p}; join to \code{snps} on \code{SNP}.}
+#'   }
+#'   When \code{TWAS = TRUE} the first slot is named \code{genes} with
+#'   columns \code{Gene, Panel, HSQ, chisq, df, converged}; the
+#'   \code{params} table uses \code{Gene} in place of \code{SNP}.
+#' @note This replaces the earlier one-row-per-SNP-with-list-column
+#'   shape; the old layout made R reconstruction O(N) `data.frame()`
+#'   calls and hung at multi-million-SNP scale. Example filters:
+#'   `result$params[result$params$SNP == "rsXXXX", ]` for one SNP, or
+#'   `result$params[result$params$op == "~" & result$params$rhs == "SNP", ]`
+#'   for every SNP's regression effect.
 #' @export
 userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
                      printwarn=TRUE, sub=FALSE, cores=NULL, toler=FALSE, SNPSE=FALSE,
@@ -70,10 +86,5 @@ userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
   if (!is.null(result$error)) {
     stop("gsemr::userGWAS error: ", result$error)
   }
-
-  if (isTRUE(TWAS)) {
-    .snp_columnar_to_df(result, id_col = "Gene", extra_cols = c("Panel", "HSQ"))
-  } else {
-    .snp_columnar_to_df(result, id_col = "SNP")
-  }
+  .snp_columnar_to_df(result)
 }

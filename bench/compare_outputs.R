@@ -265,9 +265,9 @@ check("userGWAS: runs", function() {
     "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
   )
   result <- gsemr::userGWAS(rust_cov, SNPs = subset_path, model = user_model)
-  if (is.null(result) || nrow(result) == 0) stop("No results")
-  # userGWAS returns nested JSON; extract SNP effect from params
-  n_converged <- sum(result$converged, na.rm = TRUE)
+  # userGWAS returns list(snps, params); convergence is on $snps.
+  if (is.null(result) || is.null(result$snps) || nrow(result$snps) == 0) stop("No results")
+  n_converged <- sum(result$snps$converged, na.rm = TRUE)
   if (n_converged < 100) stop(sprintf("Only %d converged", n_converged))
 })
 

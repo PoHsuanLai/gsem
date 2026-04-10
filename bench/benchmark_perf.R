@@ -611,8 +611,15 @@ b <- run_bench(function() {
 })
 add_result("userGWAS", sprintf("Rust (N=%d, full)", n_rust_available), b)
 
-# Equivalence: convergence counts align between R and Rust at each size
-# (tolerate up to 2% of SNPs disagreeing on convergence).
+# Free the full-scale Rust result now that its wall time is recorded;
+# it's a multi-GB two-table frame we don't consume downstream.
+ug_results[["Rust_full"]] <- NULL
+invisible(gc(full = TRUE, verbose = FALSE))
+
+# Equivalence: convergence counts align within 2% across sizes. R's
+# userGWAS returns a flat data frame, so its converged column is
+# top-level; gsemr returns `list(snps, params)` and we read
+# `$snps$converged`.
 tryCatch({
   notes <- character(0)
   for (n_snp in ug_sizes) {
@@ -620,7 +627,7 @@ tryCatch({
     b <- ug_results[[sprintf("Rust_%d", n_snp)]]
     if (!is.null(a) && !is.null(b)) {
       ca <- sum(a$converged, na.rm = TRUE)
-      cb <- sum(b$converged, na.rm = TRUE)
+      cb <- sum(b$snps$converged, na.rm = TRUE)
       if (abs(ca - cb) > 0.02 * n_snp) {
         notes <- c(notes, sprintf("N=%d converged %d(R) vs %d(Rust)", n_snp, ca, cb))
       }

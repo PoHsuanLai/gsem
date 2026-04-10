@@ -92,49 +92,41 @@ commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=
     stop("gsemr::commonfactorGWAS error: ", result$error)
   }
 
-  raw <- if (isTRUE(TWAS)) {
-    .snp_columnar_to_df(result, id_col = "Gene", extra_cols = c("Panel", "HSQ"))
-  } else {
-    .snp_columnar_to_df(result, id_col = "SNP")
-  }
+  raw <- .snp_columnar_to_df(result)
 
-  # Extract the SNP/Gene effect row (F1 ~ SNP or F1 ~ Gene) from each
-  # row's params, matching R GenomicSEM's commonfactorGWAS output format.
-  id_col <- if (isTRUE(TWAS)) "Gene" else "SNP"
+  # Pull the F1 ~ SNP (or F1 ~ Gene) effect row for every SNP via a
+  # vectorized filter + hashed match(), then join back to the snps
+  # table. `match()` returns NA for SNPs whose fit produced no effect
+  # row, which propagates to NA est/se via vec[NA] semantics.
+  id_col     <- if (isTRUE(TWAS)) "Gene" else "SNP"
+  top_tbl    <- if (isTRUE(TWAS)) raw$genes else raw$snps
   target_rhs <- id_col
-  n <- nrow(raw)
+
+  pe       <- raw$params
+  eff_mask <- pe$op == "~" & pe$rhs == target_rhs
+  eff      <- pe[eff_mask, , drop = FALSE]
+  m <- match(top_tbl[[id_col]], eff[[id_col]])
+
   out <- data.frame(
-    SNP = raw[[id_col]],
-    lhs = character(n), op = character(n), rhs = character(n),
-    est = numeric(n), se = numeric(n),
-    chisq = raw$chisq, df = raw$df,
-    converged = raw$converged,
+    setNames(list(top_tbl[[id_col]]), id_col),
+    lhs = eff$lhs[m],
+    op  = eff$op[m],
+    rhs = eff$rhs[m],
+    est = eff$est[m],
+    se  = eff$se[m],
+    chisq = top_tbl$chisq,
+    df = top_tbl$df,
+    converged = top_tbl$converged,
     stringsAsFactors = FALSE
   )
-  if (id_col == "SNP") {
-    names(out)[1] <- "SNP"
-  } else {
-    names(out)[1] <- "Gene"
+
+  if (!is.null(top_tbl$Q_chisq)) {
+    out$Q_chisq <- top_tbl$Q_chisq
+    out$Q_df    <- top_tbl$Q_df
+    out$Q_pval  <- top_tbl$Q_pval
   }
 
-  for (i in seq_len(n)) {
-    p <- raw$params[[i]]
-    # Find the SNP/Gene regression row: op == "~" and rhs == target
-    snp_row <- which(p$op == "~" & p$rhs == target_rhs)
-    if (length(snp_row) > 0) {
-      snp_row <- snp_row[1]
-      out$lhs[i] <- p$lhs[snp_row]
-      out$op[i]  <- p$op[snp_row]
-      out$rhs[i] <- p$rhs[snp_row]
-      out$est[i] <- p$est[snp_row]
-      out$se[i]  <- p$se[snp_row]
-    } else {
-      out$est[i] <- NA
-      out$se[i]  <- NA
-    }
-  }
-
-  out$z <- ifelse(out$se > 0, out$est / out$se, NA)
-  out$p <- ifelse(is.finite(out$z), 2 * pnorm(abs(out$z), lower.tail = FALSE), NA)
+  out$z <- ifelse(is.finite(out$se) & out$se > 0, out$est / out$se, NA_real_)
+  out$p <- ifelse(is.finite(out$z), 2 * pnorm(abs(out$z), lower.tail = FALSE), NA_real_)
   out
 }

@@ -63,95 +63,381 @@ fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
 }
 
 // ---------------------------------------------------------------------------
-// Columnar result-dict builders (the shape returned to Python for per-SNP /
-// per-parameter results now that JSON is out of the picture). Downstream
-// code can feed these directly into `pandas.DataFrame(...)`.
+// Two-table columnar result dicts for per-SNP / per-gene GWAS.
 // ---------------------------------------------------------------------------
+//
+// Return shape:
+//   {"snps":   {SNP, CHR, BP, MAF, A1, A2, chisq, df, converged[, Q_*]},
+//    "params": {SNP, lhs, op, rhs, est, se, z, p}}
+// TWAS uses "genes" with columns Gene/Panel/HSQ instead of "snps"; the
+// params table's identifier column is "Gene". Both inner dicts are
+// columnar and feed directly into `pandas.DataFrame(result["..."])`.
+//
+// The flat params scatter runs under rayon inside `py.detach()` so the
+// GIL is released while Rust touches only Rust-owned buffers;
+// `PyDict::new` / `set_item` calls happen only after reacquiring the
+// GIL. Mirrors `bindings/r/src/rust/src/conversions.rs`.
 
-/// Build the per-SNP (or per-gene) columnar result dict from a
-/// `Vec<SnpResult>`. `id_key` is "SNP" for standard GWAS or "Gene" for TWAS;
-/// `id_values` is the corresponding per-row identifier vector. `extras` is
-/// an optional set of extra identifier columns (e.g. Panel/HSQ for TWAS).
-///
-/// Output keys:
-///   <id_key>, chisq, df, converged [, Q_chisq, Q_df, Q_pval] [, ...extras],
-///   params = {snp_idx, lhs, op, rhs, est, se, z, p}
+/// Below this many total params, the serial flatten beats the rayon setup.
+const PARAMS_PARALLEL_THRESHOLD: usize = 50_000;
+
+/// Columnar buffers for the per-SNP table.
+struct SnpColsPy {
+    snp: Vec<String>,
+    chr: Vec<Option<i64>>,
+    bp: Vec<Option<i64>>,
+    maf: Vec<f64>,
+    a1: Vec<String>,
+    a2: Vec<String>,
+    chisq: Vec<f64>,
+    df: Vec<i64>,
+    converged: Vec<bool>,
+}
+
+/// Columnar buffers for the per-gene (TWAS) table.
+struct GeneColsPy {
+    gene: Vec<String>,
+    panel: Vec<String>,
+    hsq: Vec<f64>,
+    chisq: Vec<f64>,
+    df: Vec<i64>,
+    converged: Vec<bool>,
+}
+
+/// Flat params table, sized to `total_params` so rayon can fill
+/// disjoint windows.
+struct ParamColsPy {
+    id: Vec<String>,
+    lhs: Vec<String>,
+    op: Vec<String>,
+    rhs: Vec<String>,
+    est: Vec<f64>,
+    se: Vec<f64>,
+    z: Vec<f64>,
+    p: Vec<f64>,
+}
+
+impl ParamColsPy {
+    fn zeroed(total: usize) -> Self {
+        Self {
+            id: vec![String::new(); total],
+            lhs: vec![String::new(); total],
+            op: vec![String::new(); total],
+            rhs: vec![String::new(); total],
+            est: vec![0.0_f64; total],
+            se: vec![0.0_f64; total],
+            z: vec![0.0_f64; total],
+            p: vec![0.0_f64; total],
+        }
+    }
+}
+
+/// `offsets[i]..offsets[i+1]` is result `i`'s row range in the flat
+/// params table; `offsets[n] == total_params`.
+fn params_offsets_py(results: &[gsem::gwas::user_gwas::SnpResult]) -> Vec<usize> {
+    let n = results.len();
+    let mut offsets = Vec::with_capacity(n + 1);
+    let mut acc = 0usize;
+    offsets.push(0);
+    for r in results {
+        acc += r.params.len();
+        offsets.push(acc);
+    }
+    offsets
+}
+
+/// Write one result's params into its window of every column buffer.
+#[inline]
+fn fill_params_window_py(
+    snp_name: &str,
+    r: &gsem::gwas::user_gwas::SnpResult,
+    id_chunk: &mut [String],
+    lhs_chunk: &mut [String],
+    op_chunk: &mut [String],
+    rhs_chunk: &mut [String],
+    est_chunk: &mut [f64],
+    se_chunk: &mut [f64],
+    z_chunk: &mut [f64],
+    p_chunk: &mut [f64],
+) {
+    for (k, pr) in r.params.iter().enumerate() {
+        id_chunk[k] = snp_name.to_string();
+        lhs_chunk[k] = pr.lhs.clone();
+        op_chunk[k] = pr.op.to_string();
+        rhs_chunk[k] = pr.rhs.clone();
+        est_chunk[k] = pr.est;
+        se_chunk[k] = pr.se;
+        z_chunk[k] = pr.z_stat;
+        p_chunk[k] = pr.p_value;
+    }
+}
+
+/// Carve the eight column buffers into non-aliasing per-result windows
+/// via repeated `split_at_mut`.
+fn split_param_windows_py<'a>(
+    offsets: &[usize],
+    id: &'a mut [String],
+    lhs: &'a mut [String],
+    op: &'a mut [String],
+    rhs: &'a mut [String],
+    est: &'a mut [f64],
+    se: &'a mut [f64],
+    z: &'a mut [f64],
+    p: &'a mut [f64],
+) -> Vec<(
+    &'a mut [String],
+    &'a mut [String],
+    &'a mut [String],
+    &'a mut [String],
+    &'a mut [f64],
+    &'a mut [f64],
+    &'a mut [f64],
+    &'a mut [f64],
+)> {
+    let n = offsets.len().saturating_sub(1);
+    let mut out = Vec::with_capacity(n);
+    let mut id_rest = id;
+    let mut lhs_rest = lhs;
+    let mut op_rest = op;
+    let mut rhs_rest = rhs;
+    let mut est_rest = est;
+    let mut se_rest = se;
+    let mut z_rest = z;
+    let mut p_rest = p;
+    for i in 0..n {
+        let take = offsets[i + 1] - offsets[i];
+        let (id_head, id_tail) = id_rest.split_at_mut(take);
+        let (lhs_head, lhs_tail) = lhs_rest.split_at_mut(take);
+        let (op_head, op_tail) = op_rest.split_at_mut(take);
+        let (rhs_head, rhs_tail) = rhs_rest.split_at_mut(take);
+        let (est_head, est_tail) = est_rest.split_at_mut(take);
+        let (se_head, se_tail) = se_rest.split_at_mut(take);
+        let (z_head, z_tail) = z_rest.split_at_mut(take);
+        let (p_head, p_tail) = p_rest.split_at_mut(take);
+        out.push((
+            id_head, lhs_head, op_head, rhs_head, est_head, se_head, z_head, p_head,
+        ));
+        id_rest = id_tail;
+        lhs_rest = lhs_tail;
+        op_rest = op_tail;
+        rhs_rest = rhs_tail;
+        est_rest = est_tail;
+        se_rest = se_tail;
+        z_rest = z_tail;
+        p_rest = p_tail;
+    }
+    out
+}
+
+/// Scatter-fill the params table, serial below
+/// [`PARAMS_PARALLEL_THRESHOLD`] and rayon above.
+fn fill_params_table_py(
+    results: &[gsem::gwas::user_gwas::SnpResult],
+    ids_per_snp: &[String],
+    offsets: &[usize],
+    pc: &mut ParamColsPy,
+) {
+    use rayon::prelude::*;
+
+    let total = *offsets.last().unwrap_or(&0);
+    if total < PARAMS_PARALLEL_THRESHOLD {
+        for (i, r) in results.iter().enumerate() {
+            let start = offsets[i];
+            let end = offsets[i + 1];
+            fill_params_window_py(
+                &ids_per_snp[i],
+                r,
+                &mut pc.id[start..end],
+                &mut pc.lhs[start..end],
+                &mut pc.op[start..end],
+                &mut pc.rhs[start..end],
+                &mut pc.est[start..end],
+                &mut pc.se[start..end],
+                &mut pc.z[start..end],
+                &mut pc.p[start..end],
+            );
+        }
+        return;
+    }
+
+    let windows = split_param_windows_py(
+        offsets, &mut pc.id, &mut pc.lhs, &mut pc.op, &mut pc.rhs, &mut pc.est, &mut pc.se,
+        &mut pc.z, &mut pc.p,
+    );
+    windows
+        .into_par_iter()
+        .zip(results.par_iter())
+        .zip(ids_per_snp.par_iter())
+        .for_each(
+            |(((id_c, lhs_c, op_c, rhs_c, est_c, se_c, z_c, p_c), r), snp_name)| {
+                fill_params_window_py(
+                    snp_name, r, id_c, lhs_c, op_c, rhs_c, est_c, se_c, z_c, p_c,
+                );
+            },
+        );
+}
+
+/// Extract `Q_SNP` columns into three parallel vectors, `None`-filled
+/// where missing. Returns `None` when no result carries any Q_SNP info.
+fn q_snp_columns_py(
+    results: &[gsem::gwas::user_gwas::SnpResult],
+) -> Option<(Vec<Option<f64>>, Vec<Option<i64>>, Vec<Option<f64>>)> {
+    let any = results
+        .iter()
+        .any(|r| r.q_snp.is_some() || r.q_snp_df.is_some() || r.q_snp_p.is_some());
+    if !any {
+        return None;
+    }
+    let chisq: Vec<Option<f64>> = results.iter().map(|r| r.q_snp).collect();
+    let df: Vec<Option<i64>> = results
+        .iter()
+        .map(|r| r.q_snp_df.map(|d| d as i64))
+        .collect();
+    let pval: Vec<Option<f64>> = results.iter().map(|r| r.q_snp_p).collect();
+    Some((chisq, df, pval))
+}
+
+/// Build the `{"snps": ..., "params": ...}` dict for `user_gwas` /
+/// `commonfactor_gwas`. Column buffers are populated on rayon threads
+/// inside `py.detach()`; `PyDict::new` / `set_item` calls happen after
+/// the GIL is reacquired.
 fn snp_results_to_dict<'py>(
     py: Python<'py>,
     results: &[gsem::gwas::user_gwas::SnpResult],
-    id_key: &str,
-    id_values: Vec<String>,
-    extras: Vec<(&str, Bound<'py, PyAny>)>,
+    snps: &[gsem::io::sumstats_reader::MergedSnp],
 ) -> PyResult<Bound<'py, PyDict>> {
-    let n = results.len();
-    let mut chisq: Vec<f64> = Vec::with_capacity(n);
-    let mut df: Vec<i64> = Vec::with_capacity(n);
-    let mut converged: Vec<bool> = Vec::with_capacity(n);
+    let (sc, pc, q_opt) = py.detach(|| {
+        let n = results.len();
 
-    // Are any Q_SNP fields populated anywhere?
-    let has_q = results
-        .iter()
-        .any(|r| r.q_snp.is_some() || r.q_snp_df.is_some() || r.q_snp_p.is_some());
-    let mut q_chisq: Vec<Option<f64>> = Vec::with_capacity(n);
-    let mut q_df: Vec<Option<i64>> = Vec::with_capacity(n);
-    let mut q_pval: Vec<Option<f64>> = Vec::with_capacity(n);
-
-    // Flat columnar parameter table.
-    let total_params: usize = results.iter().map(|r| r.params.len()).sum();
-    let mut p_snp_idx: Vec<i64> = Vec::with_capacity(total_params);
-    let mut p_lhs: Vec<String> = Vec::with_capacity(total_params);
-    let mut p_op: Vec<String> = Vec::with_capacity(total_params);
-    let mut p_rhs: Vec<String> = Vec::with_capacity(total_params);
-    let mut p_est: Vec<f64> = Vec::with_capacity(total_params);
-    let mut p_se: Vec<f64> = Vec::with_capacity(total_params);
-    let mut p_z: Vec<f64> = Vec::with_capacity(total_params);
-    let mut p_p: Vec<f64> = Vec::with_capacity(total_params);
-
-    for (row_idx, r) in results.iter().enumerate() {
-        chisq.push(r.chisq);
-        df.push(r.chisq_df as i64);
-        converged.push(r.converged);
-        q_chisq.push(r.q_snp);
-        q_df.push(r.q_snp_df.map(|d| d as i64));
-        q_pval.push(r.q_snp_p);
-
-        let idx1 = (row_idx + 1) as i64;
-        for p in &r.params {
-            p_snp_idx.push(idx1);
-            p_lhs.push(p.lhs.clone());
-            p_op.push(p.op.to_string());
-            p_rhs.push(p.rhs.clone());
-            p_est.push(p.est);
-            p_se.push(p.se);
-            p_z.push(p.z_stat);
-            p_p.push(p.p_value);
+        let mut sc = SnpColsPy {
+            snp: Vec::with_capacity(n),
+            chr: Vec::with_capacity(n),
+            bp: Vec::with_capacity(n),
+            maf: Vec::with_capacity(n),
+            a1: Vec::with_capacity(n),
+            a2: Vec::with_capacity(n),
+            chisq: Vec::with_capacity(n),
+            df: Vec::with_capacity(n),
+            converged: Vec::with_capacity(n),
+        };
+        let mut ids_per_snp: Vec<String> = Vec::with_capacity(n);
+        for r in results {
+            let s = &snps[r.snp_idx];
+            sc.snp.push(s.snp.clone());
+            sc.chr.push(s.chr.map(|c| c as i64));
+            sc.bp.push(s.bp.map(|b| b as i64));
+            sc.maf.push(s.maf);
+            sc.a1.push(s.a1.clone());
+            sc.a2.push(s.a2.clone());
+            sc.chisq.push(r.chisq);
+            sc.df.push(r.chisq_df as i64);
+            sc.converged.push(r.converged);
+            ids_per_snp.push(s.snp.clone());
         }
+
+        let offsets = params_offsets_py(results);
+        let mut pc = ParamColsPy::zeroed(*offsets.last().unwrap_or(&0));
+        fill_params_table_py(results, &ids_per_snp, &offsets, &mut pc);
+
+        (sc, pc, q_snp_columns_py(results))
+    });
+
+    let snps_dict = PyDict::new(py);
+    snps_dict.set_item("SNP", sc.snp)?;
+    snps_dict.set_item("CHR", sc.chr)?;
+    snps_dict.set_item("BP", sc.bp)?;
+    snps_dict.set_item("MAF", sc.maf)?;
+    snps_dict.set_item("A1", sc.a1)?;
+    snps_dict.set_item("A2", sc.a2)?;
+    snps_dict.set_item("chisq", sc.chisq)?;
+    snps_dict.set_item("df", sc.df)?;
+    snps_dict.set_item("converged", sc.converged)?;
+    if let Some((qc, qd, qp)) = q_opt {
+        snps_dict.set_item("Q_chisq", qc)?;
+        snps_dict.set_item("Q_df", qd)?;
+        snps_dict.set_item("Q_pval", qp)?;
     }
 
-    let params = PyDict::new(py);
-    params.set_item("snp_idx", p_snp_idx)?;
-    params.set_item("lhs", p_lhs)?;
-    params.set_item("op", p_op)?;
-    params.set_item("rhs", p_rhs)?;
-    params.set_item("est", p_est)?;
-    params.set_item("se", p_se)?;
-    params.set_item("z", p_z)?;
-    params.set_item("p", p_p)?;
+    let params_dict = PyDict::new(py);
+    params_dict.set_item("SNP", pc.id)?;
+    params_dict.set_item("lhs", pc.lhs)?;
+    params_dict.set_item("op", pc.op)?;
+    params_dict.set_item("rhs", pc.rhs)?;
+    params_dict.set_item("est", pc.est)?;
+    params_dict.set_item("se", pc.se)?;
+    params_dict.set_item("z", pc.z)?;
+    params_dict.set_item("p", pc.p)?;
 
     let out = PyDict::new(py);
-    out.set_item(id_key, id_values)?;
-    for (k, v) in extras {
-        out.set_item(k, v)?;
+    out.set_item("snps", snps_dict)?;
+    out.set_item("params", params_dict)?;
+    Ok(out)
+}
+
+/// TWAS variant of [`snp_results_to_dict`]. Returns
+/// `{"genes": {...}, "params": {...}}` with `Gene` as the identifier
+/// column in both inner tables. Called from `user_gwas(twas = True)`.
+fn twas_results_to_dict<'py>(
+    py: Python<'py>,
+    results: &[gsem::gwas::user_gwas::SnpResult],
+    genes: &[gsem::io::twas_reader::TwasGene],
+) -> PyResult<Bound<'py, PyDict>> {
+    let (gc, pc, q_opt) = py.detach(|| {
+        let n = results.len();
+
+        let mut gc = GeneColsPy {
+            gene: Vec::with_capacity(n),
+            panel: Vec::with_capacity(n),
+            hsq: Vec::with_capacity(n),
+            chisq: Vec::with_capacity(n),
+            df: Vec::with_capacity(n),
+            converged: Vec::with_capacity(n),
+        };
+        let mut ids_per_snp: Vec<String> = Vec::with_capacity(n);
+        for r in results {
+            let g = &genes[r.snp_idx];
+            gc.gene.push(g.gene.clone());
+            gc.panel.push(g.panel.clone());
+            gc.hsq.push(g.hsq);
+            gc.chisq.push(r.chisq);
+            gc.df.push(r.chisq_df as i64);
+            gc.converged.push(r.converged);
+            ids_per_snp.push(g.gene.clone());
+        }
+
+        let offsets = params_offsets_py(results);
+        let mut pc = ParamColsPy::zeroed(*offsets.last().unwrap_or(&0));
+        fill_params_table_py(results, &ids_per_snp, &offsets, &mut pc);
+
+        (gc, pc, q_snp_columns_py(results))
+    });
+
+    let genes_dict = PyDict::new(py);
+    genes_dict.set_item("Gene", gc.gene)?;
+    genes_dict.set_item("Panel", gc.panel)?;
+    genes_dict.set_item("HSQ", gc.hsq)?;
+    genes_dict.set_item("chisq", gc.chisq)?;
+    genes_dict.set_item("df", gc.df)?;
+    genes_dict.set_item("converged", gc.converged)?;
+    if let Some((qc, qd, qp)) = q_opt {
+        genes_dict.set_item("Q_chisq", qc)?;
+        genes_dict.set_item("Q_df", qd)?;
+        genes_dict.set_item("Q_pval", qp)?;
     }
-    out.set_item("chisq", chisq)?;
-    out.set_item("df", df)?;
-    out.set_item("converged", converged)?;
-    if has_q {
-        out.set_item("Q_chisq", q_chisq)?;
-        out.set_item("Q_df", q_df)?;
-        out.set_item("Q_pval", q_pval)?;
-    }
-    out.set_item("params", params)?;
+
+    let params_dict = PyDict::new(py);
+    params_dict.set_item("Gene", pc.id)?;
+    params_dict.set_item("lhs", pc.lhs)?;
+    params_dict.set_item("op", pc.op)?;
+    params_dict.set_item("rhs", pc.rhs)?;
+    params_dict.set_item("est", pc.est)?;
+    params_dict.set_item("se", pc.se)?;
+    params_dict.set_item("z", pc.z)?;
+    params_dict.set_item("p", pc.p)?;
+
+    let out = PyDict::new(py);
+    out.set_item("genes", genes_dict)?;
+    out.set_item("params", params_dict)?;
     Ok(out)
 }
 
@@ -774,11 +1060,7 @@ fn commonfactor_gwas<'py>(
             None,
         )
     });
-    let snp_ids: Vec<String> = results
-        .iter()
-        .map(|r| valid_snps[r.snp_idx].snp.clone())
-        .collect();
-    snp_results_to_dict(py, &results, "SNP", snp_ids, Vec::new())
+    snp_results_to_dict(py, &results, &valid_snps)
 }
 
 /// Run user-specified GWAS.
@@ -806,33 +1088,30 @@ fn user_gwas<'py>(
     q_snp: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let ldsc_result = pyany_to_ldsc_result(covstruc)?;
-    let merged =
-        gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
-
     let k = ldsc_result.s.nrows();
     let gc_mode: gsem::gwas::gc_correction::GcMode = gc
         .parse()
         .unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
-    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
-    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = merged
-        .snps
-        .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
-        .collect();
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);
 
     let snp_se_val = if snpse { Some(0.0005) } else { None };
+
+    // TWAS renames the observed variant from `SNP` to `Gene` throughout
+    // the model; see crates/gsem/src/main.rs::run_twas_gwas.
+    let model_str = if twas {
+        model.replace("SNP", "Gene")
+    } else {
+        model.to_string()
+    };
+    let pt = gsem_sem::syntax::parse_model(&model_str, std_lv)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
+
     let variant_label = if twas {
         gsem::gwas::user_gwas::VariantLabel::Gene
     } else {
         gsem::gwas::user_gwas::VariantLabel::Snp
     };
-
-    let pt = gsem_sem::syntax::parse_model(model, std_lv)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("model parse error: {e}")))?;
     let config = gsem::gwas::user_gwas::UserGwasConfig {
         model: pt,
         estimation: gsem_sem::EstimationMethod::from_str_lossy(estimation),
@@ -845,6 +1124,7 @@ fn user_gwas<'py>(
         fix_measurement,
         num_threads: if parallel { cores } else { Some(1) },
     };
+
     if !printwarn {
         log::set_max_level(log::LevelFilter::Error);
     }
@@ -857,41 +1137,87 @@ fn user_gwas<'py>(
         log::warn!("MPI is not supported in gsemr — use the cores parameter for thread control");
     }
 
-    // Release the GIL while rayon runs the per-SNP fits.
-    let mut results = py.detach(|| {
-        gsem::gwas::user_gwas::run_user_gwas(
-            &config,
-            &ldsc_result.s,
-            &ldsc_result.v,
-            &i_ld,
-            &beta_snp,
-            &se_snp,
-            &var_snp,
-            None,
-        )
-    });
-
-    if let Some(ref patterns) = sub {
-        let pats: Vec<String> = patterns
-            .iter()
-            .map(|s| s.trim().replace(' ', ""))
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !pats.is_empty() {
-            for snp_result in &mut results {
-                snp_result.params.retain(|p| {
-                    let key = format!("{}{}{}", p.lhs, p.op, p.rhs).replace(' ', "");
-                    pats.contains(&key)
-                });
+    // Apply the `sub` parameter-name filter in place.
+    let apply_sub_filter = |results: &mut Vec<gsem::gwas::user_gwas::SnpResult>| {
+        if let Some(ref patterns) = sub {
+            let pats: Vec<String> = patterns
+                .iter()
+                .map(|s| s.trim().replace(' ', ""))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !pats.is_empty() {
+                for snp_result in results.iter_mut() {
+                    snp_result.params.retain(|p| {
+                        let key = format!("{}{}{}", p.lhs, p.op, p.rhs).replace(' ', "");
+                        pats.contains(&key)
+                    });
+                }
             }
         }
-    }
+    };
 
-    let snp_ids: Vec<String> = results
-        .iter()
-        .map(|r| merged.snps[r.snp_idx].snp.clone())
-        .collect();
-    snp_results_to_dict(py, &results, "SNP", snp_ids, Vec::new())
+    if twas {
+        let twas_data = gsem::io::twas_reader::read_twas_sumstats(std::path::Path::new(
+            sumstats_path,
+        ))
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+
+        if twas_data.trait_names.len() != k {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "trait count mismatch: LDSC has {k} traits, TWAS sumstats has {} (beta.* columns)",
+                twas_data.trait_names.len()
+            )));
+        }
+
+        let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
+        let se_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.se.as_slice()).collect();
+        // In TWAS mode var_snp = HSQ (heritability of expression).
+        let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
+
+        let mut results = py.detach(|| {
+            gsem::gwas::user_gwas::run_user_gwas(
+                &config,
+                &ldsc_result.s,
+                &ldsc_result.v,
+                &i_ld,
+                &beta_gene,
+                &se_gene,
+                &var_gene,
+                None,
+            )
+        });
+        apply_sub_filter(&mut results);
+
+        twas_results_to_dict(py, &results, &twas_data.genes)
+    } else {
+        let merged =
+            gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
+
+        let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
+        let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
+        let var_snp: Vec<f64> = merged
+            .snps
+            .iter()
+            .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+            .collect();
+
+        let mut results = py.detach(|| {
+            gsem::gwas::user_gwas::run_user_gwas(
+                &config,
+                &ldsc_result.s,
+                &ldsc_result.v,
+                &i_ld,
+                &beta_snp,
+                &se_snp,
+                &var_snp,
+                None,
+            )
+        });
+        apply_sub_filter(&mut results);
+
+        snp_results_to_dict(py, &results, &merged.snps)
+    }
 }
 
 /// Parallel analysis to determine number of factors.

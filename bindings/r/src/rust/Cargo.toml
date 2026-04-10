@@ -18,3 +18,4 @@ gsem-ldsc = { path = "../../../../crates/gsem-ldsc" }
 gsem-sem = { path = "../../../../crates/gsem-sem" }
 faer = "0.24"
 log = "0.4"
+rayon = "1"

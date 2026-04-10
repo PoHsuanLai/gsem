@@ -34,74 +34,35 @@
   )
 }
 
-#' Convert the columnar list returned by `snp_results_to_list` /
-#' `twas_results_to_list` into the per-SNP data frame shape that matches
-#' what `jsonlite::fromJSON()` previously produced: one top-level row per
-#' SNP/gene with a list-column `params` holding a per-SNP data frame of
-#' parameter estimates.
+#' Wrap a two-table GWAS result from the Rust binding into R data frames.
 #'
-#' The Rust side returns:
-#'   list(SNP = chr[n], chisq = dbl[n], df = int[n], converged = lgl[n],
-#'        [Q_chisq = dbl[n], Q_df = int[n], Q_pval = dbl[n],]
-#'        params = list(snp_idx = int[m], lhs = chr[m], op = chr[m],
-#'                      rhs = chr[m], est = dbl[m], se = dbl[m],
-#'                      z = dbl[m], p = dbl[m]))
+#' The Rust side returns `list(snps = ..., params = ...)` (or `list(genes
+#' = ..., params = ...)` for TWAS) where each inner slot is already a
+#' columnar list of equal-length vectors. Use `structure(..., class =
+#' "data.frame", row.names = .set_row_names(n))` to skip the
+#' `data.frame()` constructor's per-column type coercion, which is
+#' prohibitive at 20M-row params tables.
 #'
-#' where `snp_idx` is a 1-based index into the SNP columns. This helper
-#' splits the flat params columns by `snp_idx` so each row gets its own
-#' data frame under `$params[[i]]`, matching R GenomicSEM's historical
-#' output and what downstream wrapper code (e.g. commonfactorGWAS.R)
-#' expects.
-#'
+#' @param result Two-element list returned by the Rust binding.
+#' @return A two-element named list (`snps` + `params`, or `genes` +
+#'   `params`), each slot being a `data.frame`.
 #' @keywords internal
-.snp_columnar_to_df <- function(result, id_col = "SNP", extra_cols = character()) {
-  n <- length(result[[id_col]])
-
-  # Build the per-SNP params data frames by splitting on snp_idx.
-  params_flat <- result$params
-  per_snp <- vector("list", n)
-  if (!is.null(params_flat) && length(params_flat$snp_idx) > 0) {
-    for (i in seq_len(n)) {
-      mask <- params_flat$snp_idx == i
-      per_snp[[i]] <- data.frame(
-        lhs = params_flat$lhs[mask],
-        op = params_flat$op[mask],
-        rhs = params_flat$rhs[mask],
-        est = params_flat$est[mask],
-        se = params_flat$se[mask],
-        z = params_flat$z[mask],
-        p = params_flat$p[mask],
-        stringsAsFactors = FALSE
-      )
-    }
-  } else {
-    for (i in seq_len(n)) {
-      per_snp[[i]] <- data.frame(
-        lhs = character(0), op = character(0), rhs = character(0),
-        est = numeric(0), se = numeric(0), z = numeric(0), p = numeric(0),
-        stringsAsFactors = FALSE
-      )
-    }
+.snp_columnar_to_df <- function(result) {
+  as_df <- function(cols) {
+    if (is.null(cols) || length(cols) == 0L) return(data.frame())
+    n <- length(cols[[1]])
+    structure(
+      cols,
+      class     = "data.frame",
+      names     = names(cols),
+      row.names = .set_row_names(n)
+    )
   }
-
-  df <- data.frame(
-    setNames(list(result[[id_col]]), id_col),
-    stringsAsFactors = FALSE
+  top_name <- if (!is.null(result$snps)) "snps" else "genes"
+  setNames(
+    list(as_df(result[[top_name]]), as_df(result$params)),
+    c(top_name, "params")
   )
-  for (col in extra_cols) {
-    df[[col]] <- result[[col]]
-  }
-  df$chisq <- result$chisq
-  df$df <- result$df
-  df$converged <- result$converged
-  if (!is.null(result$Q_chisq)) {
-    df$Q_chisq <- result$Q_chisq
-    df$Q_df <- result$Q_df
-    df$Q_pval <- result$Q_pval
-  }
-  df$params <- per_snp
-
-  df
 }
 
 #' Resolve `parallel`/`cores` arguments to an explicit thread count.

@@ -268,21 +268,19 @@ gwas_model = (
     f"F1 =~ NA*{TRAIT_NAMES[0]} + {TRAIT_NAMES[1]} + {TRAIT_NAMES[2]}\n"
     "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
 )
+# gs.user_gwas returns {"snps": {...}, "params": {...}}.
 ug_outputs: dict[str, object] = {}
 for parallel in (True, False):
     tag = "par" if parallel else "seq"
-    j = run_bench(f"userGWAS", f"Python ({tag})",
-                  lambda p=parallel: gs.user_gwas(
-                      covstruc_json, py_subset_path, gwas_model, parallel=p))
-    if j is not None:
-        try:
-            ug_outputs[tag] = json.loads(j)
-        except Exception:
-            pass
+    out = run_bench(f"userGWAS", f"Python ({tag})",
+                    lambda p=parallel: gs.user_gwas(
+                        covstruc_json, py_subset_path, gwas_model, parallel=p))
+    if out is not None:
+        ug_outputs[tag] = out
 
 if "par" in ug_outputs:
-    n_conv = sum(1 for e in ug_outputs["par"] if e.get("converged"))
-    store_artifact("userGWAS_par_converged", n_conv)
+    conv = ug_outputs["par"].get("snps", {}).get("converged", [])
+    store_artifact("userGWAS_par_converged", sum(1 for x in conv if x))
 
 # ---------------------------------------------------------------------------
 # 10. paLDSC

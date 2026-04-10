@@ -20,3 +20,4 @@ gsem-sem = { path = "../../../../crates/gsem-sem" }
 faer = "0.24"
 log = "0.4"
 pyo3-log = "0.13"
+rayon = "1"
