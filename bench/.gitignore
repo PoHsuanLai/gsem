@@ -1,8 +1,10 @@
 data/
+out_bench/
 results.md
 Rplots.pdf
+benchmark_plots.pdf
+benchmark_results.csv
 *.tar.bz2
 *.tar.gz
 *.bz2
-*.log
 *.log
