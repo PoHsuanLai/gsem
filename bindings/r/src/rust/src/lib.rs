@@ -735,32 +735,33 @@ fn commonfactor_gwas_rust(
         Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    // Filter out SNPs with zero MAF (var_snp=0 causes singular matrices)
-    let valid_idx: Vec<usize> = merged
-        .snps
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| {
-            let v = 2.0 * s.maf * (1.0 - s.maf);
-            v > 1e-10
+    // Filter out SNPs with zero MAF (var_snp=0 causes singular matrices).
+    // Work against the SoA `maf` column directly so we don't materialize
+    // any per-SNP struct.
+    let valid_idx: Vec<usize> = (0..merged.len())
+        .filter(|&i| {
+            let m = merged.maf[i];
+            2.0 * m * (1.0 - m) > 1e-10
         })
-        .map(|(i, _)| i)
         .collect();
 
     if valid_idx.is_empty() {
         return conversions::error_list("no SNPs with valid MAF (all MAF=0)");
     }
 
-    let filtered_snps: Vec<_> = valid_idx.iter().map(|&i| &merged.snps[i]).collect();
-    let beta_snp: Vec<&[f64]> = filtered_snps.iter().map(|s| s.beta.as_slice()).collect();
-    let se_snp: Vec<&[f64]> = filtered_snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = filtered_snps
+    // Build the ref vecs directly from `valid_idx`. Avoid calling
+    // `merged.beta_rows()` first — that would allocate n_snps
+    // pointers only to throw most away. Instead, tap each row
+    // individually from the flat buffer.
+    let beta_snp: Vec<&[f64]> = valid_idx.iter().map(|&i| merged.beta_row(i)).collect();
+    let se_snp: Vec<&[f64]> = valid_idx.iter().map(|&i| merged.se_row(i)).collect();
+    let var_snp: Vec<f64> = valid_idx
         .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+        .map(|&i| {
+            let m = merged.maf[i];
+            2.0 * m * (1.0 - m)
+        })
         .collect();
-
-    // Remap snp indices: create a new merged.snps with only valid entries
-    let valid_merged_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
 
     let n_snps = var_snp.len();
     let progress = RProgress::new(n_snps);
@@ -777,7 +778,14 @@ fn commonfactor_gwas_rust(
         Some(&cb),
     );
 
-    conversions::snp_results_to_list(&results, &valid_merged_snps)
+    // Drop the ref vecs before result conversion so the peak of this
+    // call stays bounded (the result tables are the next big
+    // allocation).
+    drop(beta_snp);
+    drop(se_snp);
+    drop(var_snp);
+
+    conversions::snp_results_to_list(&results, &merged, Some(&valid_idx))
 }
 
 /// Run user-specified GWAS.
@@ -878,13 +886,9 @@ fn user_gwas_rust(
         Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
-    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = merged
-        .snps
-        .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
-        .collect();
+    let beta_snp = merged.beta_rows();
+    let se_snp = merged.se_rows();
+    let var_snp = merged.var_snp();
 
     let snp_pt = match gsem_sem::syntax::parse_model(model, std_lv) {
         Ok(pt) => pt,
@@ -921,7 +925,12 @@ fn user_gwas_rust(
         filter_results_by_sub(&mut results, sub);
     }
 
-    conversions::snp_results_to_list(&results, &merged.snps)
+    // Drop the ref vecs before result conversion.
+    drop(beta_snp);
+    drop(se_snp);
+    drop(var_snp);
+
+    conversions::snp_results_to_list(&results, &merged, None)
 }
 
 fn filter_results_by_sub(results: &mut [gsem::gwas::user_gwas::SnpResult], sub: &str) {
@@ -1361,12 +1370,15 @@ fn multi_snp_rust(
         snp_var_se,
     };
 
+    // `run_multi_snp` now takes borrowed rows.
+    let beta_refs: Vec<&[f64]> = beta_rows.iter().map(Vec::as_slice).collect();
+    let se_refs: Vec<&[f64]> = se_rows.iter().map(Vec::as_slice).collect();
     let result = gsem::gwas::multi_snp::run_multi_snp(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
-        &beta_rows,
-        &se_rows,
+        &beta_refs,
+        &se_refs,
         &var_snp,
         &ld_mat,
         &snp_names,

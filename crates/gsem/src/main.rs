@@ -137,6 +137,10 @@ struct SumstatsArgs {
     info_filter: f64,
     #[arg(long, default_value = "0.01")]
     maf_filter: f64,
+    /// Keep multi-character (indel) alleles in the merged output.
+    /// Note: downstream `gsem userGWAS` / `commonfactorGWAS` loading
+    /// only accepts single-nucleotide alleles (A/C/G/T); any indel
+    /// rows will be dropped with a warning at load time.
     #[arg(long)]
     keep_indel: bool,
     #[arg(short, long, default_value = "merged_sumstats.tsv")]
@@ -890,7 +894,7 @@ fn run_gwas_snp(
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(sumstats)
         .with_context(|| format!("failed to read {}", sumstats.display()))?;
 
-    let n_snps = merged.snps.len();
+    let n_snps = merged.len();
     eprintln!("GWAS: {n_snps} SNPs, {k} traits, estimation={estimation}, gc={gc}");
 
     if merged.trait_names.len() != k {
@@ -901,13 +905,9 @@ fn run_gwas_snp(
     }
 
     // Extract per-SNP arrays for user_gwas (borrowed slices, no copy)
-    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
-    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = merged
-        .snps
-        .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
-        .collect();
+    let beta_snp = merged.beta_rows();
+    let se_snp = merged.se_rows();
+    let var_snp = merged.var_snp();
 
     // Parse model once upfront
     let model = gsem_sem::syntax::parse_model(model_str, std_lv)
@@ -949,7 +949,7 @@ fn run_gwas_snp(
     // Write TSV output
     let mut output = String::from("SNP\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
     for snp_result in &results {
-        let snp_name = &merged.snps[snp_result.snp_idx].snp;
+        let snp_name = &merged.snp[snp_result.snp_idx];
         for param in &snp_result.params {
             // Apply --sub filter: only include params matching the filter list
             if let Some(filters) = sub_filters {
@@ -986,7 +986,7 @@ fn run_gwas_snp(
 
     // Generate plots from the first free parameter (or first --sub match) per SNP
     if save_plot_manhattan.is_some() || save_plot_qq.is_some() {
-        let (p_values, manhattan_pts) = collect_plot_data(&results, &merged.snps, sub_filters);
+        let (p_values, manhattan_pts) = collect_plot_data(&results, &merged, sub_filters);
         if let Some(qq_path) = save_plot_qq {
             gsem::plot::qq::qq_plot(&p_values, "GWAS QQ Plot", qq_path)?;
             eprintln!("QQ plot: {}", qq_path.display());
@@ -1018,11 +1018,13 @@ fn run_gwas_snp(
 /// (or just the first free parameter when no filter is set).
 fn collect_plot_data(
     results: &[gsem::gwas::user_gwas::SnpResult],
-    snps: &[gsem::io::sumstats_reader::MergedSnp],
+    merged: &gsem::io::sumstats_reader::MergedSumstats,
     sub_filters: &Option<Vec<String>>,
 ) -> (Vec<f64>, Vec<gsem::plot::ManhattanPoint>) {
     let mut p_values = Vec::with_capacity(results.len());
     let mut manhattan = Vec::new();
+    let chr_vec = merged.chr.as_ref();
+    let bp_vec = merged.bp.as_ref();
     for snp_result in results {
         let param = snp_result.params.iter().find(|p| {
             if let Some(filters) = sub_filters {
@@ -1037,8 +1039,9 @@ fn collect_plot_data(
             continue;
         }
         p_values.push(param.p_value);
-        if let Some(snp) = snps.get(snp_result.snp_idx)
-            && let (Some(chr), Some(bp)) = (snp.chr, snp.bp)
+        if let (Some(chrs), Some(bps)) = (chr_vec, bp_vec)
+            && let (Some(&chr), Some(&bp)) =
+                (chrs.get(snp_result.snp_idx), bps.get(snp_result.snp_idx))
         {
             manhattan.push(gsem::plot::ManhattanPoint {
                 chr,
@@ -1257,7 +1260,7 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
     let merged = gsem::io::sumstats_reader::read_merged_sumstats(&args.sumstats)
         .with_context(|| format!("failed to read {}", args.sumstats.display()))?;
 
-    let n_snps = merged.snps.len();
+    let n_snps = merged.len();
     let gc = &args.gc;
     eprintln!("Common factor GWAS: {n_snps} SNPs, {k} traits, gc={gc}");
 
@@ -1268,13 +1271,9 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
         );
     }
 
-    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
-    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = merged
-        .snps
-        .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
-        .collect();
+    let beta_snp = merged.beta_rows();
+    let se_snp = merged.se_rows();
+    let var_snp = merged.var_snp();
 
     // Clamp intercept diagonals to >= 1 (matching R)
     let mut i_ld = ldsc_result.i_mat.to_owned();
@@ -1312,7 +1311,7 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
     // Write TSV output (same format as user GWAS)
     let mut output = String::from("SNP\tlhs\top\trhs\test\tse\tz\tp\tchisq\tdf\tconverged\n");
     for snp_result in &results {
-        let snp_name = &merged.snps[snp_result.snp_idx].snp;
+        let snp_name = &merged.snp[snp_result.snp_idx];
         for param in &snp_result.params {
             output.push_str(&format!(
                 "{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.4}\t{:.6e}\t{:.4}\t{}\t{}\n",
@@ -1341,7 +1340,7 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
     );
 
     if args.save_plot_manhattan.is_some() || args.save_plot_qq.is_some() {
-        let (p_values, manhattan_pts) = collect_plot_data(&results, &merged.snps, &None);
+        let (p_values, manhattan_pts) = collect_plot_data(&results, &merged, &None);
         if let Some(qq_path) = args.save_plot_qq.as_deref() {
             gsem::plot::qq::qq_plot(&p_values, "Common Factor GWAS QQ Plot", qq_path)?;
             eprintln!("QQ plot: {}", qq_path.display());
@@ -1663,27 +1662,26 @@ fn run_multi_snp_cmd(args: MultiSnpArgs) -> Result<()> {
     let n_snps = ld_mat.nrows();
     eprintln!("LD matrix: {n_snps} x {n_snps}");
 
-    if n_snps > merged.snps.len() {
+    if n_snps > merged.len() {
         anyhow::bail!(
             "LD matrix has {n_snps} SNPs but sumstats only has {} SNPs",
-            merged.snps.len()
+            merged.len()
         );
     }
 
-    // Use the first n_snps from the sumstats
-    let beta_snp: Vec<Vec<f64>> = merged.snps[..n_snps]
-        .iter()
-        .map(|s| s.beta.clone())
+    // Use the first n_snps from the sumstats. Build the ref vecs
+    // directly from the sub-range — don't call `merged.beta_rows()`
+    // first since that would allocate n_snps_full pointers only to
+    // throw most away.
+    let beta_snp: Vec<&[f64]> = (0..n_snps).map(|i| merged.beta_row(i)).collect();
+    let se_snp: Vec<&[f64]> = (0..n_snps).map(|i| merged.se_row(i)).collect();
+    let var_snp: Vec<f64> = (0..n_snps)
+        .map(|i| {
+            let m = merged.maf[i];
+            2.0 * m * (1.0 - m)
+        })
         .collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps[..n_snps].iter().map(|s| s.se.clone()).collect();
-    let var_snp: Vec<f64> = merged.snps[..n_snps]
-        .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
-        .collect();
-    let snp_names: Vec<String> = merged.snps[..n_snps]
-        .iter()
-        .map(|s| s.snp.clone())
-        .collect();
+    let snp_names: Vec<String> = merged.snp[..n_snps].to_vec();
 
     let model = gsem_sem::syntax::parse_model(&model_str, false)
         .map_err(|e| anyhow::anyhow!("model parse error: {e}"))?;

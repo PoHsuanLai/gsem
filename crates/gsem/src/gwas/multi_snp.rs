@@ -56,8 +56,8 @@ pub fn run_multi_snp(
     config: &MultiSnpConfig,
     s_ld: &Mat<f64>,
     v_ld: &Mat<f64>,
-    beta: &[Vec<f64>],    // n_snps x k betas
-    se: &[Vec<f64>],      // n_snps x k SEs
+    beta: &[&[f64]],      // n_snps x k betas (borrowed rows)
+    se: &[&[f64]],        // n_snps x k SEs   (borrowed rows)
     var_snp: &[f64],      // n_snps variances
     ld_matrix: &Mat<f64>, // n_snps x n_snps LD correlation
     snp_names: &[String],
@@ -383,8 +383,10 @@ mod tests {
             snp_var_se: None,
         };
 
+        let beta_refs: Vec<&[f64]> = beta.iter().map(Vec::as_slice).collect();
+        let se_refs: Vec<&[f64]> = se.iter().map(Vec::as_slice).collect();
         let result = run_multi_snp(
-            &config, &s_ld, &v_ld, &beta, &se, &var_snp, &ld_matrix, &snp_names,
+            &config, &s_ld, &v_ld, &beta_refs, &se_refs, &var_snp, &ld_matrix, &snp_names,
         );
 
         // Should produce some parameters (even if not converged, we check structure)

@@ -374,7 +374,11 @@ thousand SNPs.
 What grows with **N_SNPs**:
 
 - The sumstats input (`MergedSumstats`) — loaded fully into memory
-  before the GWAS loop starts. ~150 MB at 1.2M SNPs × 3 traits.
+  before the GWAS loop starts. Stored as a Structure-of-Arrays
+  (parallel `Vec<String>` for rsIDs, `Vec<u8>` for A1/A2, flat
+  `Vec<f64>` of length `n * k` for the beta/se matrices) to keep
+  the per-SNP footprint near ~98 bytes. ~480 MB at 4.94M SNPs × 3
+  traits; ~100 MB at 1.2M SNPs × 3 traits.
 - The per-SNP results vector (`Vec<SnpResult>`) — held resident for the
   entire run, then copied into the frontend's native result type
   (R list of column vectors, Python dict of NumPy arrays, or TSV on

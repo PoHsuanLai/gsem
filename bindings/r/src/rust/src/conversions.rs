@@ -8,7 +8,7 @@
 use extendr_api::prelude::*;
 use faer::Mat;
 use gsem::gwas::user_gwas::{SnpParamResult, SnpResult};
-use gsem::io::sumstats_reader::MergedSnp;
+use gsem::io::sumstats_reader::MergedSumstats;
 use gsem::io::twas_reader::TwasGene;
 use gsem_ldsc::LdscResult;
 
@@ -487,29 +487,56 @@ fn build_params_list(pc: ParamCols, id_label: &str) -> List {
 /// for `userGWAS` / `commonfactorGWAS`. Both inner slots are columnar
 /// and get wrapped in `data.frame` by the R shim via its
 /// `structure(..., class = "data.frame")` fast path.
-pub fn snp_results_to_list(results: &[SnpResult], snps: &[MergedSnp]) -> List {
+///
+/// `index_map` lets callers that filter the merged file (e.g. MAF=0
+/// drop in `common_factor_gwas_rust`) pass the original
+/// `MergedSumstats` plus a `Vec<usize>` of surviving rows rather than
+/// a cloned subset — saves ~1.3 GB transient on the full bench.
+/// Pass `None` for the identity mapping.
+pub fn snp_results_to_list(
+    results: &[SnpResult],
+    merged: &MergedSumstats,
+    index_map: Option<&[usize]>,
+) -> List {
     let n = results.len();
 
     let mut sc = SnpCols::with_capacity(n);
-    let mut ids_per_snp: Vec<String> = Vec::with_capacity(n);
     for r in results {
-        let s = &snps[r.snp_idx];
-        sc.snp.push(s.snp.clone());
-        sc.chr
-            .push(s.chr.map(|c| Rint::from(c as i32)).unwrap_or(Rint::na()));
-        sc.bp.push(s.bp.map(|b| b as f64).unwrap_or(f64::NAN));
-        sc.maf.push(s.maf);
-        sc.a1.push(s.a1.clone());
-        sc.a2.push(s.a2.clone());
+        let idx = match index_map {
+            Some(m) => m[r.snp_idx],
+            None => r.snp_idx,
+        };
+        sc.snp.push(merged.snp[idx].clone());
+        sc.chr.push(
+            merged
+                .chr
+                .as_ref()
+                .and_then(|c| c.get(idx).copied())
+                .map(|c| Rint::from(c as i32))
+                .unwrap_or(Rint::na()),
+        );
+        sc.bp.push(
+            merged
+                .bp
+                .as_ref()
+                .and_then(|b| b.get(idx).copied())
+                .map(|b| b as f64)
+                .unwrap_or(f64::NAN),
+        );
+        sc.maf.push(merged.maf[idx]);
+        sc.a1.push(merged.a1_string(idx));
+        sc.a2.push(merged.a2_string(idx));
         sc.chisq.push(r.chisq);
         sc.df.push(r.chisq_df as i32);
         sc.converged.push(r.converged);
-        ids_per_snp.push(s.snp.clone());
     }
 
+    // `fill_params_table` takes `&[String]`, so reuse `sc.snp`
+    // directly instead of cloning into a separate `ids_per_snp`
+    // buffer — saves another ~80 MB transient at 4.94M SNPs.
     let offsets = params_offsets(results);
     let mut pc = ParamCols::zeroed(*offsets.last().unwrap_or(&0));
-    fill_params_table(results, &ids_per_snp, &offsets, &mut pc);
+    fill_params_table(results, &sc.snp, &offsets, &mut pc);
 
     let snps_list = build_snps_list(sc, q_snp_columns(results));
     let params_list = build_params_list(pc, "SNP");

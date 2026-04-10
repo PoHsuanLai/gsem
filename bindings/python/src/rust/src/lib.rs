@@ -301,10 +301,16 @@ fn q_snp_columns_py(
 /// `commonfactor_gwas`. Column buffers are populated on rayon threads
 /// inside `py.detach()`; `PyDict::new` / `set_item` calls happen after
 /// the GIL is reacquired.
+///
+/// `index_map` lets callers that filter the merged file (e.g. MAF=0
+/// drop in `commonfactor_gwas`) pass the original `MergedSumstats`
+/// plus a `Vec<usize>` of surviving rows rather than a cloned subset.
+/// Pass `None` for the identity mapping.
 fn snp_results_to_dict<'py>(
     py: Python<'py>,
     results: &[gsem::gwas::user_gwas::SnpResult],
-    snps: &[gsem::io::sumstats_reader::MergedSnp],
+    merged: &gsem::io::sumstats_reader::MergedSumstats,
+    index_map: Option<&[usize]>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let (sc, pc, q_opt) = py.detach(|| {
         let n = results.len();
@@ -320,24 +326,38 @@ fn snp_results_to_dict<'py>(
             df: Vec::with_capacity(n),
             converged: Vec::with_capacity(n),
         };
-        let mut ids_per_snp: Vec<String> = Vec::with_capacity(n);
         for r in results {
-            let s = &snps[r.snp_idx];
-            sc.snp.push(s.snp.clone());
-            sc.chr.push(s.chr.map(|c| c as i64));
-            sc.bp.push(s.bp.map(|b| b as i64));
-            sc.maf.push(s.maf);
-            sc.a1.push(s.a1.clone());
-            sc.a2.push(s.a2.clone());
+            let idx = match index_map {
+                Some(m) => m[r.snp_idx],
+                None => r.snp_idx,
+            };
+            sc.snp.push(merged.snp[idx].clone());
+            sc.chr.push(
+                merged
+                    .chr
+                    .as_ref()
+                    .and_then(|c| c.get(idx).copied())
+                    .map(|c| c as i64),
+            );
+            sc.bp.push(
+                merged
+                    .bp
+                    .as_ref()
+                    .and_then(|b| b.get(idx).copied())
+                    .map(|b| b as i64),
+            );
+            sc.maf.push(merged.maf[idx]);
+            sc.a1.push(merged.a1_string(idx));
+            sc.a2.push(merged.a2_string(idx));
             sc.chisq.push(r.chisq);
             sc.df.push(r.chisq_df as i64);
             sc.converged.push(r.converged);
-            ids_per_snp.push(s.snp.clone());
         }
 
+        // Reuse `sc.snp` for params-table ids — no separate clone.
         let offsets = params_offsets_py(results);
         let mut pc = ParamColsPy::zeroed(*offsets.last().unwrap_or(&0));
-        fill_params_table_py(results, &ids_per_snp, &offsets, &mut pc);
+        fill_params_table_py(results, &sc.snp, &offsets, &mut pc);
 
         (sc, pc, q_snp_columns_py(results))
     });
@@ -1032,24 +1052,28 @@ fn commonfactor_gwas<'py>(
     clamp_i_ld_diagonal(&mut i_ld);
 
     // Filter SNPs with zero MAF: var_snp=0 → singular per-SNP matrices.
-    let valid_idx: Vec<usize> = merged
-        .snps
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| 2.0 * s.maf * (1.0 - s.maf) > 1e-10)
-        .map(|(i, _)| i)
+    // Work against the SoA `maf` column directly to avoid any
+    // per-SNP cloning.
+    let valid_idx: Vec<usize> = (0..merged.len())
+        .filter(|&i| {
+            let m = merged.maf[i];
+            2.0 * m * (1.0 - m) > 1e-10
+        })
         .collect();
     if valid_idx.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "no SNPs with valid MAF (all MAF=0)",
         ));
     }
-    let valid_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
-    let beta_snp: Vec<&[f64]> = valid_snps.iter().map(|s| s.beta.as_slice()).collect();
-    let se_snp: Vec<&[f64]> = valid_snps.iter().map(|s| s.se.as_slice()).collect();
-    let var_snp: Vec<f64> = valid_snps
+    // Build ref vecs directly from `valid_idx` — no cloned subset.
+    let beta_snp: Vec<&[f64]> = valid_idx.iter().map(|&i| merged.beta_row(i)).collect();
+    let se_snp: Vec<&[f64]> = valid_idx.iter().map(|&i| merged.se_row(i)).collect();
+    let var_snp: Vec<f64> = valid_idx
         .iter()
-        .map(|s| 2.0 * s.maf * (1.0 - s.maf))
+        .map(|&i| {
+            let m = merged.maf[i];
+            2.0 * m * (1.0 - m)
+        })
         .collect();
 
     let cf_config = gsem::gwas::common_factor::CommonFactorGwasConfig {
@@ -1076,7 +1100,13 @@ fn commonfactor_gwas<'py>(
             None,
         )
     });
-    snp_results_to_dict(py, &results, &valid_snps)
+
+    // Drop the ref vecs before building the result dict.
+    drop(beta_snp);
+    drop(se_snp);
+    drop(var_snp);
+
+    snp_results_to_dict(py, &results, &merged, Some(&valid_idx))
 }
 
 /// Run user-specified GWAS.
@@ -1210,13 +1240,9 @@ fn user_gwas<'py>(
             gsem::io::sumstats_reader::read_merged_sumstats(std::path::Path::new(sumstats_path))
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e}")))?;
 
-        let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
-        let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
-        let var_snp: Vec<f64> = merged
-            .snps
-            .iter()
-            .map(|s| 2.0 * s.maf * (1.0 - s.maf))
-            .collect();
+        let beta_snp = merged.beta_rows();
+        let se_snp = merged.se_rows();
+        let var_snp = merged.var_snp();
 
         let mut results = py.detach(|| {
             gsem::gwas::user_gwas::run_user_gwas(
@@ -1232,7 +1258,11 @@ fn user_gwas<'py>(
         });
         apply_sub_filter(&mut results);
 
-        snp_results_to_dict(py, &results, &merged.snps)
+        drop(beta_snp);
+        drop(se_snp);
+        drop(var_snp);
+
+        snp_results_to_dict(py, &results, &merged, None)
     }
 }
 
@@ -1653,12 +1683,15 @@ fn multi_snp<'py>(
         snp_var_se: None,
     };
 
+    // `run_multi_snp` now takes borrowed rows.
+    let beta_refs: Vec<&[f64]> = beta_rows.iter().map(Vec::as_slice).collect();
+    let se_refs: Vec<&[f64]> = se_rows.iter().map(Vec::as_slice).collect();
     let result = gsem::gwas::multi_snp::run_multi_snp(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
-        &beta_rows,
-        &se_rows,
+        &beta_refs,
+        &se_refs,
         &var_snp,
         &ld_mat,
         &snp_names,
