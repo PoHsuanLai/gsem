@@ -141,6 +141,11 @@ struct SumstatsArgs {
     keep_indel: bool,
     #[arg(short, long, default_value = "merged_sumstats.tsv")]
     out: PathBuf,
+    /// Number of threads for parallel file reads. Defaults to rayon's
+    /// default (typically one per logical core); capped internally at
+    /// `files.len() + 1` since we parallelize across files.
+    #[arg(long)]
+    threads: Option<usize>,
 }
 
 #[derive(Args)]
@@ -444,7 +449,7 @@ fn run_sumstats(args: SumstatsArgs) -> Result<()> {
         keep_ambig: false,
         beta_overrides: Vec::new(),
         direct_filter: false,
-        num_threads: None,
+        num_threads: args.threads,
     };
 
     let file_refs: Vec<&Path> = args.files.iter().map(|p| p.as_path()).collect();

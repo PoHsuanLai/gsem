@@ -904,8 +904,13 @@ fn commonfactor<'py>(
 /// Merge GWAS summary statistics.
 ///
 /// Returns a dict `{"path": out, "n_snps": n}` describing the written file.
+///
+/// `parallel`/`cores` control the local rayon pool that fans the
+/// reference + per-trait reads across worker threads. `parallel=False`
+/// forces a single-threaded run; otherwise `cores` caps the pool size
+/// (default = rayon default, typically one thread per logical core).
 #[pyfunction]
-#[pyo3(signature = (files, ref_dir, trait_names=None, se_logit=None, ols=None, linprob=None, n=None, betas=None, info_filter=0.6, maf_filter=0.01, keep_indel=false, parallel=false, cores=None, ambig=false, direct_filter=false, out="merged_sumstats.tsv"))]
+#[pyo3(signature = (files, ref_dir, trait_names=None, se_logit=None, ols=None, linprob=None, n=None, betas=None, info_filter=0.6, maf_filter=0.01, keep_indel=false, parallel=true, cores=None, ambig=false, direct_filter=false, out="merged_sumstats.tsv"))]
 #[allow(unused_variables)]
 fn sumstats<'py>(
     py: Python<'py>,
@@ -920,8 +925,8 @@ fn sumstats<'py>(
     info_filter: f64,
     maf_filter: f64,
     keep_indel: bool,
-    parallel: bool,       // ignored
-    cores: Option<usize>, // ignored
+    parallel: bool,
+    cores: Option<usize>,
     ambig: bool,          // ignored
     direct_filter: bool,  // ignored
     out: &str,
@@ -929,6 +934,16 @@ fn sumstats<'py>(
     let k = files.len();
     let default_names: Vec<String> = (0..k).map(|i| format!("trait{}", i + 1)).collect();
     let names = trait_names.unwrap_or(default_names);
+
+    // Mirror the R wrapper's resolution: cores > 0 wins, else
+    // parallel=False means one thread, else None = rayon default.
+    let num_threads: Option<usize> = if let Some(n) = cores.filter(|&n| n > 0) {
+        Some(n)
+    } else if !parallel {
+        Some(1)
+    } else {
+        None
+    };
 
     let config = gsem::sumstats::SumstatsConfig {
         info_filter,
@@ -943,7 +958,7 @@ fn sumstats<'py>(
             .unwrap_or_else(|| vec![None; k]),
         beta_overrides: Vec::new(),
         direct_filter: false,
-        num_threads: None,
+        num_threads,
     };
     let file_refs: Vec<&std::path::Path> = files
         .iter()

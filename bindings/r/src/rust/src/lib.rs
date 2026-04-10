@@ -601,6 +601,7 @@ fn sumstats_rust(
     keep_ambig: bool,
     betas_json: &str,
     direct_filter: bool,
+    num_threads: Rint,
 ) -> List {
     ensure_logger();
     let se_logit_bool: Vec<bool> = se_logit.iter().map(|&v| v != 0).collect();
@@ -638,7 +639,7 @@ fn sumstats_rust(
         n_overrides,
         beta_overrides,
         direct_filter,
-        num_threads: None,
+        num_threads: rint_to_num_threads(num_threads),
     };
     let file_refs: Vec<&std::path::Path> = files
         .iter()

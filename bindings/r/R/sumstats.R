@@ -14,21 +14,24 @@
 #' @param info.filter INFO score filter (default 0.6)
 #' @param maf.filter MAF filter (default 0.01)
 #' @param keep.indel Keep indels (default FALSE)
-#' @param parallel Accepted for API compatibility; gsemr's sumstats is currently
-#'   single-threaded so this has no effect.
-#' @param cores Accepted for API compatibility; see \code{parallel}.
+#' @param parallel Whether to read the reference and GWAS files in parallel.
+#'   Defaults to \code{TRUE}. The Rust side fans reads out across a local
+#'   rayon pool so each input file is decompressed and parsed on its own
+#'   worker thread.
+#' @param cores Optional integer cap on the rayon pool size. When \code{NULL}
+#'   (the default) rayon picks, typically one thread per logical core. Since
+#'   the reads are parallelized across files, values above
+#'   \code{length(files) + 1} don't help.
 #' @param ambig Keep ambiguous SNPs (default FALSE)
 #' @param direct.filter Apply MAF filter directly to GWAS file frequencies (default FALSE)
 #' @return Path to the merged output file
 #' @export
 sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=NULL,
                      N=NULL, betas=NULL, info.filter=0.6, maf.filter=0.01,
-                     keep.indel=FALSE, parallel=FALSE, cores=NULL, ambig=FALSE,
+                     keep.indel=FALSE, parallel=TRUE, cores=NULL, ambig=FALSE,
                      direct.filter=FALSE, out="merged_sumstats.tsv") {
 
-  if (identical(parallel, TRUE) || (!is.null(cores) && is.numeric(cores) && cores > 1)) {
-    message("Note: gsemr sumstats is single-threaded; 'parallel'/'cores' are no-ops")
-  }
+  num_threads <- .resolve_num_threads(parallel, cores)
 
   if (is.null(trait.names)) {
     trait.names <- tools::file_path_sans_ext(basename(files))
@@ -81,7 +84,8 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
     as.character(n_overrides_json),
     as.logical(ambig),
     as.character(betas_json),
-    as.logical(direct.filter)
+    as.logical(direct.filter),
+    num_threads
   )
   if (!is.null(result$error)) stop("gsemr::sumstats error: ", result$error)
   result$path
