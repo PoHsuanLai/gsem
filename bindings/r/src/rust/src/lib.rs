@@ -638,6 +638,7 @@ fn sumstats_rust(
         n_overrides,
         beta_overrides,
         direct_filter,
+        num_threads: None,
     };
     let file_refs: Vec<&std::path::Path> = files
         .iter()

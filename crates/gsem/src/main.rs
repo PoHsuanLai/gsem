@@ -444,6 +444,7 @@ fn run_sumstats(args: SumstatsArgs) -> Result<()> {
         keep_ambig: false,
         beta_overrides: Vec::new(),
         direct_filter: false,
+        num_threads: None,
     };
 
     let file_refs: Vec<&Path> = args.files.iter().map(|p| p.as_path()).collect();

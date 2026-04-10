@@ -943,6 +943,7 @@ fn sumstats<'py>(
             .unwrap_or_else(|| vec![None; k]),
         beta_overrides: Vec::new(),
         direct_filter: false,
+        num_threads: None,
     };
     let file_refs: Vec<&std::path::Path> = files
         .iter()

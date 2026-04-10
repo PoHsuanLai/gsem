@@ -10,6 +10,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 
 use crate::io::gwas_reader;
 use crate::munge::allele::{AlleleMatch, alleles_match};
@@ -39,6 +40,8 @@ pub struct SumstatsConfig {
     /// If true, apply `maf_filter` directly to each GWAS file's MAF/FRQ column
     /// (in addition to the reference-based MAF filter).
     pub direct_filter: bool,
+    /// Number of threads for the local rayon pool. `None` or `Some(0)` = rayon default.
+    pub num_threads: Option<usize>,
 }
 
 impl Default for SumstatsConfig {
@@ -54,6 +57,7 @@ impl Default for SumstatsConfig {
             keep_ambig: false,
             beta_overrides: Vec::new(),
             direct_filter: false,
+            num_threads: None,
         }
     }
 }
@@ -87,21 +91,42 @@ pub fn merge_sumstats(
         anyhow::bail!("no input files provided");
     }
 
-    // Read reference panel file (e.g., w_hm3.snplist or reference.1000G.maf.0.005.txt)
-    // Matches R's behavior: ref is a single file with SNP, A1, A2, MAF columns
-    let ref_snps = read_reference_file(ref_file, config.maf_filter)?;
+    // Build a local rayon pool so callers control parallelism per-invocation
+    // and concurrent calls don't share global state.
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(n) = config.num_threads
+        && n > 0
+    {
+        builder = builder.num_threads(n);
+    }
+    let pool = builder.build().expect("failed to build rayon thread pool");
+
+    // Read the reference file and all GWAS files in parallel. The reference
+    // is needed to filter GWAS rows, so we first load it, then fan out the
+    // GWAS reads. Decompression and parsing dominate here, so running each
+    // file on its own worker thread gives roughly a k× speedup until we hit
+    // memory bandwidth.
+    let (ref_snps, ref_order) = pool.install(|| read_reference_file(ref_file, config.maf_filter))?;
     log::info!("Loaded {} reference SNPs", ref_snps.len());
 
-    // Read and QC each GWAS file
-    let mut trait_records: Vec<HashMap<String, QcRecord>> = Vec::with_capacity(k);
-    for (i, file) in files.iter().enumerate() {
-        let records = read_and_qc_gwas(file, &ref_snps, config, i)?;
-        log::info!("  {}: {} SNPs after QC", trait_names[i], records.len());
-        trait_records.push(records);
-    }
+    // Read and QC each GWAS file in parallel.
+    let trait_records: Vec<HashMap<String, QcRecord>> = pool.install(|| {
+        files
+            .par_iter()
+            .enumerate()
+            .map(|(i, file)| {
+                let records = read_and_qc_gwas(file, &ref_snps, config, i)?;
+                log::info!("  {}: {} SNPs after QC", trait_names[i], records.len());
+                Ok(records)
+            })
+            .collect::<Result<Vec<_>>>()
+    })?;
 
-    // Inner join: find SNPs present in ALL traits AND in reference
-    let common_snps = find_common_snps(&trait_records, &ref_snps);
+    // Inner join: find SNPs present in ALL traits AND in reference.
+    // We iterate `ref_order` (reference-file order) rather than HashMap
+    // keys so the output is deterministic and matches R's behavior, which
+    // starts from the reference and successively inner-joins each trait.
+    let common_snps = find_common_snps(&trait_records, &ref_order);
     log::info!("Common SNPs across all traits: {}", common_snps.len());
 
     if common_snps.is_empty() {
@@ -146,11 +171,19 @@ struct RefSnpInfo {
 /// Expects a tab/whitespace-delimited file with at least SNP column.
 /// Optionally A1, A2, MAF columns for allele alignment.
 /// Filters by MAF if provided.
-fn read_reference_file(path: &Path, maf_filter: f64) -> Result<HashMap<String, RefSnpInfo>> {
+///
+/// Returns a `(HashMap<SNP, info>, Vec<SNP>)` pair: the map for lookups and
+/// the vector for reference-file ordering. Downstream code iterates the
+/// vector so the merged output is deterministic and matches R's behavior.
+fn read_reference_file(
+    path: &Path,
+    maf_filter: f64,
+) -> Result<(HashMap<String, RefSnpInfo>, Vec<String>)> {
     let data = gwas_reader::read_gwas_file(path)
         .with_context(|| format!("failed to read reference file {}", path.display()))?;
 
     let mut map = HashMap::with_capacity(data.records.len());
+    let mut order = Vec::with_capacity(data.records.len());
     for rec in &data.records {
         // Filter by MAF if available (R: ref <- ref[ref$MAF >= maf.filter, ])
         if let Some(maf) = rec.maf
@@ -159,6 +192,11 @@ fn read_reference_file(path: &Path, maf_filter: f64) -> Result<HashMap<String, R
             continue;
         }
 
+        // Skip duplicate rsIDs so the ordering vector and the map stay in sync.
+        if map.contains_key(&rec.snp) {
+            continue;
+        }
+        order.push(rec.snp.clone());
         map.insert(
             rec.snp.clone(),
             RefSnpInfo {
@@ -169,7 +207,7 @@ fn read_reference_file(path: &Path, maf_filter: f64) -> Result<HashMap<String, R
         );
     }
 
-    Ok(map)
+    Ok((map, order))
 }
 
 /// A QC-passed record from a single GWAS file.
@@ -297,18 +335,18 @@ fn is_or_value(effect: f64) -> bool {
     effect.round() == 1.0 && effect > 0.0
 }
 
-/// Find SNPs present in ALL trait HashMaps and in the reference.
+/// Find SNPs present in ALL trait HashMaps, preserving the reference-file
+/// order supplied in `ref_order`.
 fn find_common_snps(
     trait_records: &[HashMap<String, QcRecord>],
-    ref_snps: &HashMap<String, RefSnpInfo>,
+    ref_order: &[String],
 ) -> Vec<String> {
     if trait_records.is_empty() {
         return Vec::new();
     }
 
-    // Start with reference SNPs and filter to those present in all traits
-    ref_snps
-        .keys()
+    ref_order
+        .iter()
         .filter(|snp| trait_records.iter().all(|m| m.contains_key(snp.as_str())))
         .cloned()
         .collect()
@@ -461,19 +499,10 @@ mod tests {
         m2.insert("rs3".into(), rec());
         m2.insert("rs4".into(), rec());
 
-        let ref_info = || RefSnpInfo {
-            a1: "A".into(),
-            a2: "G".into(),
-            maf: None,
-        };
-        let mut ref_snps = HashMap::new();
-        ref_snps.insert("rs1".into(), ref_info());
-        ref_snps.insert("rs2".into(), ref_info());
-        ref_snps.insert("rs3".into(), ref_info());
-        ref_snps.insert("rs4".into(), ref_info());
+        let ref_order: Vec<String> =
+            ["rs1", "rs2", "rs3", "rs4"].iter().map(|s| s.to_string()).collect();
 
-        let mut common = find_common_snps(&[m1, m2], &ref_snps);
-        common.sort();
-        assert_eq!(common, vec!["rs1", "rs3"]);
+        let common = find_common_snps(&[m1, m2], &ref_order);
+        assert_eq!(common, vec!["rs1".to_string(), "rs3".to_string()]);
     }
 }
