@@ -19,10 +19,50 @@
 #'   for exact numerical parity with R GenomicSEM.
 #' @return Data frame of per-SNP (or per-Gene if TWAS=TRUE) results
 #' @export
+# Session-local flag for the one-shot compatibility warning. Lives in the
+# package namespace so it resets on reload and is not visible to users.
+.gsemr_cfgwas_warned <- FALSE
+
+#' @keywords internal
+.warn_commonfactorGWAS_semantics <- function() {
+  if (isTRUE(getOption("gsemr.commonfactorGWAS.quiet", FALSE))) return(invisible())
+  if (isTRUE(.gsemr_cfgwas_warned)) return(invisible())
+
+  msg <- paste0(
+    "gsemr::commonfactorGWAS fits a single-factor model using fixed-variance\n",
+    "identification (F1 ~~ 1*F1, loadings free) with the fix_measurement\n",
+    "baseline optimization. This is numerically stable and matches\n",
+    "GenomicSEM::userGWAS on the equivalent model, but it does NOT\n",
+    "numerically match GenomicSEM::commonfactorGWAS, which uses marker-\n",
+    "indicator identification and refits the full model per SNP. On real\n",
+    "GWAS data the two can disagree in sign and magnitude.\n\n",
+    "If you need bit-for-bit parity with R GenomicSEM::commonfactorGWAS,\n",
+    "there is no exact replacement currently. If you want stable single-\n",
+    "factor GWAS with the same model R userGWAS would fit, this function\n",
+    "is the right call. See ARCHITECTURE.md section 3.3 for the full\n",
+    "rationale.\n\n",
+    "Suppress this warning with: options(gsemr.commonfactorGWAS.quiet = TRUE)"
+  )
+  warning(msg, call. = FALSE)
+
+  # Flip the session flag via namespace-local assign so subsequent calls
+  # within the same session do not re-warn.
+  ns <- asNamespace("gsemr")
+  tryCatch({
+    unlockBinding(".gsemr_cfgwas_warned", ns)
+    assign(".gsemr_cfgwas_warned", TRUE, envir = ns)
+    lockBinding(".gsemr_cfgwas_warned", ns)
+  }, error = function(e) invisible())
+
+  invisible()
+}
+
 commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=NULL,
                              toler=FALSE, SNPSE=FALSE, parallel=TRUE, GC="standard",
                              MPI=FALSE, TWAS=FALSE, smooth_check=FALSE,
                              identification="fixed_variance") {
+
+  .warn_commonfactorGWAS_semantics()
 
   if (!identical(MPI, FALSE)) {
     message("Note: 'MPI' is ignored in gsemr -- not applicable to Rust backend")

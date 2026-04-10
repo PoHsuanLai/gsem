@@ -273,7 +273,7 @@ outputs **disagree in sign for roughly 80% of SNPs** on the same data —
 the two parameterizations are not numerically equivalent on this kind of
 surface, even within R GenomicSEM. There is no single "correct" answer
 to match, so the Rust port defaults to the parameterization that matches
-R's `userGWAS` (the path more commonly used in published analyses).
+R's `userGWAS`.
 
 **Recommendation:**
 

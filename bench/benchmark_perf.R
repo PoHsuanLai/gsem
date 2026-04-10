@@ -404,55 +404,88 @@ write.table(rust_snps, rust_subset_path, sep = "\t", row.names = FALSE, quote = 
 cat(sprintf("  Rust subset: %d SNPs\n", nrow(rust_snps)))
 
 # ---------------------------------------------------------------------------
-# 8. commonfactorGWAS — run both parallel and serial for both impls
+# 8. commonfactorGWAS — DISABLED (intentionally commented out)
+#
+# This slot is commented out rather than deleted so it can be re-enabled
+# once upstream R GenomicSEM clarifies the intended semantics.
+#
+# Two separate issues make a fair R vs Rust comparison impossible today:
+#
+#   (a) Crash. GenomicSEM::commonfactorGWAS crashes on this PGC input via
+#       an unguarded solve(t(S2.delt) %*% S2.W %*% S2.delt, tol=toler) in
+#       .commonfactorGWAS_main, when lavaan converges to a degenerate
+#       local minimum on any SNP in the batch (e.g. rs3863622, rs4411087,
+#       rs4422948, where ANX~~ANX runs off to 8429 with F1~~F1=-8429).
+#       A proposed upstream patch and reproducer live in ../upstream-issue/.
+#
+#   (b) Identification mismatch. Even with the crash patched, R's
+#       commonfactorGWAS uses marker-indicator identification (first
+#       loading fixed to 1, factor variance free) and refits the full
+#       model per SNP. gsemr::commonfactorGWAS uses fixed-variance
+#       identification (F1 ~~ 1*F1, loadings free) with fix_measurement,
+#       matching GenomicSEM::userGWAS on the equivalent model. On real
+#       GWAS data the two can disagree in sign and magnitude — not a
+#       bug, a design choice documented in ARCHITECTURE.md §3.3.
+#
+# Consequence: R and Rust commonfactorGWAS solve different optimization
+# problems, so comparing them in the bench is apples-to-oranges even
+# after the crash is fixed. userGWAS below covers the per-SNP GWAS path
+# with a clean equivalence check; commonfactorGWAS performance/parity
+# can be re-added here once upstream clarifies.
 # ---------------------------------------------------------------------------
-cat("[8/12] commonfactorGWAS\n")
+cat("[8/12] commonfactorGWAS (SKIPPED — see comment above)\n")
+add_result("commonfactorGWAS", "R (par)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+add_result("commonfactorGWAS", "R (seq)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+add_result("commonfactorGWAS", "Rust (par)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+add_result("commonfactorGWAS", "Rust (seq)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+add_equiv("commonfactorGWAS", "SKIP",
+          "intentionally disabled pending upstream clarification; see comment in benchmark_perf.R")
 
-cfg_results <- list()  # capture outputs for equivalence
-for (par in c(TRUE, FALSE)) {
-  tag <- if (par) "par" else "seq"
-
-  b <- run_bench(function() {
-    cfg_results[[paste0("R_",  tag)]] <<-
-      GenomicSEM::commonfactorGWAS(covstruc = r_cov, SNPs = r_snps_df, parallel = par)
-  })
-  add_result("commonfactorGWAS", sprintf("R (%s)", tag), b)
-
-  b <- run_bench(function() {
-    cfg_results[[paste0("Rust_", tag)]] <<-
-      gsemr::commonfactorGWAS(covstruc = rust_cov, SNPs = rust_subset_path, parallel = par)
-  })
-  add_result("commonfactorGWAS", sprintf("Rust (%s)", tag), b)
-}
-
-# Equivalence: parallel vs serial within each impl, and R vs Rust on common SNPs
-tryCatch({
-  notes <- character(0)
-  for (impl in c("R", "Rust")) {
-    a <- cfg_results[[paste0(impl, "_par")]]
-    b <- cfg_results[[paste0(impl, "_seq")]]
-    if (!is.null(a) && !is.null(b)) {
-      err <- compare_numeric(a$est, b$est, 1e-6, sprintf("%s par/seq est", impl))
-      if (nzchar(err)) notes <- c(notes, err)
-    }
-  }
-  ra <- cfg_results$R_par; rb <- cfg_results$Rust_par
-  if (!is.null(ra) && !is.null(rb)) {
-    common <- intersect(ra$SNP, rb$SNP)
-    if (length(common) >= 50) {
-      ra_s <- ra[match(common, ra$SNP), ]
-      rb_s <- rb[match(common, rb$SNP), ]
-      ok <- is.finite(ra_s$est) & is.finite(rb_s$est)
-      if (sum(ok) >= 50) {
-        d <- max(abs(ra_s$est[ok] - rb_s$est[ok]))
-        # Allow looser tolerance for per-SNP estimates (Rust uses different optimizer)
-        if (!is.finite(d) || d > 0.05) notes <- c(notes, sprintf("R/Rust est max diff %.3e > 0.05", d))
-      }
-    }
-  }
-  if (length(notes) == 0) add_equiv("commonfactorGWAS", "PASS", "par==seq and R~Rust on common SNPs")
-  else add_equiv("commonfactorGWAS", "FAIL", paste(notes, collapse = "; "))
-}, error = function(e) add_equiv("commonfactorGWAS", "SKIP", conditionMessage(e)))
+# --- disabled block (restore and delete the skipped lines above to re-enable) ---
+# cfg_results <- list()  # capture outputs for equivalence
+# for (par in c(TRUE, FALSE)) {
+#   tag <- if (par) "par" else "seq"
+#
+#   b <- run_bench(function() {
+#     cfg_results[[paste0("R_",  tag)]] <<-
+#       GenomicSEM::commonfactorGWAS(covstruc = r_cov, SNPs = r_snps_df, parallel = par)
+#   })
+#   add_result("commonfactorGWAS", sprintf("R (%s)", tag), b)
+#
+#   b <- run_bench(function() {
+#     cfg_results[[paste0("Rust_", tag)]] <<-
+#       gsemr::commonfactorGWAS(covstruc = rust_cov, SNPs = rust_subset_path, parallel = par)
+#   })
+#   add_result("commonfactorGWAS", sprintf("Rust (%s)", tag), b)
+# }
+#
+# # Equivalence: parallel vs serial within each impl, and R vs Rust on common SNPs
+# tryCatch({
+#   notes <- character(0)
+#   for (impl in c("R", "Rust")) {
+#     a <- cfg_results[[paste0(impl, "_par")]]
+#     b <- cfg_results[[paste0(impl, "_seq")]]
+#     if (!is.null(a) && !is.null(b)) {
+#       err <- compare_numeric(a$est, b$est, 1e-6, sprintf("%s par/seq est", impl))
+#       if (nzchar(err)) notes <- c(notes, err)
+#     }
+#   }
+#   ra <- cfg_results$R_par; rb <- cfg_results$Rust_par
+#   if (!is.null(ra) && !is.null(rb)) {
+#     common <- intersect(ra$SNP, rb$SNP)
+#     if (length(common) >= 50) {
+#       ra_s <- ra[match(common, ra$SNP), ]
+#       rb_s <- rb[match(common, rb$SNP), ]
+#       ok <- is.finite(ra_s$est) & is.finite(rb_s$est)
+#       if (sum(ok) >= 50) {
+#         d <- max(abs(ra_s$est[ok] - rb_s$est[ok]))
+#         if (!is.finite(d) || d > 0.05) notes <- c(notes, sprintf("R/Rust est max diff %.3e > 0.05", d))
+#       }
+#     }
+#   }
+#   if (length(notes) == 0) add_equiv("commonfactorGWAS", "PASS", "par==seq and R~Rust on common SNPs")
+#   else add_equiv("commonfactorGWAS", "FAIL", paste(notes, collapse = "; "))
+# }, error = function(e) add_equiv("commonfactorGWAS", "SKIP", conditionMessage(e)))
 
 # ---------------------------------------------------------------------------
 # 9. userGWAS — scaling sweep over multiple SNP counts (parallel only)
@@ -800,20 +833,23 @@ if (!file.exists(cli_bin)) {
   ))
   add_result("write.model", "CLI", b)
 
-  # ---- 8. commonfactorGWAS — parallel and serial ----
-  cat("[CLI 8/11] commonfactorGWAS\n")
-  for (par in c(TRUE, FALSE)) {
-    tag <- if (par) "par" else "seq"
-    threads_arg <- if (par) character(0) else c("--threads", "1")
-    b <- run_cli(c(
-      "commonfactorGWAS",
-      "--covstruc", cli_covstruc_self,
-      "--sumstats", rust_subset_path,
-      threads_arg,
-      "-o", sprintf("out_bench/cli/cfgwas_%s.tsv", tag)
-    ))
-    add_result("commonfactorGWAS", sprintf("CLI (%s)", tag), b)
-  }
+  # ---- 8. commonfactorGWAS — DISABLED (see section 8 above) ----
+  cat("[CLI 8/11] commonfactorGWAS (SKIPPED)\n")
+  add_result("commonfactorGWAS", "CLI (par)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+  add_result("commonfactorGWAS", "CLI (seq)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+  # --- disabled block (restore to re-enable) ---
+  # for (par in c(TRUE, FALSE)) {
+  #   tag <- if (par) "par" else "seq"
+  #   threads_arg <- if (par) character(0) else c("--threads", "1")
+  #   b <- run_cli(c(
+  #     "commonfactorGWAS",
+  #     "--covstruc", cli_covstruc_self,
+  #     "--sumstats", rust_subset_path,
+  #     threads_arg,
+  #     "-o", sprintf("out_bench/cli/cfgwas_%s.tsv", tag)
+  #   ))
+  #   add_result("commonfactorGWAS", sprintf("CLI (%s)", tag), b)
+  # }
 
   # ---- 9. userGWAS — parallel and serial ----
   cat("[CLI 9/11] userGWAS\n")

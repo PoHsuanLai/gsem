@@ -224,32 +224,41 @@ with open(py_ss_path) as f_in, open(py_subset_path, "w") as f_out:
         f_out.write(line)
 
 # ---------------------------------------------------------------------------
-# 8. commonfactorGWAS — parallel + serial
+# 8. commonfactorGWAS — DISABLED (intentionally commented out)
+#
+# See bench/benchmark_perf.R section 8 for the full explanation. Briefly:
+# R GenomicSEM::commonfactorGWAS crashes on this PGC input via an
+# unguarded solve() in .commonfactorGWAS_main AND uses a different
+# identification scheme from gsem/gsemr, so an R vs Rust/Python
+# comparison is apples-to-oranges. userGWAS below covers the per-SNP
+# GWAS path with a clean equivalence check. Re-enable once upstream
+# clarifies the intended semantics.
 # ---------------------------------------------------------------------------
-print("[8/12] commonfactorGWAS", flush=True)
-cfg_outputs: dict[str, object] = {}
-for parallel in (True, False):
-    tag = "par" if parallel else "seq"
-    j = run_bench(f"commonfactorGWAS", f"Python ({tag})",
-                  lambda p=parallel: gs.commonfactor_gwas(
-                      covstruc_json, py_subset_path, parallel=p))
-    if j is not None:
-        try:
-            cfg_outputs[tag] = json.loads(j)
-        except Exception:
-            pass
-
-if "par" in cfg_outputs:
-    snp_est = []
-    for entry in cfg_outputs["par"]:
-        snp_row = next((p for p in entry.get("params", [])
-                        if p.get("op") == "~" and p.get("rhs") == "SNP"), None)
-        snp_est.append({
-            "SNP": entry.get("SNP"),
-            "est": snp_row["est"] if snp_row else None,
-            "se":  snp_row["se"]  if snp_row else None,
-        })
-    store_artifact("commonfactorGWAS_par", snp_est)
+print("[8/12] commonfactorGWAS (SKIPPED — see comment above)", flush=True)
+# --- disabled block (restore to re-enable) ---
+# cfg_outputs: dict[str, object] = {}
+# for parallel in (True, False):
+#     tag = "par" if parallel else "seq"
+#     j = run_bench(f"commonfactorGWAS", f"Python ({tag})",
+#                   lambda p=parallel: gs.commonfactor_gwas(
+#                       covstruc_json, py_subset_path, parallel=p))
+#     if j is not None:
+#         try:
+#             cfg_outputs[tag] = json.loads(j)
+#         except Exception:
+#             pass
+#
+# if "par" in cfg_outputs:
+#     snp_est = []
+#     for entry in cfg_outputs["par"]:
+#         snp_row = next((p for p in entry.get("params", [])
+#                         if p.get("op") == "~" and p.get("rhs") == "SNP"), None)
+#         snp_est.append({
+#             "SNP": entry.get("SNP"),
+#             "est": snp_row["est"] if snp_row else None,
+#             "se":  snp_row["se"]  if snp_row else None,
+#         })
+#     store_artifact("commonfactorGWAS_par", snp_est)
 
 # ---------------------------------------------------------------------------
 # 9. userGWAS — parallel + serial

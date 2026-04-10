@@ -37,6 +37,9 @@ src/*.dll
 # Scratchpad for drafting upstream issues / PRs
 /upstream-issue/
 
+# Bench diagnostic cache (ldsc/sumstats RDS fixtures for one-shot scripts)
+/bench/cache/
+
 # Test data / outputs
 *.sumstats.gz
 ldsc_result.json

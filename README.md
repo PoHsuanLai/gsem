@@ -112,6 +112,20 @@ hdl(traits, sample.prev, population.prev, LD.path = "hdl_panels/")
 All 18 R GenomicSEM functions are implemented:
 `ldsc`, `commonfactor`, `usermodel`, `munge`, `sumstats`, `commonfactorGWAS`, `userGWAS`, `paLDSC`, `write.model`, `rgmodel`, `hdl`, `s_ldsc`, `enrich`, `simLDSC`, `multiSNP`, `multiGene`, `summaryGLS`, `convert_hdl_panels`
 
+> **Note on `commonfactorGWAS`:** gsemr's `commonfactorGWAS` matches
+> R `GenomicSEM::userGWAS` on the equivalent single-factor model, but
+> does **not** numerically match R `GenomicSEM::commonfactorGWAS`, which
+> uses a different internal parameterization. On real GWAS data the two
+> can disagree in sign and magnitude. See
+> [`ARCHITECTURE.md` §3.3](./ARCHITECTURE.md#33-commonfactorgwas-parameterization)
+> for the full rationale. If you need bit-for-bit parity with R's
+> `commonfactorGWAS`, there is no exact replacement currently; for
+> stable single-factor GWAS, use `commonfactorGWAS` or `userGWAS` as
+> shown above. A one-time runtime warning is emitted on first use and
+> can be suppressed via `options(gsemr.commonfactorGWAS.quiet = TRUE)`
+> in R or `GSEMR_COMMONFACTOR_GWAS_QUIET=1` in the environment for
+> Python/CLI.
+
 ### Python
 
 ```python
@@ -166,7 +180,7 @@ bindings/
 cargo build --release
 cargo test --workspace      # 117 tests including R validation
 cargo bench                 # criterion micro-benchmarks
-cd bench && Rscript benchmark.R  # R vs gsemr comparison
+cd bench && Rscript benchmark_perf.R  # R vs gsemr comparison
 ```
 
 ## Citation

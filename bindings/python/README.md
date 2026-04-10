@@ -90,6 +90,15 @@ disk, but they are no longer on the hot path between functions.
 
 `ldsc`, `commonfactor`, `usermodel`, `munge`, `sumstats`, `commonfactor_gwas`, `user_gwas`, `parallel_analysis`, `write_model`, `rgmodel`
 
+> **Note on `commonfactor_gwas`:** gsem's `commonfactor_gwas` matches
+> R `GenomicSEM::userGWAS` on the equivalent single-factor model, but
+> does **not** numerically match R `GenomicSEM::commonfactorGWAS`, which
+> uses a different internal parameterization. See
+> [`ARCHITECTURE.md` §3.3](../../ARCHITECTURE.md#33-commonfactorgwas-parameterization)
+> for the full rationale. A one-time warning is emitted on first use;
+> suppress it by setting `GSEMR_COMMONFACTOR_GWAS_QUIET=1` in the
+> environment.
+
 ## Citation
 
 > Grotzinger, A.D. et al. Genomic structural equation modelling provides insights into the multivariate genetic architecture of complex traits. *Nat Genet* 51, 513–520 (2019).

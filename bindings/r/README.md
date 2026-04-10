@@ -56,6 +56,14 @@ hdl(traits, sample.prev, population.prev, LD.path = "hdl_panels/")
 All 18 R GenomicSEM functions are implemented:
 `ldsc`, `commonfactor`, `usermodel`, `munge`, `sumstats`, `commonfactorGWAS`, `userGWAS`, `paLDSC`, `write.model`, `rgmodel`, `hdl`, `s_ldsc`, `enrich`, `simLDSC`, `multiSNP`, `multiGene`, `summaryGLS`, `convert_hdl_panels`
 
+> **Note on `commonfactorGWAS`:** gsemr's `commonfactorGWAS` matches
+> R `GenomicSEM::userGWAS` on the equivalent single-factor model, but
+> does **not** numerically match R `GenomicSEM::commonfactorGWAS`, which
+> uses a different internal parameterization. See
+> [`ARCHITECTURE.md` §3.3](../../ARCHITECTURE.md#33-commonfactorgwas-parameterization)
+> for the full rationale. A one-time runtime warning is emitted on first
+> use and can be suppressed via `options(gsemr.commonfactorGWAS.quiet = TRUE)`.
+
 ## Performance
 
 Benchmarked against R GenomicSEM (3 traits, ~1.29M SNPs, N=50,000):

@@ -17,3 +17,9 @@ python_artifacts.json
 *.tar.gz
 *.bz2
 *.log
+
+# Leftovers from bench munge/sumstats runs that get orphaned if the bench is killed
+*_benchR.sumstats
+*_benchR.sumstats.gz.tmp
+*_benchRust.sumstats
+*_benchRust.sumstats.gz.tmp

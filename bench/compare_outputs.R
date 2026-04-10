@@ -14,6 +14,12 @@ library(jsonlite)
 library(GenomicSEM)
 library(gsemr)
 
+# Silence gsemr's first-use commonfactorGWAS semantics warning during this
+# smoke test — see ARCHITECTURE.md §3.3 for the rationale. The smoke test
+# here is only checking that the function runs and returns finite results;
+# the identification-difference caveat is out of scope for this script.
+options(gsemr.commonfactorGWAS.quiet = TRUE)
+
 # -- Configuration --
 ptsd_file <- Sys.glob("data/*PTSD*")[1]
 if (is.na(ptsd_file)) ptsd_file <- Sys.glob("data/pts_*ea*")[1]

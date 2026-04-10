@@ -4,10 +4,54 @@ use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod conversions;
 
 use conversions::{mat_to_pyarray, pyany_to_ldsc_result, pyarray_to_mat};
+
+/// One-shot session flag for the commonfactor_gwas compatibility warning.
+static COMMONFACTOR_GWAS_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Emit a first-use warning that gsem.commonfactor_gwas uses a different
+/// parameterization than R's GenomicSEM::commonfactorGWAS. Fires once per
+/// process. Suppress by setting the GSEMR_COMMONFACTOR_GWAS_QUIET env var
+/// to any non-empty value.
+fn warn_commonfactor_gwas_semantics(py: Python<'_>) {
+    if std::env::var("GSEMR_COMMONFACTOR_GWAS_QUIET")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    // Compare-and-set: return early on subsequent calls within the same
+    // process. Ordering::Relaxed is sufficient because we don't need to
+    // synchronize any other memory with this flag.
+    if COMMONFACTOR_GWAS_WARNED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+
+    let msg = "gsem.commonfactor_gwas fits a single-factor model using \
+fixed-variance identification (F1 ~~ 1*F1, loadings free) with the \
+fix_measurement baseline optimization. This is numerically stable and \
+matches GenomicSEM::userGWAS on the equivalent model, but it does NOT \
+numerically match GenomicSEM::commonfactorGWAS, which uses marker-\
+indicator identification and refits the full model per SNP. On real \
+GWAS data the two can disagree in sign and magnitude. If you need bit-\
+for-bit parity with R GenomicSEM::commonfactorGWAS, there is no exact \
+replacement currently. If you want stable single-factor GWAS with the \
+same model R userGWAS would fit, this function is the right call. See \
+ARCHITECTURE.md section 3.3 for the full rationale. Suppress this \
+warning by setting GSEMR_COMMONFACTOR_GWAS_QUIET=1 in the environment.";
+
+    // Route through Python's warnings module so standard warning filters apply.
+    if let Ok(warnings) = py.import("warnings") {
+        let _ = warnings.call_method1("warn", (msg,));
+    }
+}
 
 /// Clamp intercept matrix diagonal to >= 1.0 (GenomicSEM convention).
 fn clamp_i_ld_diagonal(i_mat: &mut faer::Mat<f64>) {
@@ -665,6 +709,8 @@ fn commonfactor_gwas<'py>(
     smooth_check: bool,
     identification: &str,
 ) -> PyResult<Bound<'py, PyDict>> {
+    warn_commonfactor_gwas_semantics(py);
+
     if twas {
         return Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "twas=True is not supported by the Python commonfactor_gwas binding yet; \

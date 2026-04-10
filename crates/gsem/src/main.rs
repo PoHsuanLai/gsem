@@ -1213,6 +1213,23 @@ fn run_commonfactor_cmd(args: CommonFactorArgs) -> Result<()> {
 }
 
 fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
+    // One-shot compatibility notice — see ARCHITECTURE.md §3.3.
+    // Suppress by setting GSEMR_COMMONFACTOR_GWAS_QUIET=1.
+    if std::env::var("GSEMR_COMMONFACTOR_GWAS_QUIET")
+        .map(|v| v.is_empty())
+        .unwrap_or(true)
+    {
+        eprintln!(
+            "note: `gsem commonfactorGWAS` fits a single-factor model using fixed-variance\n\
+             identification (F1 ~~ 1*F1, loadings free) with the fix_measurement baseline\n\
+             optimization. This matches GenomicSEM::userGWAS on the equivalent model but does\n\
+             NOT numerically match GenomicSEM::commonfactorGWAS, which uses marker-indicator\n\
+             identification. On real GWAS data the two can disagree in sign and magnitude.\n\
+             See ARCHITECTURE.md section 3.3 for the full rationale. Suppress with\n\
+             GSEMR_COMMONFACTOR_GWAS_QUIET=1."
+        );
+    }
+
     // Set thread count
     if let Some(t) = args.threads {
         rayon::ThreadPoolBuilder::new()
