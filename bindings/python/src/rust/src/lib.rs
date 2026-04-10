@@ -466,8 +466,8 @@ fn commonfactor_gwas(
         ));
     }
     let valid_snps: Vec<_> = valid_idx.iter().map(|&i| merged.snps[i].clone()).collect();
-    let beta_snp: Vec<Vec<f64>> = valid_snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = valid_snps.iter().map(|s| s.se.clone()).collect();
+    let beta_snp: Vec<&[f64]> = valid_snps.iter().map(|s| s.beta.as_slice()).collect();
+    let se_snp: Vec<&[f64]> = valid_snps.iter().map(|s| s.se.as_slice()).collect();
     let var_snp: Vec<f64> = valid_snps.iter()
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
@@ -530,8 +530,8 @@ fn user_gwas(
 
     let k = ldsc_result.s.nrows();
     let gc_mode: gsem::gwas::gc_correction::GcMode = gc.parse().unwrap_or(gsem::gwas::gc_correction::GcMode::Standard);
-    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
+    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
     let var_snp: Vec<f64> = merged.snps.iter().map(|s| 2.0 * s.maf * (1.0 - s.maf)).collect();
     let mut i_ld = ldsc_result.i_mat.to_owned();
     clamp_i_ld_diagonal(&mut i_ld);

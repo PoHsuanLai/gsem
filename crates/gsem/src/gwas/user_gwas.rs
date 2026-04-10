@@ -116,9 +116,9 @@ pub fn run_user_gwas(
     s_ld: &Mat<f64>,
     v_ld: &Mat<f64>,
     i_ld: &Mat<f64>,
-    beta_snp: &[Vec<f64>], // n_snps × k
-    se_snp: &[Vec<f64>],   // n_snps × k
-    var_snp: &[f64],       // n_snps
+    beta_snp: &[&[f64]], // n_snps × k
+    se_snp: &[&[f64]],   // n_snps × k
+    var_snp: &[f64],     // n_snps
     on_snp_done: Option<&(dyn Fn() + Sync)>,
 ) -> Vec<SnpResult> {
     let n_snps = var_snp.len();
@@ -236,8 +236,8 @@ pub fn run_user_gwas(
                     s_ld,
                     v_ld,
                     i_ld,
-                    &beta_snp[i],
-                    &se_snp[i],
+                    beta_snp[i],
+                    se_snp[i],
                     var_snp[i],
                     k,
                 );

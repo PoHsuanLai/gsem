@@ -894,9 +894,9 @@ fn run_gwas_snp(
         );
     }
 
-    // Extract per-SNP arrays for user_gwas
-    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    // Extract per-SNP arrays for user_gwas (borrowed slices, no copy)
+    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
+    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
     let var_snp: Vec<f64> = merged
         .snps
         .iter()
@@ -1081,9 +1081,9 @@ fn run_gwas_twas(
         );
     }
 
-    // Extract per-gene arrays
-    let beta_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.beta.clone()).collect();
-    let se_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.se.clone()).collect();
+    // Extract per-gene arrays (borrowed slices, no copy)
+    let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
+    let se_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.se.as_slice()).collect();
     // In TWAS mode, var_snp = HSQ (heritability of expression)
     let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
 
@@ -1245,8 +1245,8 @@ fn run_commonfactor_gwas(args: CommonfactorGwasArgs) -> Result<()> {
         );
     }
 
-    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
+    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
     let var_snp: Vec<f64> = merged
         .snps
         .iter()

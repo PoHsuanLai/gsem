@@ -632,8 +632,8 @@ fn commonfactor_gwas_rust(
             Err(e) => return format!("{{\"error\": \"{e}\"}}"),
         };
 
-        let beta_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.beta.clone()).collect();
-        let se_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.se.clone()).collect();
+        let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
+        let se_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.se.as_slice()).collect();
         let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
 
         let n_genes = var_gene.len();
@@ -675,8 +675,8 @@ fn commonfactor_gwas_rust(
     }
 
     let filtered_snps: Vec<_> = valid_idx.iter().map(|&i| &merged.snps[i]).collect();
-    let beta_snp: Vec<Vec<f64>> = filtered_snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = filtered_snps.iter().map(|s| s.se.clone()).collect();
+    let beta_snp: Vec<&[f64]> = filtered_snps.iter().map(|s| s.beta.as_slice()).collect();
+    let se_snp: Vec<&[f64]> = filtered_snps.iter().map(|s| s.se.as_slice()).collect();
     let var_snp: Vec<f64> = filtered_snps.iter()
         .map(|s| 2.0 * s.maf * (1.0 - s.maf))
         .collect();
@@ -747,8 +747,8 @@ fn user_gwas_rust(
             Err(e) => return format!("{{\"error\": \"{e}\"}}"),
         };
 
-        let beta_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.beta.clone()).collect();
-        let se_gene: Vec<Vec<f64>> = twas_data.genes.iter().map(|g| g.se.clone()).collect();
+        let beta_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.beta.as_slice()).collect();
+        let se_gene: Vec<&[f64]> = twas_data.genes.iter().map(|g| g.se.as_slice()).collect();
         let var_gene: Vec<f64> = twas_data.genes.iter().map(|g| g.hsq).collect();
 
         // Replace "SNP" with "Gene" in model syntax
@@ -800,8 +800,8 @@ fn user_gwas_rust(
         Err(e) => return format!("{{\"error\": \"{e}\"}}"),
     };
 
-    let beta_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.beta.clone()).collect();
-    let se_snp: Vec<Vec<f64>> = merged.snps.iter().map(|s| s.se.clone()).collect();
+    let beta_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.beta.as_slice()).collect();
+    let se_snp: Vec<&[f64]> = merged.snps.iter().map(|s| s.se.as_slice()).collect();
     let var_snp: Vec<f64> = merged
         .snps
         .iter()

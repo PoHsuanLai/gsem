@@ -759,13 +759,15 @@ fn test_commonfactor_gwas_per_snp_match_r() {
         ..Default::default()
     };
 
+    let beta_refs: Vec<&[f64]> = beta_snp.iter().map(Vec::as_slice).collect();
+    let se_refs: Vec<&[f64]> = se_snp.iter().map(Vec::as_slice).collect();
     let rust_results = gsem::gwas::common_factor::run_common_factor_gwas(
         &trait_names,
         &s,
         &v,
         &i_mat,
-        &beta_snp,
-        &se_snp,
+        &beta_refs,
+        &se_refs,
         &var_snp,
         &cfg,
         None,
@@ -849,13 +851,15 @@ fn test_commonfactor_gwas_marker_indicator_matches_r() {
         ..Default::default()
     };
 
+    let beta_refs: Vec<&[f64]> = beta_snp.iter().map(Vec::as_slice).collect();
+    let se_refs: Vec<&[f64]> = se_snp.iter().map(Vec::as_slice).collect();
     let rust_results = gsem::gwas::common_factor::run_common_factor_gwas(
         &trait_names,
         &s,
         &v,
         &i_mat,
-        &beta_snp,
-        &se_snp,
+        &beta_refs,
+        &se_refs,
         &var_snp,
         &cfg,
         None,
@@ -929,8 +933,10 @@ fn test_user_gwas_per_snp_match_r() {
         num_threads: None,
     };
 
+    let beta_refs: Vec<&[f64]> = beta_snp.iter().map(Vec::as_slice).collect();
+    let se_refs: Vec<&[f64]> = se_snp.iter().map(Vec::as_slice).collect();
     let rust_results = gsem::gwas::user_gwas::run_user_gwas(
-        &cfg, &s, &v, &i_mat, &beta_snp, &se_snp, &var_snp, None,
+        &cfg, &s, &v, &i_mat, &beta_refs, &se_refs, &var_snp, None,
     );
 
     assert_eq!(rust_results.len(), snp_ids.len(), "SNP count mismatch");
