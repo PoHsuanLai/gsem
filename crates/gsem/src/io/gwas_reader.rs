@@ -194,8 +194,11 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
     let max_idx = *required.iter().max().unwrap();
 
     let mut records = Vec::new();
-    for line_result in lines {
-        let line = line_result?;
+    let mut dropped_na = 0usize;
+    // Line 1 is the header; data rows start at line 2.
+    for (line_no, line_result) in lines.enumerate().map(|(i, r)| (i + 2, r)) {
+        let line = line_result
+            .with_context(|| format!("{}:{}: I/O error reading line", path.display(), line_no))?;
         if line.is_empty() {
             continue;
         }
@@ -203,8 +206,32 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
         if fields.len() <= max_idx {
             continue;
         }
-        let n: f64 = fields[n_idx].parse().context("invalid N")?;
-        let z: f64 = fields[z_idx].parse().context("invalid Z")?;
+        // Match GenomicSEM::ldsc semantics: silently drop rows with missing
+        // N or Z (its reader calls na.omit() on read_delim output). Literal
+        // "NA"/"NaN"/empty strings are treated as missing; anything else
+        // that fails to parse is a real error.
+        let n_field = fields[n_idx];
+        let z_field = fields[z_idx];
+        if is_na_token(n_field) || is_na_token(z_field) {
+            dropped_na += 1;
+            continue;
+        }
+        let n: f64 = n_field.parse().with_context(|| {
+            format!(
+                "{}:{}: invalid N value {:?}",
+                path.display(),
+                line_no,
+                n_field
+            )
+        })?;
+        let z: f64 = z_field.parse().with_context(|| {
+            format!(
+                "{}:{}: invalid Z value {:?}",
+                path.display(),
+                line_no,
+                z_field
+            )
+        })?;
         records.push(MungedRecord {
             snp: fields[snp_idx].to_owned(),
             n,
@@ -214,7 +241,28 @@ pub fn read_sumstats(path: &Path) -> Result<Vec<MungedRecord>> {
         });
     }
 
+    if dropped_na > 0 {
+        log::info!(
+            "{}: dropped {} row(s) with missing N or Z",
+            path.display(),
+            dropped_na
+        );
+    }
+
     Ok(records)
+}
+
+/// Returns `true` if `s` represents a missing value in a sumstats file
+/// (empty, or one of `NA`, `NaN`, `.`, case-insensitive — matching
+/// `readr::read_delim` / `na.omit` semantics).
+fn is_na_token(s: &str) -> bool {
+    let t = s.trim();
+    t.is_empty()
+        || t == "."
+        || t.eq_ignore_ascii_case("NA")
+        || t.eq_ignore_ascii_case("NaN")
+        || t.eq_ignore_ascii_case("N/A")
+        || t.eq_ignore_ascii_case("NULL")
 }
 
 /// Convert munged records into an LDSC TraitSumstats struct.
@@ -238,7 +286,9 @@ pub fn load_trait_data(paths: &[impl AsRef<Path>]) -> Result<Vec<gsem_ldsc::Trai
     paths
         .iter()
         .map(|p| {
-            let records = read_sumstats(p.as_ref())?;
+            let path = p.as_ref();
+            let records = read_sumstats(path)
+                .with_context(|| format!("failed to read sumstats file {}", path.display()))?;
             Ok(records_to_trait_sumstats(records))
         })
         .collect()
@@ -264,5 +314,93 @@ fn split_delimited(line: &str) -> Vec<&str> {
         line.split('\t').map(|s| s.trim()).collect()
     } else {
         line.split_whitespace().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_tmp(name: &str, contents: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("gsemr_test_{}_{}", std::process::id(), name));
+        let mut f = File::create(&path).unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn read_sumstats_drops_rows_with_na_n_or_z() {
+        // Mirrors GenomicSEM::ldsc, which applies na.omit() after read_delim.
+        let contents = "\
+SNP\tN\tZ\tA1\tA2
+rs1\t10000\t1.5\tA\tG
+rs2\tNA\t2.0\tC\tT
+rs3\t9500\tNA\tG\tA
+rs4\t8000\t-0.7\tT\tC
+rs5\t\t0.3\tA\tG
+rs6\t.\t0.1\tC\tT
+";
+        let path = write_tmp("na_drop.sumstats", contents);
+        let recs = read_sumstats(&path).expect("should not error on NA rows");
+        assert_eq!(recs.len(), 2, "only rs1 and rs4 should survive");
+        assert_eq!(recs[0].snp, "rs1");
+        assert_eq!(recs[1].snp, "rs4");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_gwas_file_tolerates_na_tokens_in_numeric_columns() {
+        // Mirrors GenomicSEM::sumstats, which calls read.table(..., na.string =
+        // c(".", NA, "NA", "")). Raw GWAS files with NA/./empty in numeric
+        // columns should parse without error, producing `None` slots. Filtering
+        // of NA rows happens downstream in munge::qc and sumstats::read_and_qc.
+        let contents = "\
+SNP\tA1\tA2\tBETA\tSE\tP\tN\tMAF
+rs1\tA\tG\t0.05\t0.01\t0.001\t10000\t0.3
+rs2\tA\tG\tNA\t0.01\t0.001\t10000\t0.3
+rs3\tC\tT\t0.05\t.\t0.001\t10000\t0.3
+rs4\tC\tT\t0.05\t0.01\tNA\t10000\t0.3
+rs5\tG\tA\t0.05\t0.01\t0.01\t\t0.3
+rs6\tT\tA\t0.05\t0.01\t0.01\t8000\t0.2
+";
+        let path = write_tmp("raw_na.gwas", contents);
+        let data = read_gwas_file(&path).expect("raw reader must tolerate NA tokens");
+        assert_eq!(data.records.len(), 6, "no rows should be dropped by reader");
+
+        // rs2 has NA beta
+        assert!(data.records[1].effect.is_none(), "rs2 effect should be None");
+        // rs3 has "." SE
+        assert!(data.records[2].se.is_none(), "rs3 se should be None");
+        // rs4 has NA P
+        assert!(data.records[3].p.is_none(), "rs4 p should be None");
+        // rs5 has empty N
+        assert!(data.records[4].n.is_none(), "rs5 n should be None");
+        // rs1 and rs6 are fully populated
+        assert!(data.records[0].effect.is_some());
+        assert!(data.records[0].n.is_some());
+        assert!(data.records[5].effect.is_some());
+        assert!(data.records[5].n.is_some());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_sumstats_reports_file_and_line_on_bad_number() {
+        let contents = "\
+SNP\tN\tZ\tA1\tA2
+rs1\t10000\t1.5\tA\tG
+rs2\tnot_a_number\t2.0\tC\tT
+";
+        let path = write_tmp("bad_n.sumstats", contents);
+        let err = read_sumstats(&path).expect_err("should error on garbage N");
+        let msg = format!("{err:#}");
+        assert!(msg.contains(":3:"), "expected line number in: {msg}");
+        assert!(msg.contains("invalid N"), "expected 'invalid N' in: {msg}");
+        assert!(
+            msg.contains("not_a_number"),
+            "expected offending value in: {msg}"
+        );
+        std::fs::remove_file(&path).ok();
     }
 }
