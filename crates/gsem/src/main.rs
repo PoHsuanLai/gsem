@@ -9,7 +9,17 @@ use gsem::io::gwas_reader;
 use gsem::munge;
 
 #[derive(Parser)]
-#[command(name = "gsem", about = "Genomic Structural Equation Modeling")]
+#[command(
+    name = "gsem",
+    about = "Genomic Structural Equation Modeling",
+    long_about = "\
+Genomic Structural Equation Modeling from GWAS summary statistics.
+
+Pipeline: `munge` → `ldsc` (or `hdl`) → `commonfactor` / `usermodel` / `userGWAS` / ...
+
+Use `gsem <subcommand> --help` to see a worked example for each subcommand
+(use long `--help`, not short `-h`, to get the extended help with examples)."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -18,44 +28,228 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// QC and munge raw GWAS summary statistics
+    #[command(long_about = "\
+QC and munge raw GWAS summary statistics against an HM3 SNPlist.
+
+Writes one `<trait>.sumstats.gz` per input file, harmonising allele and
+effect columns. Output feeds `gsem ldsc` and `gsem sumstats`.
+
+EXAMPLE:
+    gsem munge \\
+      --files raw_T1.txt.gz raw_T2.txt.gz \\
+      --hm3 w_hm3.snplist \\
+      --trait-names T1 T2 \\
+      --N 1e5 1e5")]
     Munge(MungeArgs),
     /// Run multivariate LD Score Regression
+    #[command(long_about = "\
+Estimate a genetic covariance matrix (and sampling-covariance matrix)
+across munged GWAS summary statistics via LD score regression with a
+block jackknife. Writes `ldsc.json` consumable by downstream subcommands
+(`commonfactor`, `usermodel`, `userGWAS`, `commonfactorGWAS`, ...).
+
+EXAMPLE:
+    gsem ldsc \\
+      --traits T1.sumstats.gz T2.sumstats.gz T3.sumstats.gz \\
+      --ld eur_w_ld_chr/ \\
+      --out ldsc.json")]
     Ldsc(LdscArgs),
     /// Fit structural equation model
-    #[command(name = "usermodel")]
+    #[command(
+        name = "usermodel",
+        long_about = "\
+Fit a user-specified SEM to the genetic covariance structure from `gsem
+ldsc`. Writes parameter estimates and fit indices to a TSV.
+
+EXAMPLE:
+    gsem ldsc --traits T1.sumstats.gz T2.sumstats.gz T3.sumstats.gz \\
+              --ld eur_w_ld_chr/ --out ldsc.json
+    gsem usermodel \\
+      --covstruc ldsc.json \\
+      --model 'F1 =~ NA*V1 + V2 + V3\\nF1 ~~ 1*F1' \\
+      --out fit.tsv"
+    )]
     Sem(SemArgs),
     /// Merge GWAS summary statistics for multivariate GWAS
+    #[command(long_about = "\
+Merge per-trait sumstats into a single SNP x trait TSV for `userGWAS` /
+`commonfactorGWAS`. Aligns alleles to a reference panel and applies QC
+filters.
+
+EXAMPLE:
+    gsem sumstats \\
+      --files T1.sumstats.gz T2.sumstats.gz \\
+      --ref eur_w_ld_chr/ \\
+      --trait-names T1 T2 \\
+      --out merged_sumstats.tsv")]
     Sumstats(SumstatsArgs),
     /// Fit common factor model (auto-generated 1-factor CFA)
+    #[command(
+        name = "commonfactor",
+        long_about = "\
+Auto-generate and fit a 1-factor CFA model to the genetic covariance
+structure from `gsem ldsc`. Writes parameter estimates and fit indices
+(chisq, df, p_chisq, AIC, CFI, SRMR) to a TSV.
+
+EXAMPLE:
+    gsem ldsc --traits T1.sumstats.gz T2.sumstats.gz T3.sumstats.gz \\
+              --ld eur_w_ld_chr/ --out ldsc.json
+    gsem commonfactor --covstruc ldsc.json --out cf.tsv"
+    )]
     CommonFactor(CommonFactorArgs),
     /// Run multivariate GWAS
-    #[command(name = "userGWAS")]
+    #[command(
+        name = "userGWAS",
+        long_about = "\
+Fit a user-specified SEM at every SNP in a merged sumstats file. Writes
+two TSVs: a per-SNP table (metadata + fit stats) and a flat parameter
+table (join on SNP).
+
+EXAMPLE:
+    gsem sumstats --files T1.sumstats.gz T2.sumstats.gz T3.sumstats.gz \\
+                  --ref eur_w_ld_chr/ --out merged_sumstats.tsv
+    gsem userGWAS \\
+      --covstruc ldsc.json \\
+      --snps merged_sumstats.tsv \\
+      --model 'F1 =~ NA*V1 + V2 + V3\\nF1 ~ SNP\\nF1 ~~ 1*F1' \\
+      --out-snps snps.tsv --out-params params.tsv"
+    )]
     Gwas(GwasArgs),
     /// Run common factor GWAS (auto-generated 1-factor model per SNP)
-    #[command(name = "commonfactorGWAS")]
+    #[command(
+        name = "commonfactorGWAS",
+        long_about = "\
+Auto-generate a 1-factor model with SNP → F1 and fit it at every SNP.
+
+WARNING: this subcommand uses an auto-generated fixed-variance
+parameterisation that differs from R's `GenomicSEM::commonfactorGWAS`,
+which uses a marker-indicator approach. Results are not bit-identical.
+Set GSEMR_COMMONFACTOR_GWAS_QUIET=1 to suppress the first-use warning.
+
+EXAMPLE:
+    gsem commonfactorGWAS \\
+      --covstruc ldsc.json \\
+      --snps merged_sumstats.tsv \\
+      --out-snps snps.tsv --out-params params.tsv"
+    )]
     CommonfactorGwas(CommonfactorGwasArgs),
     /// Auto-generate model syntax from factor loadings
-    #[command(name = "write.model")]
+    #[command(
+        name = "write.model",
+        long_about = "\
+Convert a factor loading matrix (CSV/TSV) into lavaan-style model syntax.
+Loadings below `--cutoff` are dropped; residual variances can be fixed
+positive with `--fix-resid`.
+
+EXAMPLE:
+    gsem write.model --loadings loadings.csv --cutoff 0.3"
+    )]
     WriteModel(WriteModelArgs),
     /// Parallel analysis to determine number of factors
-    #[command(name = "paLDSC")]
+    #[command(
+        name = "paLDSC",
+        long_about = "\
+Compare observed eigenvalues of the genetic covariance matrix to the
+95th percentile of eigenvalues simulated from sampling covariances, and
+report the recommended number of non-spurious factors.
+
+EXAMPLE:
+    gsem paLDSC --covstruc ldsc.json --r 500 --out pa.tsv"
+    )]
     ParallelAnalysis(ParallelAnalysisArgs),
     /// Enrichment analysis using stratified LDSC results
+    #[command(long_about = "\
+Enrichment analysis stacking `gsem s_ldsc` output with a SEM model.
+Returns per-annotation enrichment and SE.
+
+EXAMPLE:
+    gsem s_ldsc --traits T1.sumstats.gz --ld baselineLD_v2.2/ \\
+                --wld weights_hm3_no_hla/ --frq 1000G_Phase3_frq/ \\
+                --out sldsc.json
+    gsem enrich --sldsc sldsc.json --model 'F1 =~ NA*V1' --out enr.tsv")]
     Enrich(EnrichArgs),
     /// Run stratified (partitioned) LD Score Regression
+    #[command(
+        name = "s_ldsc",
+        long_about = "\
+Partition heritability across functional annotations.  Writes the per-
+annotation S / V matrices and the `tau` table to a JSON bundle
+consumable by `gsem enrich`.
+
+EXAMPLE:
+    gsem s_ldsc \\
+      --traits T1.sumstats.gz \\
+      --ld baselineLD_v2.2/ \\
+      --wld weights_hm3_no_hla/ \\
+      --frq 1000G_Phase3_frq/ \\
+      --out sldsc.json"
+    )]
     SLdsc(SLdscArgs),
     /// Compute model-implied genetic correlation matrix
+    #[command(long_about = "\
+Fit a SEM and return the model-implied genetic correlation matrix plus
+its sampling covariance. DWLS is the default estimator; pass `--ml` to
+use ML instead.
+
+EXAMPLE:
+    gsem rgmodel --covstruc ldsc.json --out rg.tsv")]
     Rgmodel(RgmodelArgs),
     /// Joint analysis of multiple SNPs with LD
-    #[command(name = "multiSNP")]
+    #[command(
+        name = "multiSNP",
+        long_about = "\
+Fit a SEM that regresses a common factor on multiple SNPs
+simultaneously, accounting for LD between them.
+
+EXAMPLE:
+    gsem multiSNP \\
+      --covstruc ldsc.json \\
+      --snps merged_sumstats.tsv \\
+      --snp-list rs1 rs2 rs3 \\
+      --model 'F1 =~ NA*V1 + V2\\nF1 ~ rs1 + rs2 + rs3\\nF1 ~~ 1*F1' \\
+      --out multi.tsv"
+    )]
     MultiSnp(MultiSnpArgs),
     /// Simulate GWAS summary statistics
-    #[command(name = "simLDSC")]
+    #[command(
+        name = "simLDSC",
+        long_about = "\
+Simulate multivariate GWAS summary statistics given a target genetic
+covariance matrix.  Writes `iter<r>GWAS<i>.sumstats.gz` for each
+simulated trait (matching R GenomicSEM::simLDSC's file layout).
+
+EXAMPLE:
+    gsem simLDSC \\
+      --covmat covmat.tsv \\
+      --N 1e5 1e5 \\
+      --ld eur_w_ld_chr/"
+    )]
     Simulate(SimulateArgs),
     /// High-Definition Likelihood estimation of genetic covariance
+    #[command(long_about = "\
+Run HDL (High-Definition Likelihood) estimation.  Output shape is
+identical to `gsem ldsc`, so downstream subcommands consume it the same
+way.
+
+EXAMPLE:
+    gsem hdl \\
+      --traits T1.sumstats.gz T2.sumstats.gz \\
+      --ld UKB_imputed_SVD_eigen99_extraction/ \\
+      --n-ref 335265 \\
+      --out hdl.json")]
     Hdl(HdlArgs),
     /// Generalized Least Squares regression on genetic parameters
-    #[command(name = "summaryGLS")]
+    #[command(
+        name = "summaryGLS",
+        long_about = "\
+GLS regression of a response vector on a predictor matrix given a
+response covariance.
+
+EXAMPLE:
+    gsem summaryGLS \\
+      --y y.tsv --v-y vy.tsv --predictors x.tsv --intercept \\
+      --out gls.tsv"
+    )]
     SummaryGls(SummaryGlsArgs),
 }
 

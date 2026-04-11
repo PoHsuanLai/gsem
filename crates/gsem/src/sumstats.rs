@@ -107,7 +107,8 @@ pub fn merge_sumstats(
     // GWAS reads. Decompression and parsing dominate here, so running each
     // file on its own worker thread gives roughly a k× speedup until we hit
     // memory bandwidth.
-    let (ref_snps, ref_order) = pool.install(|| read_reference_file(ref_file, config.maf_filter))?;
+    let (ref_snps, ref_order) =
+        pool.install(|| read_reference_file(ref_file, config.maf_filter))?;
     log::info!("Loaded {} reference SNPs", ref_snps.len());
 
     // Read and QC each GWAS file in parallel.
@@ -223,13 +224,21 @@ fn read_reference_file(
         .read_line(&mut header_line)
         .with_context(|| format!("failed to read reference header {}", path.display()))?;
     let headers: Vec<String> = if header_line.contains('\t') {
-        header_line.split('\t').map(|s| s.trim().to_string()).collect()
+        header_line
+            .split('\t')
+            .map(|s| s.trim().to_string())
+            .collect()
     } else {
-        header_line.split_whitespace().map(|s| s.to_string()).collect()
+        header_line
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect()
     };
 
     let detected = column_detect::detect_columns(&headers);
-    let snp_idx = detected.get("SNP").context("SNP column not found in reference")?;
+    let snp_idx = detected
+        .get("SNP")
+        .context("SNP column not found in reference")?;
     let a1_idx = detected.get("A1");
     let a2_idx = detected.get("A2");
     let maf_idx = detected.get("MAF");
@@ -344,9 +353,15 @@ fn read_and_qc_gwas(
         .read_line(&mut header_line)
         .with_context(|| format!("failed to read header from {}", path.display()))?;
     let headers: Vec<String> = if header_line.contains('\t') {
-        header_line.split('\t').map(|s| s.trim().to_string()).collect()
+        header_line
+            .split('\t')
+            .map(|s| s.trim().to_string())
+            .collect()
     } else {
-        header_line.split_whitespace().map(|s| s.to_string()).collect()
+        header_line
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect()
     };
 
     // Build column overrides if a beta column name is specified for this trait.
@@ -680,8 +695,10 @@ mod tests {
         m2.insert("rs3".into(), rec());
         m2.insert("rs4".into(), rec());
 
-        let ref_order: Vec<String> =
-            ["rs1", "rs2", "rs3", "rs4"].iter().map(|s| s.to_string()).collect();
+        let ref_order: Vec<String> = ["rs1", "rs2", "rs3", "rs4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
         let common = find_common_snps(&[m1, m2], &ref_order);
         assert_eq!(common, vec!["rs1".to_string(), "rs3".to_string()]);

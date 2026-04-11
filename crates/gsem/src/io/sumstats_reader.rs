@@ -249,10 +249,20 @@ pub fn read_merged_sumstats(path: &Path) -> Result<MergedSumstats> {
         se_flat.extend_from_slice(&se);
 
         if let (Some(i), Some(vec)) = (chr_idx, chr_vec.as_mut()) {
-            vec.push(fields.get(i).and_then(|s| s.trim().parse().ok()).unwrap_or(0));
+            vec.push(
+                fields
+                    .get(i)
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0),
+            );
         }
         if let (Some(i), Some(vec)) = (bp_idx, bp_vec.as_mut()) {
-            vec.push(fields.get(i).and_then(|s| s.trim().parse().ok()).unwrap_or(0));
+            vec.push(
+                fields
+                    .get(i)
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0),
+            );
         }
     }
 

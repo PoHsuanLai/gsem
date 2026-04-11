@@ -681,6 +681,22 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResul
 }
 
 /// Run multivariate LDSC.
+///
+/// Estimates a genetic covariance matrix (and sampling-covariance matrix)
+/// across a set of munged GWAS summary statistics using LD score
+/// regression with a block jackknife.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> cov = gs.ldsc(
+/// ...     traits=["T1.sumstats.gz", "T2.sumstats.gz"],
+/// ...     sample_prev=[None, None],
+/// ...     population_prev=[None, None],
+/// ...     ld="eur_w_ld_chr/",
+/// ...     trait_names=["T1", "T2"],
+/// ... )
+/// >>> cov.s, cov.v  # 2x2 genetic covariance, 3x3 sampling covariance
 #[pyfunction]
 #[pyo3(signature = (traits, sample_prev, population_prev, ld, wld="", trait_names=None, sep_weights=false, chr=22, n_blocks=200, ldsc_log=None, stand=false, select=None, chisq_max=None, parallel=true, cores=None))]
 #[allow(unused_variables)]
@@ -774,6 +790,21 @@ fn ldsc(
 }
 
 /// Munge GWAS summary statistics files.
+///
+/// Reads one or more raw GWAS files, harmonises columns against an HM3
+/// SNPlist, applies QC filters, and writes `<trait>.sumstats.gz` files
+/// ready for `ldsc()`.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> gs.munge(
+/// ...     files=["raw_T1.txt.gz", "raw_T2.txt.gz"],
+/// ...     hm3="w_hm3.snplist",
+/// ...     trait_names=["T1", "T2"],
+/// ...     n=1e5,
+/// ... )
+/// ['./T1.sumstats.gz', './T2.sumstats.gz']
 #[pyfunction]
 #[pyo3(signature = (files, hm3, trait_names=None, n=None, info_filter=0.9, maf_filter=0.01, log_name=None, column_names=None, parallel=false, cores=None, overwrite=true, out="."))]
 #[allow(unused_variables)]
@@ -827,6 +858,25 @@ fn munge(
 /// `covstruc` accepts either a `PyLdscResult` returned from `ldsc()` or a
 /// dict with `s`/`v`/`i_mat`/`n_vec`/`m` (or their uppercase aliases)
 /// entries.
+///
+/// Examples
+/// --------
+/// >>> import numpy as np, genomicsem as gs
+/// >>> covstruc = {
+/// ...     "s": np.array([[0.60, 0.42, 0.35],
+/// ...                    [0.42, 0.50, 0.30],
+/// ...                    [0.35, 0.30, 0.40]]),
+/// ...     "v": np.eye(6) * 1e-3,
+/// ...     "i_mat": np.eye(3),
+/// ...     "n_vec": [1e5, 1e5, 1e5],
+/// ...     "m": 1e6,
+/// ... }
+/// >>> fit = gs.usermodel(
+/// ...     covstruc,
+/// ...     model="F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1",
+/// ...     estimation="DWLS",
+/// ... )
+/// >>> fit["converged"], fit["parameters"]
 #[pyfunction]
 #[pyo3(signature = (covstruc, model="", estimation="DWLS", cfi_calc=true, std_lv=false, imp_cov=false, fix_resid=true, toler=None, q_factor=false))]
 #[allow(unused_variables)]
@@ -891,6 +941,24 @@ fn usermodel<'py>(
 }
 
 /// Fit common factor model.
+///
+/// Auto-generates a 1-factor CFA from `covstruc` and fits it via DWLS
+/// (default) or ML. Returns parameter estimates plus fit indices.
+///
+/// Examples
+/// --------
+/// >>> import numpy as np, genomicsem as gs
+/// >>> covstruc = {
+/// ...     "s": np.array([[0.60, 0.42, 0.35],
+/// ...                    [0.42, 0.50, 0.30],
+/// ...                    [0.35, 0.30, 0.40]]),
+/// ...     "v": np.eye(6) * 1e-3,
+/// ...     "i_mat": np.eye(3),
+/// ...     "n_vec": [1e5, 1e5, 1e5],
+/// ...     "m": 1e6,
+/// ... }
+/// >>> cf = gs.commonfactor(covstruc, estimation="DWLS")
+/// >>> cf["chisq"], cf["df"], cf["cfi"]
 #[pyfunction]
 #[pyo3(signature = (covstruc, estimation="DWLS"))]
 fn commonfactor<'py>(
@@ -929,6 +997,17 @@ fn commonfactor<'py>(
 /// reference + per-trait reads across worker threads. `parallel=False`
 /// forces a single-threaded run; otherwise `cores` caps the pool size
 /// (default = rayon default, typically one thread per logical core).
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> gs.sumstats(
+/// ...     files=["T1.sumstats.gz", "T2.sumstats.gz"],
+/// ...     ref_dir="eur_w_ld_chr/",
+/// ...     trait_names=["T1", "T2"],
+/// ...     out="merged_sumstats.tsv",
+/// ... )
+/// {'path': 'merged_sumstats.tsv', 'n_snps': ...}
 #[pyfunction]
 #[pyo3(signature = (files, ref_dir, trait_names=None, se_logit=None, ols=None, linprob=None, n=None, betas=None, info_filter=0.6, maf_filter=0.01, keep_indel=false, parallel=true, cores=None, ambig=false, direct_filter=false, out="merged_sumstats.tsv"))]
 #[allow(unused_variables)]
@@ -1000,6 +1079,33 @@ fn sumstats<'py>(
 }
 
 /// Run common factor GWAS.
+///
+/// Fits a 1-factor model with the SNP regressed on the common factor
+/// at every SNP in a merged sumstats file. Returns a dict with `snps`
+/// (per-SNP metadata + fit stats) and `params` (flat parameter table).
+///
+/// Warnings
+/// --------
+/// `gsem.commonfactor_gwas` uses an auto-generated fixed-variance
+/// parameterisation that differs from R's `GenomicSEM::commonfactorGWAS`,
+/// which uses a marker-indicator approach. Results are not bit-identical.
+/// Set `GSEMR_COMMONFACTOR_GWAS_QUIET=1` in the environment to suppress
+/// the first-use warning.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> covstruc = gs.ldsc(
+/// ...     traits=["T1.sumstats.gz", "T2.sumstats.gz", "T3.sumstats.gz"],
+/// ...     sample_prev=[None]*3, population_prev=[None]*3,
+/// ...     ld="eur_w_ld_chr/",
+/// ... )
+/// >>> res = gs.commonfactor_gwas(
+/// ...     covstruc=covstruc,
+/// ...     snps="merged_sumstats.tsv",
+/// ...     estimation="DWLS",
+/// ... )
+/// >>> res["snps"][:5]  # head of per-SNP table
 #[pyfunction]
 #[pyo3(signature = (
     covstruc,
@@ -1110,6 +1216,25 @@ fn commonfactor_gwas<'py>(
 }
 
 /// Run user-specified GWAS.
+///
+/// Fits a user-specified SEM at every SNP. Returns a dict with `snps`
+/// (per-SNP metadata + fit stats) and `params` (flat parameter table).
+/// Filter by SNP and operator to extract per-SNP regression effects.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> res = gs.user_gwas(
+/// ...     covstruc=covstruc,
+/// ...     snps="merged_sumstats.tsv",
+/// ...     model="F1 =~ NA*V1 + V2 + V3\nF1 ~ SNP\nF1 ~~ 1*F1",
+/// ... )
+/// >>> # every SNP's F1 ~ SNP regression effect:
+/// >>> [(s, e) for s, o, r, e in zip(res["params"]["SNP"],
+/// ...                               res["params"]["op"],
+/// ...                               res["params"]["rhs"],
+/// ...                               res["params"]["est"])
+/// ...  if o == "~" and r == "SNP"][:5]
 #[pyfunction]
 #[pyo3(signature = (covstruc, sumstats_path, model="", estimation="DWLS", printwarn=true, sub=None, cores=None, toler=false, snpse=false, parallel=true, gc="standard", mpi=false, smooth_check=false, twas=false, std_lv=false, fix_measurement=true, q_snp=false))]
 #[allow(unused_variables)]
@@ -1267,6 +1392,20 @@ fn user_gwas<'py>(
 }
 
 /// Parallel analysis to determine number of factors.
+///
+/// Compares observed eigenvalues of the genetic covariance matrix to
+/// the 95th percentile of eigenvalues simulated from sampling
+/// covariances, returning the recommended number of factors.
+///
+/// Examples
+/// --------
+/// >>> import numpy as np, genomicsem as gs
+/// >>> s = np.array([[0.60, 0.42, 0.35],
+/// ...               [0.42, 0.50, 0.30],
+/// ...               [0.35, 0.30, 0.40]])
+/// >>> v = np.eye(6) * 1e-3
+/// >>> pa = gs.parallel_analysis(s, v, r=500)
+/// >>> pa["n_factors"], pa["observed"]
 #[pyfunction]
 #[pyo3(signature = (s, v, r=500, p=None, diag=false, parallel=true, cores=None))]
 fn parallel_analysis<'py>(
@@ -1306,6 +1445,21 @@ fn parallel_analysis<'py>(
 }
 
 /// Auto-generate model syntax from factor loadings.
+///
+/// Converts a factor loading matrix into lavaan-style model syntax,
+/// dropping loadings below `cutoff` and optionally fixing residual
+/// variances to be positive.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> syntax = gs.write_model(
+/// ...     loadings=[[0.80], [0.60], [0.70]],
+/// ...     names=["V1", "V2", "V3"],
+/// ...     cutoff=0.3,
+/// ... )
+/// >>> print(syntax)
+/// F1 =~ ...
 #[pyfunction]
 #[pyo3(signature = (loadings, names, cutoff=0.3, fix_resid=true, bifactor=false, mustload=false, common=false))]
 #[allow(unused_variables)]
@@ -1326,6 +1480,21 @@ fn write_model(
 
 /// Compute model-implied genetic correlation matrix.
 /// `estimation=True` means DWLS; `estimation=False` means ML.
+///
+/// Examples
+/// --------
+/// >>> import numpy as np, genomicsem as gs
+/// >>> covstruc = {
+/// ...     "s": np.array([[0.60, 0.42, 0.35],
+/// ...                    [0.42, 0.50, 0.30],
+/// ...                    [0.35, 0.30, 0.40]]),
+/// ...     "v": np.eye(6) * 1e-3,
+/// ...     "i_mat": np.eye(3),
+/// ...     "n_vec": [1e5, 1e5, 1e5],
+/// ...     "m": 1e6,
+/// ... }
+/// >>> rg = gs.rgmodel(covstruc, model="", std_lv=True, estimation=True)
+/// >>> rg["rg"]  # model-implied genetic correlation matrix
 #[pyfunction]
 #[pyo3(signature = (covstruc, model, std_lv=true, estimation=true, sub=None))]
 #[allow(unused_variables)]
@@ -1382,6 +1551,18 @@ fn rgmodel<'py>(
 /// Returns a `PyLdscResult` with the same shape as `ldsc()`'s output, so
 /// downstream functions (`usermodel`, `commonfactor`, `rgmodel`, ...) can
 /// consume it directly.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> cov = gs.hdl(
+/// ...     traits=["T1.sumstats.gz", "T2.sumstats.gz"],
+/// ...     trait_names=["T1", "T2"],
+/// ...     ld_path="UKB_imputed_SVD_eigen99_extraction/",
+/// ...     n_ref=335265.0,
+/// ...     method="piecewise",
+/// ... )
+/// >>> cov.s  # 2x2 genetic covariance
 #[pyfunction]
 #[pyo3(signature = (traits, sample_prev=None, population_prev=None, trait_names=None, ld_path="", n_ref=335265.0, method="piecewise"))]
 #[allow(unused_variables)]
@@ -1431,6 +1612,21 @@ fn hdl(
 }
 
 /// Run stratified LDSC (s-LDSC).
+///
+/// Partitions heritability across functional annotations. Returns per-annotation
+/// S / V matrices and the `tau` table.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> res = gs.s_ldsc(
+/// ...     traits=["T1.sumstats.gz"],
+/// ...     ld="baselineLD_v2.2/",
+/// ...     wld="weights_hm3_no_hla/",
+/// ...     frq="1000G_Phase3_frq/",
+/// ...     trait_names=["T1"],
+/// ... )
+/// >>> res["tau"]
 #[pyfunction]
 #[pyo3(signature = (traits, sample_prev=None, population_prev=None, ld="", wld="", frq="", trait_names=None, n_blocks=200, ldsc_log=None, exclude_cont=true))]
 #[allow(unused_variables)]
@@ -1568,6 +1764,17 @@ fn s_ldsc<'py>(
 ///
 /// `s_annot` / `v_annot` are lists of NumPy 2D arrays (one matrix per
 /// annotation). Returns a columnar dict.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> sldsc = gs.s_ldsc(traits=["T1.sumstats.gz"], ld="baselineLD/", wld="weights/", frq="1000G/")
+/// >>> enr = gs.enrich(
+/// ...     s_annot=sldsc["s_annot"],
+/// ...     v_annot=sldsc["v_annot"],
+/// ...     model="F1 =~ NA*V1",
+/// ... )
+/// >>> enr["enrichment"]
 #[pyfunction]
 #[pyo3(signature = (s_baseline, s_annot, v_annot, annotation_names, m_annot, m_total))]
 fn enrich<'py>(
@@ -1615,6 +1822,18 @@ fn enrich<'py>(
 /// Simulate GWAS summary statistics.
 ///
 /// Returns a NumPy 2D array of simulated Z-scores with shape `k × n_snps`.
+///
+/// Examples
+/// --------
+/// >>> import numpy as np, genomicsem as gs
+/// >>> covmat = np.array([[0.60, 0.42],
+/// ...                    [0.42, 0.50]])
+/// >>> z = gs.sim_ldsc(
+/// ...     covmat=covmat,
+/// ...     n=[1e5, 1e5],
+/// ...     ld="eur_w_ld_chr/",
+/// ... )
+/// >>> z.shape  # (2, n_snps)
 #[pyfunction]
 #[pyo3(signature = (s_matrix, n_per_trait, ld_scores, m, intercepts=None, r_pheno=None, n_overlap=0.0))]
 fn sim_ldsc<'py>(
@@ -1645,6 +1864,20 @@ fn sim_ldsc<'py>(
 }
 
 /// Run multi-SNP analysis.
+///
+/// Fits a SEM that regresses the common factor on multiple SNPs
+/// simultaneously, returning a single parameter table.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> res = gs.multi_snp(
+/// ...     covstruc=covstruc,
+/// ...     snps="merged_sumstats.tsv",
+/// ...     model="F1 =~ NA*V1 + V2 + V3\nF1 ~ rs1 + rs2\nF1 ~~ 1*F1",
+/// ...     snp_list=["rs1", "rs2"],
+/// ... )
+/// >>> res["parameters"]
 #[pyfunction]
 #[pyo3(signature = (covstruc, model, beta, se, var_snp, ld_matrix, snp_names, estimation="DWLS", max_iter=1000))]
 fn multi_snp<'py>(
@@ -1706,6 +1939,20 @@ fn multi_snp<'py>(
 }
 
 /// Run multi-gene analysis (reuses multi-SNP engine).
+///
+/// TWAS variant of `multi_snp` — feeds gene-level summary stats (FUSION
+/// panels) through the same per-locus SEM fitting engine.
+///
+/// Examples
+/// --------
+/// >>> import genomicsem as gs
+/// >>> res = gs.multi_gene(
+/// ...     covstruc=covstruc,
+/// ...     genes="gene_level.tsv",
+/// ...     model="F1 =~ NA*V1 + V2 + V3\nF1 ~ Gene\nF1 ~~ 1*F1",
+/// ...     gene_list=["ENSG1", "ENSG2"],
+/// ... )
+/// >>> res["parameters"]
 #[pyfunction]
 #[pyo3(signature = (covstruc, model, beta, se, var_gene, ld_matrix, gene_names, estimation="DWLS", max_iter=1000))]
 fn multi_gene<'py>(
@@ -1728,6 +1975,18 @@ fn multi_gene<'py>(
 /// Run Generalized Least Squares regression.
 ///
 /// Returns a columnar dict `{beta, se, z, p}`.
+///
+/// Examples
+/// --------
+/// >>> import numpy as np, genomicsem as gs
+/// >>> y = np.array([0.50, 0.30, 0.20, 0.10])
+/// >>> v_y = np.eye(4) * 0.01
+/// >>> x = np.array([[1, 0],
+/// ...               [2, 1],
+/// ...               [3, 0],
+/// ...               [4, 1]], dtype=float)
+/// >>> fit = gs.summary_gls(y=y, v_y=v_y, predictors=x, intercept=True)
+/// >>> fit["beta"], fit["p"]
 #[pyfunction]
 #[pyo3(signature = (x, y, v, intercept=true))]
 fn summary_gls<'py>(

@@ -243,7 +243,10 @@ mod tests {
                 p if (p - 0.999).abs() < 1e-9 => 0.001253,
                 _ => unreachable!(),
             };
-            assert!((z - expected).abs() < 1e-4, "p={p} z={z} expected≈{expected}");
+            assert!(
+                (z - expected).abs() < 1e-4,
+                "p={p} z={z} expected≈{expected}"
+            );
         }
     }
 
