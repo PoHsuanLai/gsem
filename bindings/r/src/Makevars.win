@@ -1,0 +1,18 @@
+LIBDIR = .
+STATLIB = $(LIBDIR)/libgsemr.a
+
+# Windows (MinGW / Rtools) static-libs expected by modern rustc output.
+# `cargo build` on x86_64-pc-windows-gnu emits references to ws2_32,
+# advapi32, userenv, bcrypt, and ntdll; drop the POSIX-only -lpthread
+# / -ldl / -lm that the macOS / Linux Makevars passes.
+PKG_LIBS = -L$(LIBDIR) -lgsemr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll
+
+all: C_clean
+
+$(SHLIB): $(STATLIB)
+
+C_clean:
+	rm -Rf $(OBJECTS)
+
+clean:
+	rm -Rf $(STATLIB) $(OBJECTS) rust/target

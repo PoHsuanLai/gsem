@@ -3,14 +3,27 @@ name: Publish
 on:
   release:
     types: [published]
+  # Manual re-trigger for the R-only path. The crates.io + PyPI jobs are
+  # skipped when this fires; we only re-run the R tarball build, R CMD
+  # check matrix, and upload to an existing release. Use this when the R
+  # build needs a fix after crates/PyPI have already shipped.
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to upload the rebuilt R tarball to (e.g. v0.1.0)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   # ── crates.io ──────────────────────────────────────────────────────────
+  # Only runs on a real `release: published` event. Re-running via
+  # workflow_dispatch would error because the version is already published.
   publish-crates:
     name: Publish to crates.io
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,8 +60,11 @@ jobs:
         run: sleep 30
 
   # ── PyPI (maturin cross-platform wheels) ───────────────────────────────
+  # All PyPI jobs only run on `release: published`; skipped when
+  # re-triggered manually via workflow_dispatch.
   build-python-wheels:
     name: Build Python wheels (${{ matrix.os }})
+    if: github.event_name == 'release'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -78,6 +94,7 @@ jobs:
 
   build-python-sdist:
     name: Build Python sdist
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +111,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
+    if: github.event_name == 'release'
     needs: [build-python-wheels, build-python-sdist]
     runs-on: ubuntu-latest
     permissions:
@@ -111,10 +129,15 @@ jobs:
   # ── CRAN (R source tarball + binary builds) ────────────────────────────
   # R build is gated on publish-crates: bindings/r/src/rust/Cargo.toml uses
   # crates.io versions (not local paths), so the internal crates must be on
-  # crates.io before `R CMD build` runs.
+  # crates.io before `R CMD build` runs. On workflow_dispatch re-triggers,
+  # publish-crates is skipped (crates are already on crates.io from the
+  # original release run) — the `if` lets the R job proceed anyway.
   build-r-source:
     name: Build R source package
     needs: publish-crates
+    if: |
+      always() &&
+      (needs.publish-crates.result == 'success' || needs.publish-crates.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +168,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+      # On Windows, R uses Rtools (MinGW/gcc), so the Rust staticlib must
+      # be built with the x86_64-pc-windows-gnu target, not the MSVC
+      # default. Install that target explicitly.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-gnu' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: bindings/r/src/rust
@@ -184,3 +212,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: gsemr_*.tar.gz
+          # When triggered manually, upload to the tag the user specified.
+          # When triggered by `release: published`, tag_name is ignored and
+          # the action uses the release that fired the event.
+          tag_name: ${{ github.event.inputs.release_tag }}
