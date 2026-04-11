@@ -4,7 +4,7 @@ results.md
 Rplots.pdf
 benchmark_plots.pdf
 benchmark_plots_serial.pdf
-benchmark_headline.png
+# benchmark_headline.png — intentionally committed for README embedding
 benchmark_results.csv
 benchmark_results_serial.csv
 benchmark_equivalence.csv

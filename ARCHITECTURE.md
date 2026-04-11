@@ -146,30 +146,50 @@ determine end-to-end throughput.
 
 ### 2.6 Performance numbers
 
-> **NOTE:** The table below is a placeholder. It will be regenerated
-> from `bench/benchmark_results.csv` after the current benchmark run
-> finishes. Until then, use this as an ordinal guide only — the ratios
-> are roughly correct but the absolute numbers will change.
+Measured on the PGC Anxiety / OCD / PTSD summary statistics (3 traits,
+~4.9 million merged SNPs) with `BENCH_CORES=4` on an Apple-silicon
+laptop. Lower is better; last column is R ÷ Rust.
 
-| Function          | R GenomicSEM | Rust port | Speedup |
-|-------------------|--------------|-----------|---------|
-| munge             | TBD          | TBD       | ~7×     |
-| ldsc              | TBD          | TBD       | ~3×     |
-| commonfactor (SEM)| TBD          | TBD       | ~10×    |
-| usermodel         | TBD          | TBD       | ~8×     |
-| rgmodel           | TBD          | TBD       | ~100×+  |
-| userGWAS (per-SNP loop) | TBD    | TBD       | ~50×    |
-| commonfactorGWAS  | TBD          | TBD       | ~50×    |
+| Function                         | R GenomicSEM | Rust port | Speedup |
+|----------------------------------|-------------:|----------:|--------:|
+| `munge` (3 traits)               | 104.1s       | 21.1s     |      5× |
+| `ldsc`                           |  10.5s       |  1.8s     |      6× |
+| `sumstats` (3 traits merged)     | 135.9s       | 24.1s     |      6× |
+| `simLDSC`                        |  54.3s       | 21.1s     |    2.6× |
+| `commonfactor` (DWLS)            |  0.11s       | <1ms      |    ~50× |
+| `usermodel` (DWLS, 1-factor)     |  0.06s       | <1ms      |    ~30× |
+| `rgmodel`                        |  0.23s       | <1ms      |   ~100× |
+| `paLDSC` (r=100, p=0.95)         |  0.61s       | <5ms      |   ~200× |
+| `userGWAS` (N=1 000)             |   6.3s       | 0.02s     |    373× |
+| `userGWAS` (N=5 000)             |  36.9s       | 0.07s     |    567× |
+| `userGWAS` (N=10 000)            |  89.7s       | 0.12s     |    748× |
+| `userGWAS` (N=4 936 648, full)   |  *not attempted* | 57.4s |       — |
 
-The `userGWAS` and `commonfactorGWAS` rows are per-SNP loop time on a
-small subset. On a full 1.2M-SNP run the absolute wall-clock gap widens
-because R's fixed lavaan per-SNP overhead scales linearly with N while
-Rust's stays flat.
+The `userGWAS` rows are end-to-end per-SNP fits (not just the rayon
+loop). R's fixed lavaan-per-SNP overhead scales linearly with N — ~9 ms
+per SNP — while Rust's scales sub-linearly once the thread pool
+saturates, so the gap widens with bench size:
 
-See `bench/benchmark_perf.R` for the reproducible benchmark harness. The
-bench runs against the PGC Anxiety/OCD/PTSD summary statistics with ~1.3M
-SNPs, 3 traits, and does full tolerance-based equivalence checking (R vs
-Rust) alongside timing.
+| SNP count       | R wall time | Rust wall time | Gap  |
+|-----------------|------------:|---------------:|-----:|
+| 1 000           |   6.3s      | 0.02s          | 373× |
+| 5 000           |  36.9s      | 0.07s          | 567× |
+| 10 000          |  89.7s      | 0.12s          | 748× |
+| 4.9M (full PGC) |  —          | 57.4s          |    — |
+
+R GenomicSEM recommends MPI at full-scale GWAS and the upstream
+tutorial doesn't attempt it on a single machine. gsemr's 57-second
+full-scale run is on a single laptop with four worker threads.
+
+The Python (`genomicsem`) and CLI (`gsem`) bindings measure within a
+few percent of the R-side Rust numbers on all operations — the Rust
+core is shared, so the binding layer adds only process-startup / GIL
+handoff overhead.
+
+See `bench/benchmark_perf.R` for the reproducible benchmark harness
+and `bench/benchmark_plots.pdf` for the full cross-impl comparison
+including CLI and Python rows. The bench does full tolerance-based
+equivalence checking (R vs Rust) alongside timing on every function.
 
 ---
 

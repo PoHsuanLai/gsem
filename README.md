@@ -11,19 +11,35 @@ Available as an **R package** (`gsemr`), **Python package** (`genomicsem`), **Ru
 
 ## Performance
 
-Benchmarked against R GenomicSEM on 3 simulated traits (~1.29M SNPs, N=50,000):
+![gsemr vs R GenomicSEM — wall-clock time on PGC Anxiety/OCD/PTSD sumstats](bench/benchmark_headline.png)
 
-| Function | R | gsemr (Rust) | Speedup |
-|----------|---|-------------|---------|
-| ldsc | 8.8s | 3.2s | 2.8x |
-| commonfactor | 115ms | 11ms | 10x |
-| usermodel | 91ms | 11ms | 8x |
-| rgmodel | 127ms | 1ms | 124x |
+Benchmarked end-to-end against [R GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) on the PGC Anxiety, OCD, and PTSD
+summary statistics — the same worked example used in the upstream
+tutorial. Wall-clock seconds, lower is better:
 
-S matrix max diff: 1.7e-5. V matrix max diff: 8.2e-8.
+| Function                         | R GenomicSEM | gsemr (Rust) | Speedup |
+|----------------------------------|-------------:|-------------:|--------:|
+| `munge`                          | 1m 44s       | 21.1s        |      5× |
+| `ldsc`                           | 10.5s        | 1.8s         |      6× |
+| `sumstats`                       | 2m 16s       | 24.1s        |      6× |
+| `simLDSC`                        | 54.3s        | 21.1s        |    2.6× |
+| `userGWAS` (N = 1 000)           | 6.3s         | 0.02s        |    373× |
+| `userGWAS` (N = 5 000)           | 36.9s        | 0.07s        |    567× |
+| `userGWAS` (N = 10 000)          | 1m 30s       | 0.12s        |    748× |
+| `userGWAS` (N = 4 936 648, full) | *not attempted* | 57.4s    |       — |
 
-See [`ARCHITECTURE.md §2`](./ARCHITECTURE.md#2-why-its-faster) for the
-full performance breakdown.
+Fit operations (`commonfactor`, `usermodel`, `rgmodel`, `write.model`,
+`summaryGLS`, `paLDSC`) finish in well under half a second on both
+implementations and are omitted from the headline. See the detailed
+breakdown in [`bench/benchmark_plots.pdf`](bench/benchmark_plots.pdf),
+and [`ARCHITECTURE.md §2`](./ARCHITECTURE.md#2-why-its-faster) for the
+reasons behind the numbers.
+
+Equivalence with R GenomicSEM is verified by the same bench script:
+`ldsc`, `commonfactor`, `usermodel`, `rgmodel`, `sumstats`,
+`write.model`, `userGWAS`, `paLDSC`, `summaryGLS`, and `simLDSC` all
+pass tolerance-based output checks against R on shared inputs. See
+[`bench/benchmark_perf.R`](bench/benchmark_perf.R) to reproduce.
 
 ## Documentation
 
