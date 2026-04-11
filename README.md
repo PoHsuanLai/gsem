@@ -223,7 +223,7 @@ cd bench && Rscript benchmark_perf.R  # R vs gsemr comparison
 
 If you use this software, please cite the original GenomicSEM paper:
 
-> Grotzinger, A.D., Rhemtulla, M., de Vlaming, R. et al. Genomic structural equation modelling provides insights into the multivariate genetic architecture of complex traits. *Nat Genet* 51, 513–520 (2019). https://doi.org/10.1038/s41588-019-0360-8
+> GrGrotzinger, A. D., Rhemtulla, M., de Vlaming, R., Ritchie, S. J., Mallard, T. T., Hill, W. D., Ip, H. F., Marioni, R. E., McIntosh, A. M., Deary, I. J., Koellinger, P. D., Harden, K. P., Nivard, M. G., & Tucker-Drob, E. M. (2019). Genomic structural equation modelling provides insights into the multivariate genetic architecture of complex traits. Nature human behaviour, 3(5), 513–525. https://doi.org/10.1038/s41562-019-0566-x
 
 ## License
 
