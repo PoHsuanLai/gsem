@@ -35,10 +35,10 @@ result.i_mat   # np.ndarray — intercept matrix
 result.n       # list — sample sizes
 result.m_total # float — number of SNPs
 
-# Every downstream function accepts the `result` object directly — no
-# need to call `result.to_json()`. You can also pass a plain dict with
-# `s`, `v`, `i_mat`, `n_vec`, `m` fields, or a dict using the uppercase
-# `S`, `V`, `I`, `N`, `m` keys that match the R GenomicSEM convention.
+# Every downstream function accepts the `result` object directly. You
+# can also pass a plain dict with `s`, `v`, `i_mat`, `n_vec`, `m` fields,
+# or a dict using the uppercase `S`, `V`, `I`, `N`, `m` keys that match
+# the R GenomicSEM convention.
 
 # Common factor model
 cf = gsem.commonfactor(result)
@@ -79,10 +79,6 @@ gsem.write_model(loadings=[[0.7, 0.0], [0.6, 0.0], [0.0, 0.8]], names=["V1", "V2
 # Genetic correlation
 gsem.rgmodel(result, model="")
 ```
-
-`result.to_json()` / `gsem.LdscResult.from_json(s)` are still available as
-optional compatibility helpers when you need to checkpoint an LDSC run to
-disk, but they are no longer on the hot path between functions.
 
 ## Functions
 

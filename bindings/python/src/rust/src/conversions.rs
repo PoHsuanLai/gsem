@@ -9,9 +9,10 @@ use pyo3::types::PyDict;
 // Matrix <-> NumPy / flat vec
 // ---------------------------------------------------------------------------
 
-/// Convert a faer Mat to a flat row-major Vec for NumPy.
-///
-/// Kept for the `PyLdscResult::to_json` / `from_json` compatibility path.
+/// Convert a faer Mat to a flat row-major `(data, nrows, ncols)` tuple.
+/// Used by `ldsc_result_to_py` to stage S/V/I matrices inside
+/// `PyLdscResult` — the flat buffer is then reshaped back to a
+/// `PyArray2` on each `#[getter]` access.
 pub fn mat_to_flat(mat: &Mat<f64>) -> (Vec<f64>, usize, usize) {
     let nrows = mat.nrows();
     let ncols = mat.ncols();
@@ -22,11 +23,6 @@ pub fn mat_to_flat(mat: &Mat<f64>) -> (Vec<f64>, usize, usize) {
         }
     }
     (data, nrows, ncols)
-}
-
-/// Convert JSON string back to LdscResult. Used by `PyLdscResult::from_json`.
-pub fn json_to_ldsc(json: &str) -> Option<LdscResult> {
-    LdscResult::from_json_string(json).ok()
 }
 
 /// Convert a faer `Mat<f64>` into an owned NumPy `PyArray2<f64>`.

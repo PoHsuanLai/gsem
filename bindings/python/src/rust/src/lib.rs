@@ -533,7 +533,6 @@ fn param_estimates_to_dict<'py>(
 /// Python wrapper for LDSC result.
 #[pyclass(name = "LdscResult")]
 struct PyLdscResult {
-    json: String,
     s_data: Vec<f64>,
     s_shape: (usize, usize),
     v_data: Vec<f64>,
@@ -615,18 +614,6 @@ impl PyLdscResult {
         }
     }
 
-    /// Serialize to JSON string.
-    fn to_json(&self) -> String {
-        self.json.clone()
-    }
-
-    /// Deserialize from JSON string.
-    #[staticmethod]
-    fn from_json(json: &str) -> PyResult<Self> {
-        let result = conversions::json_to_ldsc(json)
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid JSON"))?;
-        Ok(ldsc_result_to_py(&result, false))
-    }
 }
 
 fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResult {
@@ -664,7 +651,6 @@ fn ldsc_result_to_py(result: &gsem_ldsc::LdscResult, stand: bool) -> PyLdscResul
     };
 
     PyLdscResult {
-        json: result.to_json_string().unwrap_or_default(),
         s_data,
         s_shape: (s_rows, s_cols),
         v_data,
