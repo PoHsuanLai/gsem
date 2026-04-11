@@ -9,7 +9,16 @@
 ## Known issues in v0.1.0 (to fix in 0.1.1)
 
 - [ ] **PyPI 0.1.0 project page missing description.** The `0.1.0` wheels were published before `readme = "README.md"` was added to `pyproject.toml`, so `pypi.org/project/genomicsem/` shows "The author of this package has not provided a project description". Fixed in master for 0.1.1 onwards; the 0.1.0 page can't be updated because PyPI doesn't allow re-uploading the same version.
-- [ ] **R on Windows**: first-pass `configure.win` + `src/Makevars.win` were added in master and the manual publish.yml re-trigger uploaded a Windows-compatible tarball. If further Windows issues surface, the likely culprits are (a) Rtools `sh.exe` path detection, (b) MinGW native-static-libs drift between rustc versions (run `RUSTFLAGS=--print=native-static-libs cargo build --target=x86_64-pc-windows-gnu` in a Windows Rtools shell to re-check the link flags), or (c) long-path issues with `target/` inside R's temp install dir.
+
+## Also noted while fixing Windows R CMD check
+
+Non-blocking warnings that still surface in `R CMD check --as-cran`
+after the v0.1.0 fix pass — they're reported but don't fail the build
+(we use `error_on = "error"`). Worth cleaning up for a possible CRAN
+submission:
+
+- [ ] **`_exit` / `abort` / `exit` symbols in `libgsemr.a`** — Rust's stdlib pulls these in for panic handling. CRAN's "portable packages" rule flags them but they're unavoidable without dropping to `no_std`. The standard workaround (used across Rust-backed R packages) is to ship as a non-CRAN source tarball, which is what we do today. Revisit if CRAN becomes a target.
+- [ ] **`unlockBinding(".gsemr_cfgwas_warned", ns)` in `commonfactorGWAS.R`** — flagged as "possibly unsafe call". Rewrite the first-use warning flag to use an environment (`.gsemr_env$cfgwas_warned`) instead of mutating the namespace, which R CMD check accepts silently.
 
 ## Other follow-ups noted during 0.1.0 release audit
 
