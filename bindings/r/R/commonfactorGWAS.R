@@ -1,36 +1,9 @@
-#' Run Common Factor GWAS
-#'
-#' Runs multivariate GWAS with an auto-generated 1-factor model per SNP.
-#'
-#' @param covstruc LDSC result (named list with S, V, I, N, m components)
-#' @param SNPs Path to merged summary statistics file
-#' @param estimation Estimation method: "DWLS" (default) or "ML"
-#' @param cores Integer cap on the rayon worker pool size used for the
-#'   per-SNP fit loop. When \code{NULL} (the default) rayon honours
-#'   \code{RAYON_NUM_THREADS} if set, else it uses the number of
-#'   logical cores reported by the OS. On many-core machines (32+) or
-#'   when the underlying BLAS is multithreaded, set this explicitly to
-#'   avoid oversubscribing CPUs with nested BLAS threads.
-#' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
-#' @param SNPSE SNP SE override (default FALSE = auto)
-#' @param parallel Use a parallel rayon worker pool for the per-SNP
-#'   fit loop (default \code{TRUE}). Set to \code{FALSE} to force
-#'   single-threaded execution.
-#' @param GC Genomic control: "standard" (default), "conservative", or "none"
-#' @param MPI Use MPI (ignored in gsemr -- not applicable to Rust backend)
-#' @param TWAS TWAS gene-level analysis mode (default FALSE)
-#' @param smooth_check Check for non-positive-definite matrices (default FALSE)
-#' @param identification Factor identification strategy: "fixed_variance"
-#'   (default, fixes F1 variance to 1) or "marker_indicator" (fixes first
-#'   loading to 1, matching R GenomicSEM's convention). Use "marker_indicator"
-#'   for exact numerical parity with R GenomicSEM.
-#' @return Data frame of per-SNP (or per-Gene if TWAS=TRUE) results
-#' @export
 # Session-local flag for the one-shot compatibility warning. Lives in the
 # package namespace so it resets on reload and is not visible to users.
 .gsemr_cfgwas_warned <- FALSE
 
 #' @keywords internal
+#' @noRd
 .warn_commonfactorGWAS_semantics <- function() {
   if (isTRUE(getOption("gsemr.commonfactorGWAS.quiet", FALSE))) return(invisible())
   if (isTRUE(.gsemr_cfgwas_warned)) return(invisible())
@@ -64,6 +37,55 @@
   invisible()
 }
 
+#' Run Common Factor GWAS
+#'
+#' Runs multivariate GWAS with an auto-generated 1-factor model per SNP.
+#'
+#' @param covstruc LDSC result (named list with S, V, I, N, m components)
+#' @param SNPs Path to merged summary statistics file
+#' @param estimation Estimation method: "DWLS" (default) or "ML"
+#' @param cores Integer cap on the rayon worker pool size used for the
+#'   per-SNP fit loop. When \code{NULL} (the default) rayon honours
+#'   \code{RAYON_NUM_THREADS} if set, else it uses the number of
+#'   logical cores reported by the OS. On many-core machines (32+) or
+#'   when the underlying BLAS is multithreaded, set this explicitly to
+#'   avoid oversubscribing CPUs with nested BLAS threads.
+#' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
+#' @param SNPSE SNP SE override (default FALSE = auto)
+#' @param parallel Use a parallel rayon worker pool for the per-SNP
+#'   fit loop (default \code{TRUE}). Set to \code{FALSE} to force
+#'   single-threaded execution.
+#' @param GC Genomic control: "standard" (default), "conservative", or "none"
+#' @param MPI Use MPI (ignored in gsemr -- not applicable to Rust backend)
+#' @param TWAS TWAS gene-level analysis mode (default FALSE)
+#' @param smooth_check Check for non-positive-definite matrices (default FALSE)
+#' @param identification Factor identification strategy: "fixed_variance"
+#'   (default, fixes F1 variance to 1) or "marker_indicator" (fixes first
+#'   loading to 1, matching R GenomicSEM's convention). Use "marker_indicator"
+#'   for exact numerical parity with R GenomicSEM.
+#' @return Data frame of per-SNP (or per-Gene if TWAS=TRUE) results
+#' @note gsemr's \code{commonfactorGWAS} uses fixed-variance identification
+#'   and is numerically equivalent to \code{\link{userGWAS}} on the same
+#'   1-factor model. It does NOT match R \code{GenomicSEM::commonfactorGWAS},
+#'   which uses marker-indicator identification. A first-use warning is
+#'   emitted per session; suppress it with
+#'   \code{options(gsemr.commonfactorGWAS.quiet = TRUE)}.
+#'   See \code{ARCHITECTURE.md} section 3.3 for the full rationale.
+#' @examples
+#' \dontrun{
+#' # Suppress the one-shot compatibility warning if desired:
+#' options(gsemr.commonfactorGWAS.quiet = TRUE)
+#'
+#' # `covstruc` from `ldsc()`, merged SNP file from `sumstats()`:
+#' result <- commonfactorGWAS(
+#'   covstruc = covstruc,
+#'   SNPs = "merged_sumstats.tsv",
+#'   estimation = "DWLS",
+#'   GC = "standard"
+#' )
+#' head(result)   # per-SNP est, se, z, p
+#' }
+#' @export
 commonfactorGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", cores=NULL,
                              toler=FALSE, SNPSE=FALSE, parallel=TRUE, GC="standard",
                              MPI=FALSE, TWAS=FALSE, smooth_check=FALSE,

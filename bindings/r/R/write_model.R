@@ -10,6 +10,11 @@
 #' @param mustload Require all variables to load on at least one factor (default FALSE)
 #' @param common Include a common factor (default FALSE)
 #' @return Character string of lavaan model syntax
+#' @examples
+#' # Build a 1-factor loadings matrix and generate lavaan syntax.
+#' loadings <- matrix(c(0.80, 0.70, 0.60), nrow = 3, ncol = 1,
+#'                    dimnames = list(c("V1", "V2", "V3"), "F1"))
+#' cat(write.model(loadings, S_LD = NULL, cutoff = 0.3))
 #' @export
 write.model <- function(Loadings, S_LD, cutoff, fix_resid=TRUE, bifactor=FALSE,
                         mustload=FALSE, common=FALSE) {

@@ -12,6 +12,20 @@
 #' @return A list with components:
 #'   \item{R}{Model-implied genetic correlation matrix}
 #'   \item{V_R}{Sampling covariance of vech(R)}
+#' @examples
+#' # Synthetic 3-trait covariance structure (normally from `ldsc()`).
+#' covstruc <- list(
+#'   S = matrix(c(0.60, 0.42, 0.35,
+#'                0.42, 0.50, 0.30,
+#'                0.35, 0.30, 0.40), 3, 3,
+#'              dimnames = list(c("V1", "V2", "V3"), c("V1", "V2", "V3"))),
+#'   V = diag(6) * 0.001,
+#'   I = diag(3),
+#'   N = c(1e5, 1e5, 1e5),
+#'   m = 1e6
+#' )
+#' rg <- rgmodel(covstruc)
+#' rg$R    # model-implied genetic correlation matrix
 #' @export
 rgmodel <- function(LDSCoutput, model, std.lv=TRUE, estimation=TRUE, sub=NULL, ...) {
 

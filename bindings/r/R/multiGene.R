@@ -9,6 +9,17 @@
 #' @param GeneSE Gene SE override (default "F" = auto, numeric = override)
 #' @param Genelist Optional gene list to subset (character vector)
 #' @return A list with converged, chisq, df, and params
+#' @examples
+#' \dontrun{
+#' # `covstruc` from `ldsc()`, `Genes` from a TWAS-style per-gene table,
+#' # and `LD` from the gene-level correlation matrix.
+#' result <- multiGene(
+#'   covstruc = covstruc,
+#'   Genes = gene_df,     # data.frame with beta, se, var per gene
+#'   LD = ld_matrix       # n_genes x n_genes correlation matrix
+#' )
+#' result$results
+#' }
 #' @export
 multiGene <- function(covstruc, Genes, LD, GeneSE = "F", Genelist = "F") {
 

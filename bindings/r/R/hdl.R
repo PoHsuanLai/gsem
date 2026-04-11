@@ -15,6 +15,18 @@
 #'   \item{V}{Sampling covariance matrix}
 #'   \item{I}{Intercept matrix}
 #'   \item{m}{Number of SNPs used}
+#' @examples
+#' \dontrun{
+#' # HDL uses a text-format LD panel directory (see convert_hdl_panels()).
+#' result <- hdl(
+#'   traits = c("T1.sumstats.gz", "T2.sumstats.gz"),
+#'   sample.prev = c(NA, NA),
+#'   population.prev = c(NA, NA),
+#'   LD.path = "hdl_text_panels/",
+#'   trait.names = c("V1", "V2")
+#' )
+#' result$S
+#' }
 #' @export
 hdl <- function(traits, sample.prev=NA, population.prev=NA, trait.names=NULL,
                 LD.path, Nref=335265, method="piecewise") {

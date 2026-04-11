@@ -17,6 +17,16 @@
 #' @param toler Gradient tolerance for optimizer (default NULL = auto)
 #' @param fixparam Named list of parameters to fix at specific values (default NULL)
 #' @return A data frame with enrichment results
+#' @examples
+#' \dontrun{
+#' # Fast proportional enrichment test (default, model = "").
+#' s_covstruc <- s_ldsc(
+#'   traits = c("T1.sumstats.gz", "T2.sumstats.gz"),
+#'   ld = "baseline_LD/", wld = "weights/", frq = "frq/"
+#' )
+#' result <- enrich(s_covstruc)
+#' head(result)
+#' }
 #' @export
 enrich <- function(s_covstruc, model = "", params = NULL, fix = "regressions",
                    std.lv = FALSE, rm_flank = TRUE, tau = FALSE, base = TRUE,

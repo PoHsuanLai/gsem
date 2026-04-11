@@ -9,6 +9,18 @@
 #' @param SNPSE SNP SE override (default FALSE = auto, numeric = override)
 #' @param SNPlist Optional SNP list to subset (character vector)
 #' @return A list with converged, chisq, df, and params
+#' @examples
+#' \dontrun{
+#' # `covstruc` from `ldsc()`, `SNPs` from `sumstats()` subset to the
+#' # target SNPs, and `LD` from a reference panel (e.g. LDlinkR or PLINK).
+#' result <- multiSNP(
+#'   covstruc = covstruc,
+#'   SNPs = snp_df,       # data.frame with beta, se, var per SNP
+#'   LD = ld_matrix,      # n_snps x n_snps correlation matrix
+#'   SNPSE = 0.0005
+#' )
+#' result$results
+#' }
 #' @export
 multiSNP <- function(covstruc, SNPs, LD, SNPSE = FALSE, SNPlist = NA) {
 

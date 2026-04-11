@@ -14,6 +14,18 @@
 #' @param ldsc.log Log file path (ignored in gsemr)
 #' @param exclude_cont Exclude continuous annotations (default TRUE)
 #' @return A list with per-annotation S and V matrices
+#' @examples
+#' \dontrun{
+#' # Stratified LDSC requires annotation-specific LD, weight, and freq files.
+#' result <- s_ldsc(
+#'   traits = c("T1.sumstats.gz", "T2.sumstats.gz"),
+#'   ld = "baseline_LD/",
+#'   wld = "weights/",
+#'   frq = "frq/",
+#'   trait.names = c("V1", "V2")
+#' )
+#' # Feed into `enrich()` for annotation enrichment tests.
+#' }
 #' @export
 s_ldsc <- function(traits, sample.prev=NULL, population.prev=NULL, ld, wld, frq,
                    trait.names=NULL, n.blocks=200, ldsc.log=NULL, exclude_cont=TRUE) {

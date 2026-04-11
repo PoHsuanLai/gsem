@@ -43,6 +43,19 @@
 #'   `result$params[result$params$SNP == "rsXXXX", ]` for one SNP, or
 #'   `result$params[result$params$op == "~" & result$params$rhs == "SNP", ]`
 #'   for every SNP's regression effect.
+#' @examples
+#' \dontrun{
+#' # `covstruc` from `ldsc()`, `merged_sumstats.tsv` from `sumstats()`.
+#' result <- userGWAS(
+#'   covstruc = covstruc,
+#'   SNPs = "merged_sumstats.tsv",
+#'   model = "F1 =~ NA*V1 + V2 + V3\nF1 ~ SNP\nF1 ~~ 1*F1"
+#' )
+#' # Per-SNP metadata:
+#' head(result$snps)
+#' # SNP regression effects (F1 ~ SNP) across all SNPs:
+#' head(result$params[result$params$op == "~" & result$params$rhs == "SNP", ])
+#' }
 #' @export
 userGWAS <- function(covstruc=NULL, SNPs=NULL, estimation="DWLS", model="",
                      printwarn=TRUE, sub=FALSE, cores=NULL, toler=FALSE, SNPSE=FALSE,

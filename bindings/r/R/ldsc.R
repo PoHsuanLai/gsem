@@ -32,6 +32,19 @@
 #'   \item{I}{LDSC intercept matrix (k x k)}
 #'   \item{N}{Sample size vector}
 #'   \item{m}{Number of SNPs used}
+#' @examples
+#' \dontrun{
+#' covstruc <- ldsc(
+#'   traits = c("T1.sumstats.gz", "T2.sumstats.gz", "T3.sumstats.gz"),
+#'   sample.prev = c(NA, NA, NA),
+#'   population.prev = c(NA, NA, NA),
+#'   ld = "eur_w_ld_chr/",
+#'   wld = "eur_w_ld_chr/",
+#'   trait.names = c("V1", "V2", "V3")
+#' )
+#' covstruc$S   # genetic covariance matrix
+#' covstruc$I   # LDSC intercept matrix
+#' }
 #' @export
 ldsc <- function(traits, sample.prev, population.prev, ld, wld,
                  trait.names=NULL, sep_weights=FALSE, chr=22,

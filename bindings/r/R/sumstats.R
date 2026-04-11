@@ -28,6 +28,16 @@
 #' @param ambig Keep ambiguous SNPs (default FALSE)
 #' @param direct.filter Apply MAF filter directly to GWAS file frequencies (default FALSE)
 #' @return Path to the merged output file
+#' @examples
+#' \dontrun{
+#' # Merge munged sumstats into a single SNP x trait TSV for GWAS.
+#' sumstats(
+#'   files = c("T1.sumstats.gz", "T2.sumstats.gz"),
+#'   ref = "eur_w_ld_chr/",
+#'   trait.names = c("V1", "V2"),
+#'   out = "merged_sumstats.tsv"
+#' )
+#' }
 #' @export
 sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=NULL,
                      N=NULL, betas=NULL, info.filter=0.6, maf.filter=0.01,

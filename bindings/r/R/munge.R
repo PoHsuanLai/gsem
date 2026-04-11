@@ -20,6 +20,16 @@
 #' @param cores Accepted for API compatibility; see \code{parallel}.
 #' @param overwrite Overwrite existing files (ignored in gsemr)
 #' @return Character vector of output file paths (invisibly)
+#' @examples
+#' \dontrun{
+#' # Munge raw GWAS files against a HapMap3 reference SNP list.
+#' munge(
+#'   files = c("gwas1.txt", "gwas2.txt"),
+#'   hm3 = "w_hm3.snplist",
+#'   trait.names = c("T1", "T2")
+#' )
+#' # Writes T1.sumstats.gz, T2.sumstats.gz to the working directory.
+#' }
 #' @export
 munge <- function(files, hm3, trait.names=NULL, N=NULL, info.filter=0.9, maf.filter=0.01,
                   log.name=NULL, column.names=list(), parallel=FALSE, cores=NULL, overwrite=TRUE) {

@@ -18,6 +18,24 @@
 #'   \item{converged}{Logical indicating convergence}
 #'   \item{implied_cov}{Model-implied covariance matrix (if imp_cov=TRUE)}
 #'   \item{Q_Factor}{Q factor results (if Q_Factor=TRUE)}
+#' @examples
+#' # Synthetic 3-trait covariance structure (normally from `ldsc()`).
+#' covstruc <- list(
+#'   S = matrix(c(0.60, 0.42, 0.35,
+#'                0.42, 0.50, 0.30,
+#'                0.35, 0.30, 0.40), 3, 3,
+#'              dimnames = list(c("V1", "V2", "V3"), c("V1", "V2", "V3"))),
+#'   V = diag(6) * 0.001,
+#'   I = diag(3),
+#'   N = c(1e5, 1e5, 1e5),
+#'   m = 1e6
+#' )
+#' um <- usermodel(
+#'   covstruc,
+#'   model = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3"
+#' )
+#' um$results
+#' um$modelfit
 #' @export
 usermodel <- function(covstruc, estimation="DWLS", model="", CFIcalc=TRUE,
                       std.lv=FALSE, imp_cov=FALSE, fix_resid=TRUE, toler=NULL, Q_Factor=FALSE) {

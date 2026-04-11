@@ -34,6 +34,18 @@
 #'   \code{iter<r>GWAS<i>.sumstats[.gz]} for each trait and
 #'   \code{PopCovMat.RData} to the current working directory, matching
 #'   R upstream.
+#' @examples
+#' \dontrun{
+#' # Simulate per-trait sumstats from a target genetic covariance matrix.
+#' covmat <- matrix(c(0.60, 0.42, 0.42, 0.50), 2, 2,
+#'                  dimnames = list(c("T1","T2"), c("T1","T2")))
+#' sim <- simLDSC(
+#'   covmat = covmat,
+#'   N = 1e5,
+#'   ld = "eur_w_ld_chr/"
+#' )
+#' # Writes iter1GWAS1.sumstats.gz, iter1GWAS2.sumstats.gz, PopCovMat.RData.
+#' }
 #' @export
 simLDSC <- function(covmat, N, seed = 1234, ld, rPheno = NULL, int = NULL,
                     N_overlap = 0.99, r = 1, gzip_output = TRUE,

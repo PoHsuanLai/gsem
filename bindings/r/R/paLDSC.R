@@ -44,6 +44,13 @@
 #'     diagonalized variant}
 #'   \item{fa}{(when \code{fa=TRUE}) loadings + uniquenesses from
 #'     \pkg{psych}}
+#' @examples
+#' \dontrun{
+#' # `S` and `V` come from `ldsc()`:
+#' pa <- paLDSC(S = covstruc$S, V = covstruc$V, r = 500, save.pdf = FALSE)
+#' pa$n_factors   # number of non-spurious factors
+#' pa$observed    # observed eigenvalues
+#' }
 #' @export
 paLDSC <- function(S=S, V=V, r=NULL, p=NULL, save.pdf=FALSE, diag=FALSE, fa=FALSE,
                    fm=NULL, nfactors=NULL, parallel=TRUE, cores=NULL) {

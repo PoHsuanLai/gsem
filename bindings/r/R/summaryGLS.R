@@ -13,6 +13,14 @@
 #' @param INTERCEPT Include intercept (default TRUE)
 #' @return A numeric matrix with columns \code{betas, pvals, SE, Z},
 #'   matching \code{GenomicSEM::summaryGLS}.
+#' @examples
+#' # GLS regression of a synthetic response on two predictors.
+#' Y <- c(0.50, 0.30, 0.20, 0.10)
+#' V_Y <- diag(4) * 0.01
+#' X <- matrix(c(1, 2, 3, 4,
+#'               0, 1, 0, 1), nrow = 4, ncol = 2)
+#' fit <- summaryGLS(Y = Y, V_Y = V_Y, PREDICTORS = X, INTERCEPT = TRUE)
+#' fit   # matrix with rows b0, b1, b2 and columns betas, pvals, SE, Z
 #' @export
 summaryGLS <- function(OBJECT = NULL, Y = NULL, V_Y = NULL, PREDICTORS, INTERCEPT = TRUE) {
   if (!is.null(OBJECT)) {
