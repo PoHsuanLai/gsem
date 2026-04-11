@@ -9,17 +9,21 @@ Writes two CSVs that benchmark_perf.R then merges into the master report:
 
 Run from the bench/ directory:
   ../.venv/bin/python run_python_bench.py
+
+Environment variables honoured:
+  BENCH_CORES    integer; used for userGWAS/parallel_analysis thread budget.
+  BENCH_BIG      "1" to include the 25 000-SNP head-to-head size.
 """
 from __future__ import annotations
 
 import csv
 import gc
 import glob
+import gzip
 import json
 import os
 import resource
 import sys
-import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -48,7 +52,12 @@ TRAIT_NAMES = ["ANX", "OCD", "PTSD"]
 SAMPLE_PREV = [0.5, 0.5, 0.5]
 POP_PREV = [0.16, 0.02, 0.07]
 N_OVERRIDES = [None, 9725.0, 5831.0]
-GWAS_SUBSET_N = 1000
+
+BENCH_CORES = int(os.environ.get("BENCH_CORES", "0") or 0) or None
+BENCH_BIG = os.environ.get("BENCH_BIG", "0") in ("1", "true", "TRUE", "True")
+
+# userGWAS head-to-head size grid, matched to benchmark_perf.R.
+UG_SIZES = [1000, 5000, 10000, 25000] if BENCH_BIG else [1000, 5000, 10000]
 
 MUNGED_TRAITS = [f"{t}.sumstats.gz" for t in TRAIT_NAMES]
 
@@ -103,7 +112,7 @@ def store_artifact(key: str, value: object) -> None:
 # ---------------------------------------------------------------------------
 # 0. Munge prerequisite (skip if already done by R)
 # ---------------------------------------------------------------------------
-print("Python bench: starting", flush=True)
+print(f"Python bench: starting (BENCH_CORES={BENCH_CORES}, BENCH_BIG={BENCH_BIG})", flush=True)
 if not all(Path(p).exists() for p in MUNGED_TRAITS):
     print("[prereq] munging via Python (R hasn't done it yet)", flush=True)
     gs.munge(
@@ -116,15 +125,15 @@ if not all(Path(p).exists() for p in MUNGED_TRAITS):
 # ---------------------------------------------------------------------------
 print("[1/12] munge", flush=True)
 py_munge_names = [f"{t}_benchPy" for t in TRAIT_NAMES]
-for n in py_munge_names:
-    Path(f"{n}.sumstats.gz").unlink(missing_ok=True)
+for name in py_munge_names:
+    Path(f"{name}.sumstats.gz").unlink(missing_ok=True)
 
 run_bench("munge", "Python", lambda: gs.munge(
     files=RAW_TRAITS, hm3=HM3, trait_names=py_munge_names,
     info_filter=0.9, maf_filter=0.01, out=".",
 ))
-for n in py_munge_names:
-    Path(f"{n}.sumstats.gz").unlink(missing_ok=True)
+for name in py_munge_names:
+    Path(f"{name}.sumstats.gz").unlink(missing_ok=True)
 
 # ---------------------------------------------------------------------------
 # 2. ldsc — keep result for downstream
@@ -139,19 +148,33 @@ if ldsc_res is None:
         traits=MUNGED_TRAITS, sample_prev=SAMPLE_PREV, population_prev=POP_PREV,
         ld=LD, wld=LD, trait_names=TRAIT_NAMES, n_blocks=200,
     )
-covstruc_json = ldsc_res.to_json()
-store_artifact("ldsc_S", np.asarray(ldsc_res.s).tolist())
+
+# ldsc_res is a PyLdscResult; commonfactor/usermodel/rgmodel/user_gwas
+# accept it directly via pyany_to_ldsc_result, which reads .s/.v/.i_mat/.n/.m_total.
+S_arr = np.asarray(ldsc_res.s, dtype=np.float64)
+V_arr = np.asarray(ldsc_res.v, dtype=np.float64)
+store_artifact("ldsc_S", S_arr.tolist())
+
+
+def _loadings_from_result(res: dict | None, op: str = "=~") -> list[float]:
+    """Extract factor loadings from a columnar parameters dict."""
+    if res is None:
+        return []
+    params = res.get("parameters") if isinstance(res, dict) else None
+    if not isinstance(params, dict):
+        return []
+    ops = params.get("op", [])
+    ests = params.get("est", [])
+    return [e for e, o in zip(ests, ops) if o == op]
+
 
 # ---------------------------------------------------------------------------
 # 3. commonfactor
 # ---------------------------------------------------------------------------
 print("[3/12] commonfactor", flush=True)
-cf_json = run_bench("commonfactor", "Python",
-                    lambda: gs.commonfactor(covstruc_json, "DWLS"))
-if cf_json is not None:
-    cf = json.loads(cf_json)
-    loadings = [p["est"] for p in cf["parameters"] if p["op"] == "=~"]
-    store_artifact("commonfactor_loadings", loadings)
+cf = run_bench("commonfactor", "Python",
+               lambda: gs.commonfactor(ldsc_res, "DWLS"))
+store_artifact("commonfactor_loadings", _loadings_from_result(cf))
 
 # ---------------------------------------------------------------------------
 # 4. usermodel
@@ -162,27 +185,19 @@ model_str = (
     "F1 ~~ 1*F1\n"
     + "\n".join(f"{t} ~~ {t}" for t in TRAIT_NAMES)
 )
-um_json = run_bench("usermodel", "Python",
-                    lambda: gs.usermodel(covstruc_json, model_str, "DWLS"))
-if um_json is not None:
-    um = json.loads(um_json)
-    loadings = [p["est"] for p in um["parameters"] if p["op"] == "=~"]
-    store_artifact("usermodel_loadings", loadings)
+um = run_bench("usermodel", "Python",
+               lambda: gs.usermodel(ldsc_res, model_str, "DWLS"))
+store_artifact("usermodel_loadings", _loadings_from_result(um))
 
 # ---------------------------------------------------------------------------
 # 5. rgmodel
 # ---------------------------------------------------------------------------
 print("[5/12] rgmodel", flush=True)
-# rgmodel signature: (covstruc_json, model, std_lv=True, estimation=True[DWLS], sub=None)
-# Pass empty model to get the auto common-factor R matrix.
-rg_json = run_bench("rgmodel", "Python",
-                    lambda: gs.rgmodel(covstruc_json, ""))
-if rg_json is not None:
-    try:
-        rg = json.loads(rg_json)
-        store_artifact("rgmodel_R", rg.get("R"))
-    except Exception:
-        pass
+# Empty model → auto common-factor R matrix. Signature:
+# rgmodel(covstruc, model, std_lv=True, estimation=True[DWLS], sub=None)
+rg = run_bench("rgmodel", "Python", lambda: gs.rgmodel(ldsc_res, ""))
+if isinstance(rg, dict):
+    store_artifact("rgmodel_R", rg.get("R"))
 
 # ---------------------------------------------------------------------------
 # 6. sumstats
@@ -191,9 +206,12 @@ print("[6/12] sumstats", flush=True)
 Path("out_bench").mkdir(exist_ok=True)
 py_ss_path = "out_bench/py_merged.tsv"
 
+# gs.sumstats fans reference + per-trait reads across a local rayon
+# pool; pass `cores` explicitly so this matches the bench-wide budget.
 run_bench("sumstats", "Python", lambda: gs.sumstats(
     files=RAW_TRAITS, ref_dir=REF_1000G, trait_names=TRAIT_NAMES,
     info_filter=0.6, maf_filter=0.01, out=py_ss_path,
+    parallel=True, cores=BENCH_CORES,
 ))
 
 # ---------------------------------------------------------------------------
@@ -206,99 +224,89 @@ run_bench("write.model", "Python", lambda: gs.write_model(
 ))
 
 # ---------------------------------------------------------------------------
-# Prepare GWAS subset
+# Prepare per-size GWAS subsets (1000 / 5000 / 10000 [/ 25000], plus full).
+# Builds them up front from the Python-side merged sumstats so the
+# userGWAS sweep below can reuse them.
 # ---------------------------------------------------------------------------
 if not Path(py_ss_path).exists():
     gs.sumstats(
         files=RAW_TRAITS, ref_dir=REF_1000G, trait_names=TRAIT_NAMES,
         info_filter=0.6, maf_filter=0.01, out=py_ss_path,
+        parallel=True, cores=BENCH_CORES,
     )
 
-py_subset_path = "out_bench/py_subset.tsv"
-with open(py_ss_path) as f_in, open(py_subset_path, "w") as f_out:
-    header = next(f_in)
-    f_out.write(header)
-    for i, line in enumerate(f_in):
-        if i >= GWAS_SUBSET_N:
-            break
-        f_out.write(line)
+with open(py_ss_path) as f:
+    py_total_snps = sum(1 for _ in f) - 1  # drop header
+
+py_ug_sizes = sorted({min(n, py_total_snps) for n in UG_SIZES if n > 0})
+
+
+def _materialise_subset(dst: str, n_rows: int) -> None:
+    with open(py_ss_path) as src, open(dst, "w") as out:
+        header = next(src)
+        out.write(header)
+        for i, line in enumerate(src):
+            if i >= n_rows:
+                break
+            out.write(line)
+
+
+subset_paths: dict[int, str] = {}
+for n_snp in py_ug_sizes:
+    dst = f"out_bench/py_subset_{n_snp}.tsv"
+    _materialise_subset(dst, n_snp)
+    subset_paths[n_snp] = dst
 
 # ---------------------------------------------------------------------------
-# 8. commonfactorGWAS — DISABLED (intentionally commented out)
-#
-# See bench/benchmark_perf.R section 8 for the full explanation. Briefly:
-# R GenomicSEM::commonfactorGWAS crashes on this PGC input via an
-# unguarded solve() in .commonfactorGWAS_main AND uses a different
-# identification scheme from gsem/gsemr, so an R vs Rust/Python
-# comparison is apples-to-oranges. userGWAS below covers the per-SNP
-# GWAS path with a clean equivalence check. Re-enable once upstream
-# clarifies the intended semantics.
+# 8. commonfactorGWAS — DISABLED (matches benchmark_perf.R section 8).
+# R upstream crashes on this PGC input via an unguarded solve() AND uses
+# a different identification scheme, so a like-for-like comparison is
+# apples-to-oranges. userGWAS below exercises the per-SNP GWAS path.
 # ---------------------------------------------------------------------------
 print("[8/12] commonfactorGWAS (SKIPPED — see comment above)", flush=True)
-# --- disabled block (restore to re-enable) ---
-# cfg_outputs: dict[str, object] = {}
-# for parallel in (True, False):
-#     tag = "par" if parallel else "seq"
-#     j = run_bench(f"commonfactorGWAS", f"Python ({tag})",
-#                   lambda p=parallel: gs.commonfactor_gwas(
-#                       covstruc_json, py_subset_path, parallel=p))
-#     if j is not None:
-#         try:
-#             cfg_outputs[tag] = json.loads(j)
-#         except Exception:
-#             pass
-#
-# if "par" in cfg_outputs:
-#     snp_est = []
-#     for entry in cfg_outputs["par"]:
-#         snp_row = next((p for p in entry.get("params", [])
-#                         if p.get("op") == "~" and p.get("rhs") == "SNP"), None)
-#         snp_est.append({
-#             "SNP": entry.get("SNP"),
-#             "est": snp_row["est"] if snp_row else None,
-#             "se":  snp_row["se"]  if snp_row else None,
-#         })
-#     store_artifact("commonfactorGWAS_par", snp_est)
 
 # ---------------------------------------------------------------------------
-# 9. userGWAS — parallel + serial
+# 9. userGWAS — scaling sweep (parallel only, matches R library section).
 # ---------------------------------------------------------------------------
-print("[9/12] userGWAS", flush=True)
+print("[9/12] userGWAS (scaling sweep)", flush=True)
 gwas_model = (
     f"F1 =~ NA*{TRAIT_NAMES[0]} + {TRAIT_NAMES[1]} + {TRAIT_NAMES[2]}\n"
     "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
 )
-# gs.user_gwas returns {"snps": {...}, "params": {...}}.
-ug_outputs: dict[str, object] = {}
-for parallel in (True, False):
-    tag = "par" if parallel else "seq"
-    out = run_bench(f"userGWAS", f"Python ({tag})",
-                    lambda p=parallel: gs.user_gwas(
-                        covstruc_json, py_subset_path, gwas_model, parallel=p))
-    if out is not None:
-        ug_outputs[tag] = out
 
-if "par" in ug_outputs:
-    conv = ug_outputs["par"].get("snps", {}).get("converged", [])
+print(f"  head-to-head sizes: {py_ug_sizes} (capped at {py_total_snps}, cores={BENCH_CORES})",
+      flush=True)
+ug_par_output: object | None = None
+for n_snp in py_ug_sizes:
+    print(f"  -> N={n_snp}", flush=True)
+    out = run_bench("userGWAS", f"Python (N={n_snp})",
+                    lambda p=subset_paths[n_snp]: gs.user_gwas(
+                        ldsc_res, p, gwas_model,
+                        parallel=True, cores=BENCH_CORES))
+    if n_snp == py_ug_sizes[0]:
+        ug_par_output = out
+
+if ug_par_output is not None and isinstance(ug_par_output, dict):
+    snps = ug_par_output.get("snps", {}) if isinstance(ug_par_output.get("snps"), dict) else {}
+    conv = snps.get("converged", []) if isinstance(snps, dict) else []
     store_artifact("userGWAS_par_converged", sum(1 for x in conv if x))
+
+# Full-scale "real-world deployment" point, matching the R library
+# `Rust (N=..., full)` row. Runs on the entire merged sumstats file.
+print(f"  -> Python full-scale: N={py_total_snps}", flush=True)
+run_bench("userGWAS", f"Python (N={py_total_snps}, full)",
+          lambda: gs.user_gwas(ldsc_res, py_ss_path, gwas_model,
+                               parallel=True, cores=BENCH_CORES))
 
 # ---------------------------------------------------------------------------
 # 10. paLDSC
 # ---------------------------------------------------------------------------
 print("[10/12] paLDSC", flush=True)
-S_arr = np.asarray(ldsc_res.s)
-V_arr = np.asarray(ldsc_res.v)
-S_json = json.dumps(S_arr.tolist())
-V_json = json.dumps(V_arr.tolist())
-
-pa_json = run_bench("paLDSC", "Python",
-                    lambda: gs.parallel_analysis(S_json, V_json, r=100))
-if pa_json is not None:
-    try:
-        pa = json.loads(pa_json)
-        store_artifact("paLDSC_observed", pa.get("observed"))
-    except Exception:
-        pass
+pa = run_bench("paLDSC", "Python",
+               lambda: gs.parallel_analysis(S_arr, V_arr, r=100, p=0.95,
+                                            parallel=True, cores=BENCH_CORES))
+if isinstance(pa, dict):
+    store_artifact("paLDSC_observed", pa.get("observed"))
 
 # ---------------------------------------------------------------------------
 # 11. summaryGLS
@@ -307,27 +315,60 @@ print("[11/12] summaryGLS", flush=True)
 k = S_arr.shape[0]
 kstar = k * (k + 1) // 2
 tril = np.tril_indices(k)
-y = S_arr[tril].tolist()
-X = [[float(i + 1)] for i in range(kstar)]
-V_list = V_arr.tolist()
+y_gls = S_arr[tril]
+X_gls = np.arange(1, kstar + 1, dtype=np.float64).reshape(-1, 1)
 
-gls_json = run_bench("summaryGLS", "Python",
-                     lambda: gs.summary_gls(x=X, y=y, v=V_list, intercept=True))
-if gls_json is not None:
-    try:
-        gls = json.loads(gls_json)
-        store_artifact("summaryGLS_beta",
-                       [r.get("beta") for r in gls] if isinstance(gls, list) else gls)
-    except Exception:
-        pass
+gls = run_bench("summaryGLS", "Python",
+                lambda: gs.summary_gls(x=X_gls, y=y_gls, v=V_arr, intercept=True))
+if isinstance(gls, dict):
+    store_artifact("summaryGLS_beta", list(gls.get("beta", [])))
 
 # ---------------------------------------------------------------------------
-# 12. simLDSC — skipped: the Python `sim_ldsc` binding takes raw LD scores +
-# total M, while the R/CLI version reads the LD directory itself. The two
-# APIs aren't directly comparable, so we omit Python from this row rather
-# than report a misleading number.
+# 12. simLDSC — match the R wrapper's work: load LD scores + total M from
+# the LD directory, then hand pre-loaded arrays to `gs.sim_ldsc`. The
+# wall-clock time therefore includes the same file I/O the R library
+# and CLI paths do.
 # ---------------------------------------------------------------------------
-print("[12/12] simLDSC (skipped for Python — different API)", flush=True)
+print("[12/12] simLDSC", flush=True)
+
+
+def _load_ld_scores(ld_dir: str) -> tuple[np.ndarray, float]:
+    """Read chr 1-22 LD score files and M_5_50 totals from `ld_dir`."""
+    ld_parts: list[np.ndarray] = []
+    m_total = 0.0
+    for chr_i in range(1, 23):
+        score_f = Path(ld_dir) / f"{chr_i}.l2.ldscore.gz"
+        if score_f.exists():
+            with gzip.open(score_f, "rt") as fh:
+                header = fh.readline().rstrip("\n").split("\t")
+                l2_col = header.index("L2") if "L2" in header else -1
+                if l2_col < 0:
+                    continue
+                vals = [float(line.split("\t")[l2_col])
+                        for line in fh if line.strip()]
+                ld_parts.append(np.asarray(vals, dtype=np.float64))
+        m_f = Path(ld_dir) / f"{chr_i}.l2.M_5_50"
+        if m_f.exists():
+            m_total += sum(float(x) for x in m_f.read_text().split())
+    if not ld_parts:
+        raise FileNotFoundError(f"No LD scores found in {ld_dir}")
+    return np.concatenate(ld_parts), (m_total or float(sum(len(p) for p in ld_parts)))
+
+
+def _run_sim_ldsc() -> np.ndarray:
+    ld_scores, m_total = _load_ld_scores(LD)
+    return gs.sim_ldsc(
+        s_matrix=S_arr,
+        n_per_trait=[5000.0] * k,
+        ld_scores=ld_scores.tolist(),
+        m=m_total,
+    )
+
+
+sim_out = run_bench("simLDSC", "Python", _run_sim_ldsc)
+if sim_out is not None:
+    arr = np.asarray(sim_out)
+    store_artifact("simLDSC_shape", list(arr.shape))
 
 # ---------------------------------------------------------------------------
 # Persist

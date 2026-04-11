@@ -103,6 +103,15 @@ munged_traits <- paste0(trait_names, ".sumstats.gz")
 
 GWAS_SUBSET_N <- 1000L
 
+# Shared userGWAS model — used by the R library, CLI, and Python bench
+# sections. Defined up here so every impl runs the identical model and
+# so the CLI/Python sections can reference it before the R library
+# section creates its own copy.
+gwas_model <- paste0(
+  "F1 =~ NA*", trait_names[1], " + ", trait_names[2], " + ", trait_names[3], "\n",
+  "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
+)
+
 if (!file.exists(ref_1000g)) {
   stop("Missing reference file: ", ref_1000g,
        "\nDownload from: https://utexas.box.com/s/vkd36n197m8klbaio3yzoxsee6sxo11v")
@@ -190,6 +199,273 @@ if (!all(file.exists(munged_traits))) {
     files = raw_traits, hm3 = hm3, trait.names = trait_names,
     N = n_overrides, info.filter = 0.9, maf.filter = 0.01
   )
+}
+
+# ===========================================================================
+# CLI BENCHMARKS — gsem binary at target/release/gsem
+#
+# Runs before the R library section so the I/O-heavy commands (munge,
+# ldsc, sumstats) get the cold OS page cache. The library section then
+# benefits from the warmed cache on its second pass over the same
+# files, keeping both measurements reflective of "first pass from a
+# fresh shell" rather than advantaging whichever impl ran second.
+#
+# The CLI pipeline is self-contained: it runs its own munge, ldsc,
+# sumstats, and derives its downstream covstruc / merged-TSV inputs
+# from its own outputs, so no reference to R library variables
+# (`rust_cov`, `rust_ss_path`, `y_gls`, ...) is needed.
+# ===========================================================================
+cat("\n========================================================\n")
+cat("  Rust CLI benchmarks (target/release/gsem)\n")
+cat("========================================================\n\n")
+
+cli_bin <- normalizePath("../target/release/gsem", mustWork = FALSE)
+cli_available <- file.exists(cli_bin)
+if (!cli_available) {
+  cat("CLI binary not found at", cli_bin, "- skipping CLI benchmarks.\n")
+  cat("Build with: cargo build --release -p gsem\n\n")
+} else {
+  dir.create("out_bench/cli", showWarnings = FALSE, recursive = TRUE)
+
+  # Helper: time a CLI invocation. Captures wall time including process
+  # startup so the result reflects the experience of running the binary
+  # from a shell.
+  run_cli <- function(args) {
+    t0 <- proc.time()[["elapsed"]]
+    rc <- tryCatch(
+      system2(cli_bin, args = args, stdout = FALSE, stderr = FALSE),
+      error = function(e) { attr(e, "elapsed") <- proc.time()[["elapsed"]] - t0; e }
+    )
+    t1 <- proc.time()[["elapsed"]]
+    if (inherits(rc, "error")) {
+      list(time_s = t1 - t0, peak_mb = NA_real_, error = conditionMessage(rc))
+    } else if (!is.numeric(rc) || rc != 0) {
+      list(time_s = t1 - t0, peak_mb = NA_real_, error = sprintf("exit %s", as.character(rc)))
+    } else {
+      list(time_s = t1 - t0, peak_mb = NA_real_, error = NA_character_)
+    }
+  }
+
+  # ---- CLI 1. munge ----
+  cat("[CLI 1/12] munge\n")
+  cli_munge_dir <- "out_bench/cli/munge"
+  dir.create(cli_munge_dir, showWarnings = FALSE, recursive = TRUE)
+  cli_munge_names <- paste0(trait_names, "_benchCLI")
+  # The CLI takes a SINGLE -n scalar applied to all traits (vs the R /
+  # Python bindings which accept per-trait overrides). Pass a
+  # representative value; the work is identical in kind so the timing
+  # remains directly comparable.
+  b <- run_cli(c(
+    "munge",
+    "--files", raw_traits,
+    "--hm3", hm3,
+    "--trait-names", cli_munge_names,
+    "-n", "7000",
+    "--info-filter", "0.9",
+    "--maf-filter", "0.01",
+    "--out", cli_munge_dir
+  ))
+  add_result("munge", "CLI", b)
+
+  # ---- CLI 2. ldsc ----
+  cat("[CLI 2/12] ldsc\n")
+  cli_ldsc_out <- "out_bench/cli/ldsc.json"
+  b <- run_cli(c(
+    "ldsc",
+    "--traits", munged_traits,
+    "--sample-prev", paste(sample_prev, collapse = ","),
+    "--pop-prev", paste(pop_prev, collapse = ","),
+    "--ld", ld,
+    "--wld", ld,
+    "--n-blocks", "200",
+    "--out", cli_ldsc_out
+  ))
+  add_result("ldsc", "CLI", b)
+  if (!file.exists(cli_ldsc_out)) {
+    stop("CLI ldsc did not produce ", cli_ldsc_out,
+         " — downstream CLI steps cannot run.")
+  }
+
+  # ---- CLI 3. common-factor ----
+  cat("[CLI 3/12] common-factor\n")
+  b <- run_cli(c(
+    "common-factor",
+    "--covstruc", cli_ldsc_out,
+    "--estimation", "DWLS",
+    "-o", "out_bench/cli/cf.tsv"
+  ))
+  add_result("commonfactor", "CLI", b)
+
+  # ---- CLI 4. usermodel ----
+  cat("[CLI 4/12] usermodel\n")
+  # The CLI's LDSC JSON carries no trait names — the SEM layer uses
+  # generic V1, V2, V3 indicators. Build a parallel model string
+  # against those.
+  cli_indicators <- paste0("V", seq_along(trait_names))
+  cli_model_str <- paste0(
+    "F1 =~ NA*", cli_indicators[1], " + ", cli_indicators[2], " + ", cli_indicators[3], "\n",
+    "F1 ~~ 1*F1\n",
+    paste(cli_indicators, "~~", cli_indicators, collapse = "\n")
+  )
+  cli_model_file <- "out_bench/cli/model.txt"
+  writeLines(cli_model_str, cli_model_file)
+  b <- run_cli(c(
+    "usermodel",
+    "--covstruc", cli_ldsc_out,
+    "--model-file", cli_model_file,
+    "--estimation", "DWLS",
+    "-o", "out_bench/cli/um.tsv"
+  ))
+  add_result("usermodel", "CLI", b)
+
+  # ---- CLI 5. rgmodel ----
+  cat("[CLI 5/12] rgmodel\n")
+  b <- run_cli(c(
+    "rgmodel",
+    "--covstruc", cli_ldsc_out,
+    "--estimation", "DWLS",
+    "-o", "out_bench/cli/rg.tsv"
+  ))
+  add_result("rgmodel", "CLI", b)
+
+  # ---- CLI 6. sumstats ----
+  # CLI parallelizes reference + per-trait reads across a local rayon
+  # pool; `--threads` caps that pool at the bench-wide core budget.
+  cat("[CLI 6/12] sumstats\n")
+  cli_sumstats_out <- "out_bench/cli/merged.tsv"
+  b <- run_cli(c(
+    "sumstats",
+    "--files", raw_traits,
+    "--ref-file", ref_1000g,
+    "--trait-names", trait_names,
+    "--info-filter", "0.6",
+    "--maf-filter", "0.01",
+    "--threads", as.character(BENCH_CORES),
+    "-o", cli_sumstats_out
+  ))
+  add_result("sumstats", "CLI", b)
+
+  # ---- CLI 7. write.model ----
+  cat("[CLI 7/12] write.model\n")
+  cli_loadings_path <- "out_bench/cli/loadings.tsv"
+  # CLI parser wants numbers only — no header, no rownames.
+  write.table(matrix(c(0.7, 0.6, 0.5), ncol = 1), cli_loadings_path,
+              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  b <- run_cli(c(
+    "write.model",
+    "--loadings", cli_loadings_path,
+    "--names", trait_names,
+    "--cutoff", "0.3",
+    "-o", "out_bench/cli/model_out.txt"
+  ))
+  add_result("write.model", "CLI", b)
+
+  # ---- CLI 8. commonfactorGWAS — DISABLED (see section 8 in the R
+  # library block for the full rationale). ----
+  cat("[CLI 8/12] commonfactorGWAS (SKIPPED)\n")
+  add_result("commonfactorGWAS", "CLI (par)",
+             list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+  add_result("commonfactorGWAS", "CLI (seq)",
+             list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
+
+  # ---- CLI 9. userGWAS — scaling sweep matching the library section
+  # (sizes 1000/5000/10000 + full-scale, parallel only). ----
+  cat("[CLI 9/12] userGWAS (scaling sweep)\n")
+  cli_gwas_model_file <- "out_bench/cli/gwas_model.txt"
+  writeLines(gwas_model, cli_gwas_model_file)
+
+  cli_n_available <- length(readLines(cli_sumstats_out)) - 1L
+  cli_ug_sizes <- if (BENCH_BIG) {
+    c(1000L, 5000L, 10000L, 25000L)
+  } else {
+    c(1000L, 5000L, 10000L)
+  }
+  cli_ug_sizes <- unique(pmin(cli_ug_sizes, cli_n_available))
+  cli_ug_sizes <- cli_ug_sizes[cli_ug_sizes > 0]
+  cat(sprintf("  head-to-head sizes: %s (capped at %d, cores=%d)\n",
+              paste(cli_ug_sizes, collapse = ", "), cli_n_available, BENCH_CORES))
+
+  for (n_snp in cli_ug_sizes) {
+    cat(sprintf("  -> N=%d\n", n_snp))
+    cli_sub_path <- sprintf("out_bench/cli/ugwas_subset_%d.tsv", n_snp)
+    cli_sub_df   <- read.delim(cli_sumstats_out, nrows = n_snp)
+    write.table(cli_sub_df, cli_sub_path, sep = "\t", row.names = FALSE, quote = FALSE)
+    b <- run_cli(c(
+      "userGWAS",
+      "--covstruc", cli_ldsc_out,
+      "--sumstats", cli_sub_path,
+      "--model-file", cli_gwas_model_file,
+      "--threads", as.character(BENCH_CORES),
+      "-o", sprintf("out_bench/cli/ugwas_%d.tsv", n_snp)
+    ))
+    add_result("userGWAS", sprintf("CLI (N=%d)", n_snp), b)
+  }
+
+  # Full-scale "real-world deployment" point. Matches the Rust library
+  # section's full-scale Rust row.
+  cat(sprintf("  -> CLI full-scale: N=%d\n", cli_n_available))
+  b <- run_cli(c(
+    "userGWAS",
+    "--covstruc", cli_ldsc_out,
+    "--sumstats", cli_sumstats_out,
+    "--model-file", cli_gwas_model_file,
+    "--threads", as.character(BENCH_CORES),
+    "-o", "out_bench/cli/ugwas_full.tsv"
+  ))
+  add_result("userGWAS", sprintf("CLI (N=%d, full)", cli_n_available), b)
+
+  # ---- CLI 10. paLDSC ----
+  cat("[CLI 10/12] paLDSC\n")
+  b <- run_cli(c(
+    "paLDSC",
+    "--covstruc", cli_ldsc_out,
+    "--n-sim", "100",
+    "-o", "out_bench/cli/paldsc.tsv"
+  ))
+  add_result("paLDSC", "CLI", b)
+
+  # ---- CLI 11. summaryGLS ----
+  cat("[CLI 11/12] summaryGLS\n")
+  # Derive Y/X/V from the CLI's own LDSC JSON so this step stays
+  # self-contained (no dependency on the R library `rust_cov`).
+  cli_ldsc_json <- jsonlite::fromJSON(cli_ldsc_out)
+  cli_S <- as.matrix(cli_ldsc_json$s)
+  cli_V <- as.matrix(cli_ldsc_json$v)
+  cli_k <- nrow(cli_S)
+  cli_kstar <- cli_k * (cli_k + 1) / 2
+  cli_y_gls <- cli_S[lower.tri(cli_S, diag = TRUE)]
+  cli_X_gls <- matrix(seq_len(cli_kstar), ncol = 1)
+  cli_y_path <- "out_bench/cli/gls_y.tsv"
+  cli_x_path <- "out_bench/cli/gls_x.tsv"
+  cli_v_path <- "out_bench/cli/gls_v.tsv"
+  write.table(matrix(cli_y_gls, ncol = 1), cli_y_path,
+              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  write.table(cli_X_gls, cli_x_path,
+              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  write.table(cli_V, cli_v_path,
+              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  b <- run_cli(c(
+    "summaryGLS",
+    "--x", cli_x_path,
+    "--y", cli_y_path,
+    "--v", cli_v_path,
+    "--intercept",
+    "-o", "out_bench/cli/gls.tsv"
+  ))
+  add_result("summaryGLS", "CLI", b)
+
+  # ---- CLI 12. simLDSC ----
+  cat("[CLI 12/12] simLDSC\n")
+  b <- run_cli(c(
+    "simLDSC",
+    "--covstruc", cli_ldsc_out,
+    "--n-per-trait", "5000,5000,5000",
+    "--ld", ld,
+    "-o", "out_bench/cli/sim_ldsc.tsv"
+  ))
+  add_result("simLDSC", "CLI", b)
+
+  cat("\nCLI benchmarks done.\n")
 }
 
 # ---------------------------------------------------------------------------
@@ -373,11 +649,14 @@ b <- run_bench(function() {
 })
 add_result("sumstats", "R", b)
 
-# Rust sumstats
+# Rust sumstats — gsemr parallelizes reference + per-trait reads
+# across a local rayon pool; pass `cores = BENCH_CORES` explicitly so
+# this matches the rest of the bench's thread budget.
 b <- run_bench(function() {
   gsemr::sumstats(
     files = raw_traits, ref = ref_1000g, trait.names = trait_names,
-    info.filter = 0.6, maf.filter = 0.01, out = rust_ss_path
+    info.filter = 0.6, maf.filter = 0.01, out = rust_ss_path,
+    parallel = TRUE, cores = BENCH_CORES
   )
 })
 add_result("sumstats", "Rust", b)
@@ -449,7 +728,8 @@ cat(sprintf("  R subset: %d SNPs (from R sumstats, %d total)\n", nrow(r_snps_df)
 if (!file.exists(rust_ss_path)) {
   gsemr::sumstats(
     files = raw_traits, ref = ref_1000g, trait.names = trait_names,
-    info.filter = 0.6, maf.filter = 0.01, out = rust_ss_path
+    info.filter = 0.6, maf.filter = 0.01, out = rust_ss_path,
+    parallel = TRUE, cores = BENCH_CORES
   )
 }
 rust_subset_path <- "out_bench/rust_subset.tsv"
@@ -545,10 +825,8 @@ add_equiv("commonfactorGWAS", "SKIP",
 # 9. userGWAS — scaling sweep over multiple SNP counts (parallel only)
 # ---------------------------------------------------------------------------
 cat("[9/12] userGWAS (scaling sweep)\n")
-gwas_model <- paste0(
-  "F1 =~ NA*", trait_names[1], " + ", trait_names[2], " + ", trait_names[3], "\n",
-  "F1 ~ SNP\nF1 ~~ 1*F1\nSNP ~~ SNP"
-)
+# `gwas_model` is hoisted to the config block so every impl (R, CLI,
+# Python) runs exactly the same formula.
 
 # SNP-count grid for head-to-head scaling. The 25k point is gated behind
 # BENCH_BIG=1 because at that size R's parallel path is memory-hungry
@@ -685,17 +963,23 @@ b <- run_bench(function() {
 })
 add_result("paLDSC", "Rust", b)
 
-# Equivalence: observed eigenvalues should match (both compute on the same S)
+# Equivalence: check that gsemr's observed eigenvalues match a direct
+# eigendecomposition of the correlation-matrix form of S (which is
+# what paLDSC reports as `observed`). R `GenomicSEM::paLDSC` has no
+# return() statement — it prints and returns NULL invisibly — so we
+# can't read `$observed` off it; comparing against base R's own
+# `eigen()` instead gives us a meaningful parity check.
 tryCatch({
-  if (existsFunction("paLDSC", where = asNamespace("GenomicSEM"))) {
-    r_pa    <- GenomicSEM::paLDSC(r_cov$S, r_cov$V, r = 100, p = 0.95, save.pdf = FALSE)
-    rust_pa <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 0.95, save.pdf = FALSE)
-    err <- compare_numeric(r_pa$observed, rust_pa$observed, 1e-3, "observed eigenvalues")
-    if (nzchar(err)) add_equiv("paLDSC", "FAIL", err)
-    else add_equiv("paLDSC", "PASS", "observed eigenvalues within 1e-3")
-  } else {
-    add_equiv("paLDSC", "SKIP", "R paLDSC unavailable")
-  }
+  rust_pa <- gsemr::paLDSC(rust_cov$S, rust_cov$V, r = 100, p = 0.95, save.pdf = FALSE)
+  s_mat   <- as.matrix(rust_cov$S)
+  sds     <- sqrt(pmax(diag(s_mat), 1e-10))
+  cor_mat <- s_mat / outer(sds, sds)
+  diag(cor_mat) <- 1
+  r_eigs  <- sort(eigen(cor_mat, only.values = TRUE)$values, decreasing = TRUE)
+  err <- compare_numeric(r_eigs, rust_pa$observed, 1e-6,
+                         "observed eigenvalues (gsemr vs base::eigen)")
+  if (nzchar(err)) add_equiv("paLDSC", "FAIL", err)
+  else add_equiv("paLDSC", "PASS", "observed eigenvalues within 1e-6 of base::eigen")
 }, error = function(e) add_equiv("paLDSC", "SKIP", conditionMessage(e)))
 
 # ---------------------------------------------------------------------------
@@ -772,258 +1056,35 @@ b <- run_bench(function() {
 })
 add_result("simLDSC", "Rust", b)
 
-# simLDSC produces stochastic output; only verify both produce data of similar shape
+# simLDSC produces stochastic output and R `GenomicSEM::simLDSC` has
+# no return() — it writes per-trait TSVs to the working directory and
+# returns NULL invisibly. Compare shape-only: gsemr's return matrix
+# must be k traits x N SNPs and R's written files must exist.
 tryCatch({
-  if (existsFunction("simLDSC", where = asNamespace("GenomicSEM"))) {
-    r_sim    <- GenomicSEM::simLDSC(covmat = r_cov$S, N = 5000, seed = 42, ld = "data/eur_w_ld_chr/")
-    rust_sim <- gsemr::simLDSC(covmat = rust_cov$S, N = 5000, seed = 42, ld = "data/eur_w_ld_chr/")
-    if (max(dim(as.matrix(r_sim))) >= 100 && max(dim(as.matrix(rust_sim))) >= 100) {
-      add_equiv("simLDSC", "PASS", "both produced sufficient simulated data")
-    } else {
-      add_equiv("simLDSC", "FAIL", "insufficient simulated data")
-    }
+  rust_sim <- gsemr::simLDSC(covmat = rust_cov$S, N = 5000, seed = 42,
+                             ld = "data/eur_w_ld_chr/")
+  rust_ok <- is.matrix(rust_sim) && nrow(rust_sim) == nrow(rust_cov$S) &&
+             ncol(rust_sim) >= 100
+  # R writes files like iter1GWAS1.sumstats.gz in the cwd when it runs.
+  # The bench `run_bench(function() GenomicSEM::simLDSC(...))` above
+  # already exercised it; just check the files landed.
+  r_outputs <- Sys.glob("iter*GWAS*.sumstats*")
+  r_ok      <- length(r_outputs) >= nrow(rust_cov$S)
+  if (rust_ok && r_ok) {
+    add_equiv("simLDSC", "PASS", sprintf("gsemr %dx%d; R wrote %d files",
+                                          nrow(rust_sim), ncol(rust_sim), length(r_outputs)))
+  } else if (rust_ok && !r_ok) {
+    add_equiv("simLDSC", "FAIL", sprintf("R produced %d trait files (expected >= %d)",
+                                          length(r_outputs), nrow(rust_cov$S)))
   } else {
-    add_equiv("simLDSC", "SKIP", "R simLDSC unavailable")
+    add_equiv("simLDSC", "FAIL", "gsemr did not return a k x N matrix")
   }
+  # Cleanup the files R dropped into cwd.
+  file.remove(r_outputs)
 }, error = function(e) add_equiv("simLDSC", "SKIP", conditionMessage(e)))
 
-# NOTE: CSV save and summary table are deferred to AFTER the CLI and Python
-# sections so they include every impl row.
-
-# ===========================================================================
-# CLI BENCHMARKS — gsem binary at target/release/gsem
-# Same inputs as the library benchmarks above; all outputs go to out_bench/cli.
-# Each call writes its result to disk so we can read it back for equivalence
-# checks.
-# ===========================================================================
-cat("\n========================================================\n")
-cat("  Rust CLI benchmarks (target/release/gsem)\n")
-cat("========================================================\n\n")
-
-cli_bin <- normalizePath("../target/release/gsem", mustWork = FALSE)
-if (!file.exists(cli_bin)) {
-  cat("CLI binary not found at", cli_bin, "- skipping CLI benchmarks.\n")
-  cat("Build with: cargo build --release -p gsem\n\n")
-} else {
-  dir.create("out_bench/cli", showWarnings = FALSE, recursive = TRUE)
-
-  # Helper: time a CLI invocation. Captures wall time including process startup
-  # so the result reflects the experience of running the binary from a shell.
-  run_cli <- function(args) {
-    t0 <- proc.time()[["elapsed"]]
-    rc <- tryCatch(
-      system2(cli_bin, args = args, stdout = FALSE, stderr = FALSE),
-      error = function(e) { attr(e, "elapsed") <- proc.time()[["elapsed"]] - t0; e }
-    )
-    t1 <- proc.time()[["elapsed"]]
-    if (inherits(rc, "error")) {
-      list(time_s = t1 - t0, peak_mb = NA_real_, error = conditionMessage(rc))
-    } else if (!is.numeric(rc) || rc != 0) {
-      list(time_s = t1 - t0, peak_mb = NA_real_, error = sprintf("exit %s", as.character(rc)))
-    } else {
-      list(time_s = t1 - t0, peak_mb = NA_real_, error = NA_character_)
-    }
-  }
-
-  # Save covstruc as a JSON file the CLI can ingest. The shape matches
-  # gsem_ldsc::LdscResult exactly: {s, v, i_mat, n_vec, m}.
-  cli_covstruc <- "out_bench/cli/covstruc.json"
-  cs <- list(
-    s     = unname(as.matrix(rust_cov$S)),
-    v     = unname(as.matrix(rust_cov$V)),
-    i_mat = unname(as.matrix(rust_cov$I)),
-    n_vec = as.numeric(rust_cov$N),
-    m     = as.numeric(rust_cov$m)
-  )
-  writeLines(jsonlite::toJSON(cs, auto_unbox = TRUE, digits = 17), cli_covstruc)
-
-  # ---- 1. munge ----
-  cat("[CLI 1/11] munge\n")
-  cli_munge_dir <- "out_bench/cli/munge"
-  dir.create(cli_munge_dir, showWarnings = FALSE, recursive = TRUE)
-  cli_munge_names <- paste0(trait_names, "_benchCLI")
-  # CLI munge takes a SINGLE -n scalar applied to all traits (vs the R/Python
-  # bindings which accept per-trait overrides). We pass a representative value
-  # so all three files can be processed; the work is identical in nature so
-  # the timing remains directly comparable. Output is not used for equivalence.
-  b <- run_cli(c(
-    "munge",
-    "--files", raw_traits,
-    "--hm3", hm3,
-    "--trait-names", cli_munge_names,
-    "-n", "7000",
-    "--info-filter", "0.9",
-    "--maf-filter", "0.01",
-    "--out", cli_munge_dir
-  ))
-  add_result("munge", "CLI", b)
-
-  # ---- 2. ldsc ----
-  cat("[CLI 2/11] ldsc\n")
-  cli_ldsc_out <- "out_bench/cli/ldsc.json"
-  b <- run_cli(c(
-    "ldsc",
-    "--traits", munged_traits,
-    "--sample-prev", paste(sample_prev, collapse = ","),
-    "--pop-prev", paste(pop_prev, collapse = ","),
-    "--ld", ld,
-    "--wld", ld,
-    "--n-blocks", "200",
-    "--out", cli_ldsc_out
-  ))
-  add_result("ldsc", "CLI", b)
-
-  # Use the CLI's own LDSC output for downstream CLI commands so we measure
-  # an end-to-end CLI pipeline (not a hybrid R+CLI one).
-  cli_covstruc_self <- if (file.exists(cli_ldsc_out)) cli_ldsc_out else cli_covstruc
-
-  # ---- 3. common-factor ----
-  cat("[CLI 3/11] common-factor\n")
-  b <- run_cli(c(
-    "common-factor",
-    "--covstruc", cli_covstruc_self,
-    "--estimation", "DWLS",
-    "-o", "out_bench/cli/cf.tsv"
-  ))
-  add_result("commonfactor", "CLI", b)
-
-  # ---- 4. usermodel ----
-  cat("[CLI 4/11] usermodel\n")
-  # The CLI's LDSC JSON carries no trait names — the SEM layer uses generic
-  # V1, V2, V3 indicators. Build a parallel model string against those.
-  cli_indicators <- paste0("V", seq_along(trait_names))
-  cli_model_str <- paste0(
-    "F1 =~ NA*", cli_indicators[1], " + ", cli_indicators[2], " + ", cli_indicators[3], "\n",
-    "F1 ~~ 1*F1\n",
-    paste(cli_indicators, "~~", cli_indicators, collapse = "\n")
-  )
-  cli_model_file <- "out_bench/cli/model.txt"
-  writeLines(cli_model_str, cli_model_file)
-  b <- run_cli(c(
-    "usermodel",
-    "--covstruc", cli_covstruc_self,
-    "--model-file", cli_model_file,
-    "--estimation", "DWLS",
-    "-o", "out_bench/cli/um.tsv"
-  ))
-  add_result("usermodel", "CLI", b)
-
-  # ---- 5. rgmodel ----
-  cat("[CLI 5/11] rgmodel\n")
-  b <- run_cli(c(
-    "rgmodel",
-    "--covstruc", cli_covstruc_self,
-    "--estimation", "DWLS",
-    "-o", "out_bench/cli/rg.tsv"
-  ))
-  add_result("rgmodel", "CLI", b)
-
-  # ---- 6. sumstats ----
-  cat("[CLI 6/11] sumstats\n")
-  cli_sumstats_out <- "out_bench/cli/merged.tsv"
-  b <- run_cli(c(
-    "sumstats",
-    "--files", raw_traits,
-    "--ref-file", ref_1000g,
-    "--trait-names", trait_names,
-    "--info-filter", "0.6",
-    "--maf-filter", "0.01",
-    "-o", cli_sumstats_out
-  ))
-  add_result("sumstats", "CLI", b)
-
-  # ---- 7. write.model ----
-  cat("[CLI 7/11] write.model\n")
-  cli_loadings_path <- "out_bench/cli/loadings.tsv"
-  # CLI parser wants numbers only — no header, no rownames.
-  write.table(matrix(c(0.7, 0.6, 0.5), ncol = 1), cli_loadings_path,
-              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-  b <- run_cli(c(
-    "write.model",
-    "--loadings", cli_loadings_path,
-    "--names", trait_names,
-    "--cutoff", "0.3",
-    "-o", "out_bench/cli/model_out.txt"
-  ))
-  add_result("write.model", "CLI", b)
-
-  # ---- 8. commonfactorGWAS — DISABLED (see section 8 above) ----
-  cat("[CLI 8/11] commonfactorGWAS (SKIPPED)\n")
-  add_result("commonfactorGWAS", "CLI (par)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
-  add_result("commonfactorGWAS", "CLI (seq)", list(time_s = NA_real_, peak_mb = NA_real_, error = "skipped"))
-  # --- disabled block (restore to re-enable) ---
-  # for (par in c(TRUE, FALSE)) {
-  #   tag <- if (par) "par" else "seq"
-  #   threads_arg <- if (par) character(0) else c("--threads", "1")
-  #   b <- run_cli(c(
-  #     "commonfactorGWAS",
-  #     "--covstruc", cli_covstruc_self,
-  #     "--sumstats", rust_subset_path,
-  #     threads_arg,
-  #     "-o", sprintf("out_bench/cli/cfgwas_%s.tsv", tag)
-  #   ))
-  #   add_result("commonfactorGWAS", sprintf("CLI (%s)", tag), b)
-  # }
-
-  # ---- 9. userGWAS — parallel and serial ----
-  cat("[CLI 9/11] userGWAS\n")
-  # CLI userGWAS extracts observed names from the model and matches them to
-  # `merged.trait_names` from the sumstats TSV (which are the real trait
-  # names, ANX/OCD/PTSD, derived from the beta.* columns). So we use the
-  # original `gwas_model` here, not V1/V2/V3.
-  cli_gwas_model_file <- "out_bench/cli/gwas_model.txt"
-  writeLines(gwas_model, cli_gwas_model_file)
-  for (par in c(TRUE, FALSE)) {
-    tag <- if (par) "par" else "seq"
-    threads_arg <- if (par) c("--threads", as.character(BENCH_CORES)) else c("--threads", "1")
-    b <- run_cli(c(
-      "userGWAS",
-      "--covstruc", cli_covstruc_self,
-      "--sumstats", rust_subset_path,
-      "--model-file", cli_gwas_model_file,
-      threads_arg,
-      "-o", sprintf("out_bench/cli/ugwas_%s.tsv", tag)
-    ))
-    add_result("userGWAS", sprintf("CLI (%s)", tag), b)
-  }
-
-  # ---- 10. paLDSC ----
-  cat("[CLI 10/11] paLDSC\n")
-  b <- run_cli(c(
-    "paLDSC",
-    "--covstruc", cli_covstruc_self,
-    "--n-sim", "100",
-    "-o", "out_bench/cli/paldsc.tsv"
-  ))
-  add_result("paLDSC", "CLI", b)
-
-  # ---- 11. summaryGLS ----
-  cat("[CLI 11/11] summaryGLS\n")
-  cli_y_path <- "out_bench/cli/gls_y.tsv"
-  cli_x_path <- "out_bench/cli/gls_x.tsv"
-  cli_v_path <- "out_bench/cli/gls_v.tsv"
-  # CLI parsers want numbers only — no header rows.
-  write.table(matrix(y_gls, ncol = 1), cli_y_path,
-              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-  write.table(X_gls, cli_x_path,
-              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-  write.table(unname(as.matrix(rust_cov$V)), cli_v_path,
-              sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-  b <- run_cli(c(
-    "summaryGLS",
-    "--x", cli_x_path,
-    "--y", cli_y_path,
-    "--v", cli_v_path,
-    "--intercept",
-    "-o", "out_bench/cli/gls.tsv"
-  ))
-  add_result("summaryGLS", "CLI", b)
-
-  # CLI does not have a trivial simLDSC parity-mode call (Python skips it
-  # too because the API surface differs). We omit CLI from simLDSC.
-
-  cat("\nCLI benchmarks done.\n")
-}
+# NOTE: CSV save and summary table are deferred to AFTER the Python
+# section so they include every impl row.
 
 # ===========================================================================
 # PYTHON BENCHMARKS — call the venv's run_python_bench.py and merge CSV
@@ -1032,18 +1093,38 @@ cat("\n========================================================\n")
 cat("  Python benchmarks (.venv/bin/python run_python_bench.py)\n")
 cat("========================================================\n\n")
 
-python_bin <- normalizePath("../.venv/bin/python", mustWork = FALSE)
+# NOTE: don't resolve the symlink with normalizePath — Python's venv
+# detection activates on `sys.executable` starting with the venv path,
+# and following the `.venv/bin/python` symlink back to
+# `/opt/homebrew/.../python3.13` defeats that, leaving the venv's
+# site-packages off sys.path (numpy, genomicsem, etc. become
+# invisible).
+python_bin <- file.path("..", ".venv", "bin", "python")
 py_script  <- "run_python_bench.py"
 if (!file.exists(python_bin) || !file.exists(py_script)) {
   cat("Python interpreter or script missing - skipping Python benchmarks.\n")
   cat("  python: ", python_bin, "\n")
   cat("  script: ", py_script, "\n")
 } else {
+  # Forward BENCH_CORES / BENCH_BIG so the Python sweep honours the
+  # same core budget and size grid as the R library section.
+  Sys.setenv(BENCH_CORES = as.character(BENCH_CORES))
+  Sys.setenv(BENCH_BIG = if (isTRUE(BENCH_BIG)) "1" else "0")
+
+  # Remove any stale CSV / artifacts from a previous run so we never
+  # silently merge yesterday's numbers if today's Python invocation
+  # fails. The Python script rewrites both files on success.
+  unlink("python_results.csv")
+  unlink("python_artifacts.json")
+
   rc <- tryCatch(
     system2(python_bin, args = py_script, stdout = "", stderr = ""),
     error = function(e) { cat("Python bench error:", conditionMessage(e), "\n"); -1 }
   )
-  if (file.exists("python_results.csv")) {
+  if (!is.numeric(rc) || rc != 0) {
+    cat(sprintf("Python bench exited with status %s — skipping merge.\n",
+                as.character(rc)))
+  } else if (file.exists("python_results.csv")) {
     py <- read.csv("python_results.csv", stringsAsFactors = FALSE)
     py$error[is.na(py$error)] <- ""
     if (nrow(py) > 0) {
@@ -1093,8 +1174,8 @@ cat(sprintf("\nResults saved to %s\n", csv_path))
 cat("\n========================================================\n")
 cat("  Summary\n")
 cat("========================================================\n\n")
-cat(sprintf("%-20s %-12s %10s %10s\n", "Function", "Impl", "Time (s)", "Peak (MB)"))
-cat(strrep("-", 58), "\n")
+cat(sprintf("%-20s %-26s %10s %10s\n", "Function", "Impl", "Time (s)", "Peak (MB)"))
+cat(strrep("-", 72), "\n")
 
 funcs <- unique(results$func)
 fmt_val <- function(x) if (is.na(x)) "      N/A" else sprintf("%10.2f", x)
@@ -1104,7 +1185,7 @@ for (fn in funcs) {
   rows <- results[results$func == fn, ]
   for (i in seq_len(nrow(rows))) {
     r <- rows[i, ]
-    cat(sprintf("%-20s %-12s %s %s",
+    cat(sprintf("%-20s %-26s %s %s",
                 if (i == 1) fn else "", r$impl, fmt_val(r$time_s), fmt_mem(r$peak_mb)))
     if (nzchar(r$error)) cat(sprintf("  [err: %s]", substr(r$error, 1, 40)))
     cat("\n")
@@ -1131,33 +1212,33 @@ cat(sprintf("\n  PASS: %d  FAIL: %d  SKIP: %d\n", n_pass, n_fail, n_skip))
 write.csv(equiv, "benchmark_equivalence.csv", row.names = FALSE)
 
 # ---------------------------------------------------------------------------
-# Generate single raw-speed bar chart (linear scale, with numeric labels)
+# Generate plots: a detailed PDF (every impl x every function) and a
+# headline PNG (R GenomicSEM vs gsemr on the operations that dominate
+# wall-clock time in a typical pipeline).
 # ---------------------------------------------------------------------------
-cat("\nGenerating plot...\n")
+cat("\nGenerating plots...\n")
 pdf_path <- "benchmark_plots.pdf"
+png_path <- "benchmark_headline.png"
 
 plot_df <- results[!is.na(results$time_s), c("func", "impl", "time_s")]
 # Stable order: by func order of first appearance, then by impl as recorded
 plot_df$func <- factor(plot_df$func, levels = unique(results$func))
 plot_df$impl <- factor(plot_df$impl, levels = unique(results$impl))
 
-# Color palette: distinct colors per impl, with related shades for par/seq variants
+# Color palette: one base colour per impl family, shared across the
+# plain row ("R", "Rust", ...) and its scale-sweep or par/seq siblings
+# ("R (N=1000)", "Rust (N=..., full)", ...). Family is matched by the
+# leading word so any future variant automatically picks up the family
+# colour.
 all_impls <- levels(plot_df$impl)
-palette <- c(
-  "R"              = "#E41A1C",
-  "R (par)"        = "#E41A1C",
-  "R (seq)"        = "#FB9A99",
-  "Rust"           = "#377EB8",
-  "Rust (par)"     = "#377EB8",
-  "Rust (seq)"     = "#A6CEE3",
-  "CLI"            = "#4DAF4A",
-  "CLI (par)"      = "#4DAF4A",
-  "CLI (seq)"      = "#B2DF8A",
-  "Python"         = "#984EA3",
-  "Python (par)"   = "#984EA3",
-  "Python (seq)"   = "#CAB2D6"
+family_palette <- c(
+  "R"      = "#E41A1C",
+  "Rust"   = "#377EB8",
+  "CLI"    = "#4DAF4A",
+  "Python" = "#984EA3"
 )
-colors_impl <- palette[all_impls]
+impl_family <- sub("^(\\w+).*$", "\\1", all_impls)
+colors_impl <- unname(family_palette[impl_family])
 colors_impl[is.na(colors_impl)] <- "#999999"
 names(colors_impl) <- all_impls
 
@@ -1165,32 +1246,213 @@ theme_bench <- theme_minimal(base_size = 12) +
   theme(
     plot.title       = element_text(face = "bold", size = 14),
     plot.subtitle    = element_text(color = "grey40", size = 10),
-    axis.text.x      = element_text(angle = 45, hjust = 1, size = 10),
     legend.position  = "top",
-    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_blank(),
     plot.margin      = margin(10, 15, 10, 10)
   )
 
-pdf(pdf_path, width = 12, height = 7)
+# ---- Detailed report: every impl x every function, horizontal bars ----
+pdf(pdf_path, width = 12, height = 9)
 if (nrow(plot_df) > 0) {
+  # Reverse function order so the first row (first bench step) lands at
+  # the top of the y-axis rather than the bottom after ggplot's flip.
+  plot_df$func <- factor(plot_df$func, levels = rev(levels(plot_df$func)))
   p <- ggplot(plot_df, aes(x = func, y = time_s, fill = impl)) +
-    geom_col(position = position_dodge(width = 0.8), width = 0.75, alpha = 0.9) +
+    geom_col(position = position_dodge2(width = 0.85, preserve = "single"),
+             width = 0.8, alpha = 0.9) +
     geom_text(
       aes(label = sprintf("%.2f", time_s)),
-      position = position_dodge(width = 0.8),
-      vjust    = -0.4,
+      position = position_dodge2(width = 0.85, preserve = "single"),
+      hjust    = -0.15,
       size     = 3
     ) +
+    coord_flip() +
     scale_fill_manual(values = colors_impl) +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.18))) +
     labs(
       title    = "Execution Time across implementations",
-      subtitle = sprintf("R GenomicSEM | gsemr (R bindings) | gsem CLI | genomicsem (Python) | PGC Anxiety/OCD/PTSD | GWAS subset: %d SNPs", GWAS_SUBSET_N),
+      subtitle = sprintf(
+        "R GenomicSEM | gsemr (R bindings) | gsem CLI | genomicsem (Python) | PGC Anxiety/OCD/PTSD | BENCH_CORES=%d",
+        BENCH_CORES
+      ),
       x        = NULL, y = "Time (seconds)", fill = NULL
     ) +
     theme_bench
   print(p)
 }
-dev.off()
-cat(sprintf("Plot saved to %s\n", pdf_path))
+invisible(dev.off())
+cat(sprintf("Detailed plot saved to %s\n", pdf_path))
+
+# ---- Headline: R vs gsemr on the operations that matter for wall time ----
+#
+# Drops the fast ops (commonfactor, usermodel, rgmodel, write.model,
+# summaryGLS, paLDSC) from the headline — they complete in under 0.5s
+# in both impls and aren't what drives a user's decision to switch.
+# Keeps munge, ldsc, sumstats, simLDSC, and the userGWAS scaling
+# sweep + full-scale row. Sorted by R wall time (descending) so the
+# worst case lands at the top.
+headline_df <- results[!is.na(results$time_s) & nzchar(results$impl), ]
+headline_funcs <- c("munge", "ldsc", "sumstats", "simLDSC", "userGWAS")
+headline_df <- headline_df[headline_df$func %in% headline_funcs, ]
+
+# Build a per-row label that collapses the scaling sweep into "userGWAS
+# (N=10 000)" etc., and normalises the impl column to {R, gsemr} so the
+# headline shows exactly one red bar and one blue bar per row.
+headline_df$family <- sub("^(\\w+).*$", "\\1", headline_df$impl)
+headline_df <- headline_df[headline_df$family %in% c("R", "Rust"), ]
+headline_df$impl_clean <- ifelse(headline_df$family == "R", "R GenomicSEM", "gsemr (Rust)")
+
+# Extract the size suffix from impls like "Rust (N=10000)" /
+# "Rust (N=4936648, full)" to build a per-row label.
+extract_size <- function(impl) {
+  m <- regmatches(impl, regexpr("N=\\d+(, full)?", impl))
+  if (length(m) == 0 || !nzchar(m)) return(NA_character_)
+  m
+}
+headline_df$size_tag <- vapply(as.character(headline_df$impl), extract_size, character(1))
+
+# Build the per-row label: plain function name for non-userGWAS rows,
+# "userGWAS (N=X,XXX)" or "userGWAS (N=X,XXX,XXX, full)" for the sweep
+# rows, with a thousands separator on N.
+headline_df$row_label <- mapply(
+  function(fn, sz) {
+    if (fn != "userGWAS" || is.na(sz)) return(as.character(fn))
+    n_str <- sub(",.*$", "", sub("^N=", "", sz))
+    n <- suppressWarnings(as.numeric(n_str))
+    pretty_n <- if (is.finite(n)) {
+      format(n, big.mark = ",", scientific = FALSE)
+    } else {
+      n_str
+    }
+    if (grepl("full", sz)) sprintf("userGWAS (N=%s, full)", pretty_n)
+    else                   sprintf("userGWAS (N=%s)",       pretty_n)
+  },
+  as.character(headline_df$func),
+  headline_df$size_tag,
+  USE.NAMES = FALSE
+)
+
+# Fold down to one row per (row_label, impl_clean) — drop the extra
+# Rust full-scale vs sweep overlap if any.
+headline_df <- aggregate(time_s ~ row_label + impl_clean,
+                         data = headline_df, FUN = mean)
+
+# Sort rows by R wall time desc. Rows where R has no bar (e.g. the
+# full-scale userGWAS) go to the bottom as "R: not attempted".
+r_times <- setNames(rep(NA_real_, length(unique(headline_df$row_label))),
+                    unique(headline_df$row_label))
+for (lbl in names(r_times)) {
+  rv <- headline_df$time_s[headline_df$row_label == lbl & headline_df$impl_clean == "R GenomicSEM"]
+  if (length(rv) > 0) r_times[[lbl]] <- rv[1]
+}
+row_order <- names(sort(r_times, decreasing = TRUE, na.last = TRUE))
+headline_df$row_label <- factor(headline_df$row_label, levels = rev(row_order))
+headline_df$impl_clean <- factor(headline_df$impl_clean,
+                                  levels = c("R GenomicSEM", "gsemr (Rust)"))
+
+# Format time labels: sub-second in ms, seconds otherwise; anything
+# over 60s also annotated with minutes in the label itself.
+fmt_time_label <- function(t) {
+  if (is.na(t)) return("")
+  if (t < 1)   return(sprintf("%.2fs", t))
+  if (t < 10)  return(sprintf("%.1fs", t))
+  if (t < 60)  return(sprintf("%.0fs", t))
+  mins <- floor(t / 60)
+  secs <- round(t - 60 * mins)
+  sprintf("%.0fs (%dm%02ds)", t, mins, secs)
+}
+headline_df$label <- vapply(headline_df$time_s, fmt_time_label, character(1))
+
+headline_palette <- c(
+  "R GenomicSEM" = "#E41A1C",
+  "gsemr (Rust)" = "#377EB8"
+)
+
+# Which rows have no R bar? Annotate them inline so the absence is
+# explicit. The annotation sits on the red-bar row of the dodge (so it
+# lines up where the red bar *would* be, not on top of the blue bar)
+# and uses a negative hjust so the text starts just right of x=0.
+rows_with_r    <- unique(headline_df$row_label[headline_df$impl_clean == "R GenomicSEM"])
+rows_missing_r <- setdiff(levels(headline_df$row_label), as.character(rows_with_r))
+
+# For each missing-R row, inject a zero-height R bar so the dodge
+# reserves the slot; the annotation text then lands on that slot.
+if (length(rows_missing_r) > 0) {
+  placeholder <- data.frame(
+    row_label  = rows_missing_r,
+    impl_clean = "R GenomicSEM",
+    time_s     = 0,
+    label      = "R GenomicSEM: not attempted at this scale",
+    stringsAsFactors = FALSE
+  )
+  placeholder$row_label  <- factor(placeholder$row_label,  levels = levels(headline_df$row_label))
+  placeholder$impl_clean <- factor(placeholder$impl_clean, levels = levels(headline_df$impl_clean))
+  headline_df <- rbind(headline_df, placeholder)
+}
+
+# Labels for real rows are grey; labels for the injected placeholder
+# rows (no R bar) are red so the "not attempted" message reads as an
+# annotation rather than a bar value.
+headline_df$label_colour <- ifelse(
+  headline_df$time_s == 0 & headline_df$impl_clean == "R GenomicSEM",
+  "#B22222", "grey20"
+)
+
+png(png_path, width = 1400, height = 900, res = 150)
+if (nrow(headline_df) > 0) {
+  p_headline <- ggplot(headline_df,
+                       aes(x = row_label, y = time_s, fill = impl_clean)) +
+    geom_col(position = position_dodge2(width = 0.85, preserve = "single"),
+             width = 0.75) +
+    geom_text(
+      aes(label = label, colour = label_colour),
+      position = position_dodge2(width = 0.85, preserve = "single"),
+      hjust    = -0.05,
+      size     = 3.6
+    ) +
+    scale_colour_identity() +
+    coord_flip(clip = "off") +
+    scale_fill_manual(values = headline_palette) +
+    scale_y_continuous(
+      expand = expansion(mult = c(0, 0.28)),
+      labels = function(x) sprintf("%gs", x)
+    ) +
+    labs(
+      title    = "gsemr vs R GenomicSEM — wall-clock time on PGC Anxiety/OCD/PTSD sumstats",
+      subtitle = sprintf(
+        "Psychiatric Genomics Consortium (PGC) GWAS · BENCH_CORES=%d · lower is better",
+        BENCH_CORES
+      ),
+      caption  = "Fit ops (commonfactor, usermodel, rgmodel, write.model, summaryGLS, paLDSC) finish in under 0.5s on both and are omitted.",
+      x = NULL, y = NULL, fill = NULL
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      # Anchor title/subtitle/caption to the full plot area (not the
+      # inner panel), then center them. With default "panel" anchoring,
+      # "center" means "middle of the bars area" — which, with long
+      # y-axis labels, is noticeably right of the image center and
+      # causes long titles to clip off the right edge.
+      plot.title.position   = "plot",
+      plot.caption.position = "plot",
+      plot.title       = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle    = element_text(color = "grey35", size = 11, hjust = 0.5, margin = margin(b = 12)),
+      plot.caption     = element_text(color = "grey45", size = 9, hjust = 0.5, margin = margin(t = 10)),
+      # ggplot legends centre against the inner panel, not the full
+      # plot area — with long y-axis labels that makes them drift
+      # right. Moving to the bottom sidesteps the issue: the x-axis
+      # runs edge-to-edge so the panel centre effectively lines up
+      # with the image centre.
+      legend.position  = "bottom",
+      legend.text      = element_text(size = 11),
+      axis.text.y      = element_text(size = 11),
+      axis.text.x      = element_text(size = 10, colour = "grey40"),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor   = element_blank(),
+      plot.margin      = margin(15, 40, 15, 10)
+    )
+  print(p_headline)
+}
+invisible(dev.off())
+cat(sprintf("Headline plot saved to %s\n", png_path))
 cat("\nDone.\n")
