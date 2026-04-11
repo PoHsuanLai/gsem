@@ -17,10 +17,15 @@
 #' @param stand Standardize output (default FALSE)
 #' @param select Variable selection method (default FALSE)
 #' @param chisq.max Maximum chi-square filter (default NA = auto)
-#' @param parallel Use parallel processing for the per-pair regression loop
-#'   (default TRUE)
-#' @param cores Number of cores for the per-pair regression loop
-#'   (NULL = auto-detect)
+#' @param parallel Use a parallel rayon worker pool for the per-pair
+#'   regression loop (default \code{TRUE}). Set to \code{FALSE} to force
+#'   single-threaded execution.
+#' @param cores Integer cap on the rayon pool size. When \code{NULL}
+#'   (the default) rayon honours \code{RAYON_NUM_THREADS} if set, else
+#'   it uses the number of logical cores reported by the OS. On
+#'   many-core machines (32+) or when the underlying BLAS is
+#'   multithreaded, set this explicitly to avoid oversubscribing CPUs
+#'   with nested BLAS threads.
 #' @return A list with components:
 #'   \item{S}{Genetic covariance matrix (k x k)}
 #'   \item{V}{Sampling covariance matrix of S (k* x k*, where k* = k(k+1)/2)}

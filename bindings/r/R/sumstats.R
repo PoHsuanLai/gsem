@@ -14,14 +14,17 @@
 #' @param info.filter INFO score filter (default 0.6)
 #' @param maf.filter MAF filter (default 0.01)
 #' @param keep.indel Keep indels (default FALSE)
-#' @param parallel Whether to read the reference and GWAS files in parallel.
-#'   Defaults to \code{TRUE}. The Rust side fans reads out across a local
-#'   rayon pool so each input file is decompressed and parsed on its own
-#'   worker thread.
-#' @param cores Optional integer cap on the rayon pool size. When \code{NULL}
-#'   (the default) rayon picks, typically one thread per logical core. Since
-#'   the reads are parallelized across files, values above
-#'   \code{length(files) + 1} don't help.
+#' @param parallel Use a parallel rayon worker pool to read the
+#'   reference and GWAS files (default \code{TRUE}). Each input file is
+#'   decompressed and parsed on its own worker thread. Set to
+#'   \code{FALSE} to force single-threaded execution.
+#' @param cores Integer cap on the rayon pool size. When \code{NULL}
+#'   (the default) rayon honours \code{RAYON_NUM_THREADS} if set, else
+#'   it uses the number of logical cores reported by the OS. Since the
+#'   reads are parallelized across files, values above
+#'   \code{length(files) + 1} don't help. On many-core machines (32+)
+#'   or when the underlying BLAS is multithreaded, set this explicitly
+#'   to avoid oversubscribing CPUs with nested BLAS threads.
 #' @param ambig Keep ambiguous SNPs (default FALSE)
 #' @param direct.filter Apply MAF filter directly to GWAS file frequencies (default FALSE)
 #' @return Path to the merged output file

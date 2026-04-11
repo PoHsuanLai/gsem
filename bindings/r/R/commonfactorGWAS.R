@@ -5,10 +5,17 @@
 #' @param covstruc LDSC result (named list with S, V, I, N, m components)
 #' @param SNPs Path to merged summary statistics file
 #' @param estimation Estimation method: "DWLS" (default) or "ML"
-#' @param cores Number of cores for Rayon thread pool (NULL = auto-detect)
+#' @param cores Integer cap on the rayon worker pool size used for the
+#'   per-SNP fit loop. When \code{NULL} (the default) rayon honours
+#'   \code{RAYON_NUM_THREADS} if set, else it uses the number of
+#'   logical cores reported by the OS. On many-core machines (32+) or
+#'   when the underlying BLAS is multithreaded, set this explicitly to
+#'   avoid oversubscribing CPUs with nested BLAS threads.
 #' @param toler Tolerance (accepted; convergence controlled by L-BFGS internally)
 #' @param SNPSE SNP SE override (default FALSE = auto)
-#' @param parallel Use parallel processing (default TRUE; FALSE sets single-threaded)
+#' @param parallel Use a parallel rayon worker pool for the per-SNP
+#'   fit loop (default \code{TRUE}). Set to \code{FALSE} to force
+#'   single-threaded execution.
 #' @param GC Genomic control: "standard" (default), "conservative", or "none"
 #' @param MPI Use MPI (ignored in gsemr -- not applicable to Rust backend)
 #' @param TWAS TWAS gene-level analysis mode (default FALSE)
