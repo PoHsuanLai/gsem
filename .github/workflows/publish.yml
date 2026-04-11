@@ -43,6 +43,9 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      - name: Wait for crates.io index
+        run: sleep 30
+
   # ── PyPI (maturin cross-platform wheels) ───────────────────────────────
   build-python-wheels:
     name: Build Python wheels (${{ matrix.os }})
@@ -106,8 +109,12 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
   # ── CRAN (R source tarball + binary builds) ────────────────────────────
+  # R build is gated on publish-crates: bindings/r/src/rust/Cargo.toml uses
+  # crates.io versions (not local paths), so the internal crates must be on
+  # crates.io before `R CMD build` runs.
   build-r-source:
     name: Build R source package
+    needs: publish-crates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

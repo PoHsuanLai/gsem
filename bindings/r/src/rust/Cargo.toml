@@ -12,10 +12,22 @@ name = "gsemr"
 
 [dependencies]
 extendr-api = "0.8"
+# Internal crates are declared with crates.io versions so `R CMD build`
+# produces a self-contained tarball. The `[patch.crates-io]` block below
+# redirects those versions to the in-repo sources when building from the
+# source tree. When the package is installed from a tarball, the relative
+# paths don't resolve, the patch is ignored, and cargo fetches the
+# published crates from crates.io.
+gsem = "0.1.0"
+gsem-matrix = "0.1.0"
+gsem-ldsc = "0.1.0"
+gsem-sem = "0.1.0"
+faer = "0.24"
+log = "0.4"
+rayon = "1"
+
+[patch.crates-io]
 gsem = { path = "../../../../crates/gsem" }
 gsem-matrix = { path = "../../../../crates/gsem-matrix" }
 gsem-ldsc = { path = "../../../../crates/gsem-ldsc" }
 gsem-sem = { path = "../../../../crates/gsem-sem" }
-faer = "0.24"
-log = "0.4"
-rayon = "1"

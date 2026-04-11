@@ -17,6 +17,24 @@ if ! command -v cargo > /dev/null 2>&1; then
     exit 1
 fi
 
+# The Rust crate's Cargo.toml contains a `[patch.crates-io]` block that
+# redirects the internal gsem* crates to the in-repo sources when the
+# package is built from the source tree (local dev / CI). When this
+# package is installed from a tarball, the relative patch paths don't
+# resolve and cargo errors instead of falling back to the crates.io
+# dependencies. Detect that case by probing one of the patch paths and
+# strip the `[patch.crates-io]` block when it's missing, so cargo uses
+# the published versions declared in [dependencies].
+if [ ! -d "$RUST_SRC_DIR/../../../../crates/gsem" ]; then
+    echo "Local crates/ not found; stripping [patch.crates-io] for tarball build"
+    awk '
+        /^\[patch\.crates-io\]/ { skip = 1; next }
+        /^\[/ && skip { skip = 0 }
+        !skip { print }
+    ' "$RUST_SRC_DIR/Cargo.toml" > "$RUST_SRC_DIR/Cargo.toml.stripped"
+    mv "$RUST_SRC_DIR/Cargo.toml.stripped" "$RUST_SRC_DIR/Cargo.toml"
+fi
+
 echo "Building Rust library..."
 cd "$RUST_SRC_DIR"
 cargo build --release
