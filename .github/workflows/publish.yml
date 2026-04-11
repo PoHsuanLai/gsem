@@ -203,6 +203,48 @@ jobs:
         env:
           _R_CHECK_FORCE_SUGGESTS_: false
 
+      # After R CMD check passes, build a binary package so users on
+      # this OS can `install.packages(..., repos = NULL)` without
+      # needing a Rust toolchain. Binary extensions differ by platform:
+      #   ubuntu  -> gsemr_<ver>_R_x86_64-pc-linux-gnu.tar.gz
+      #   macOS   -> gsemr_<ver>.tgz
+      #   Windows -> gsemr_<ver>.zip
+      - name: Build R binary package
+        shell: bash
+        run: |
+          set -e
+          src_tarball=$(ls gsemr_*.tar.gz | head -n1)
+          echo "Building binary from $src_tarball"
+          R CMD INSTALL --build "$src_tarball"
+          ls -la gsemr_*
+
+      # Rename Linux binary to an unambiguous, user-friendly filename.
+      # R produces `gsemr_<ver>_R_x86_64-pc-linux-gnu.tar.gz` which
+      # collides with the source tarball extension. Rename to
+      # `gsemr_<ver>_linux.tar.gz` so download-artifact later can pair
+      # source vs binary by filename without ambiguity.
+      - name: Rename Linux binary
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -e
+          bin=$(ls gsemr_*_R_*-linux-gnu.tar.gz 2>/dev/null || true)
+          if [ -n "$bin" ]; then
+            ver=$(echo "$bin" | sed -E 's/^gsemr_([^_]+)_.*/\1/')
+            mv "$bin" "gsemr_${ver}_linux.tar.gz"
+            echo "Renamed $bin -> gsemr_${ver}_linux.tar.gz"
+          fi
+
+      - name: Upload R binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-binary-${{ matrix.os }}
+          path: |
+            gsemr_*_linux.tar.gz
+            gsemr_*.tgz
+            gsemr_*.zip
+          if-no-files-found: error
+
   upload-r-to-release:
     name: Attach R tarball to GitHub release
     needs: [build-r-source, check-r-package]
@@ -216,13 +258,31 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      # Source tarball (fallback install path — requires Rust toolchain).
+      - name: Download source tarball
+        uses: actions/download-artifact@v4
         with:
           name: r-source
+          path: release-assets
+      # Pre-built binary packages from each check-r-package matrix run
+      # (primary install path — no Rust toolchain needed). Pattern
+      # matches `r-binary-ubuntu-latest`, `r-binary-macos-latest`,
+      # `r-binary-windows-latest`.
+      - name: Download binary packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: r-binary-*
+          merge-multiple: true
+          path: release-assets
+      - name: List release assets
+        run: ls -la release-assets/
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: gsemr_*.tar.gz
+          files: |
+            release-assets/gsemr_*.tar.gz
+            release-assets/gsemr_*.tgz
+            release-assets/gsemr_*.zip
           # When triggered manually, upload to the tag the user specified.
           # When triggered by `release: published`, tag_name is ignored and
           # the action uses the release that fired the event.

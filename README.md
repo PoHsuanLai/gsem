@@ -56,23 +56,45 @@ pass tolerance-based output checks against R on shared inputs. See
 
 ### R (gsemr)
 
-The R package is source-only — installing it builds the bundled Rust
-crate against your local toolchain, so you'll need
-[Rust](https://rustup.rs/) (MSRV 1.88) on `PATH`. Linux and macOS are
-supported today; Windows support is tracked in
-[`TODO.md`](./TODO.md).
+Pre-built binary packages are attached to each
+[GitHub release](https://github.com/PoHsuanLai/gsem/releases) for
+Linux, macOS, and Windows (built against R release). Pick the file
+for your platform — **no Rust toolchain needed**:
 
 ```r
-# Option A: install the release tarball attached to the GitHub release.
-#   Faster: only downloads bindings/r and pulls the internal crates
-#   (gsem-matrix, gsem-ldsc, gsem-sem, gsem) from crates.io.
+# Linux (x86_64):
+install.packages(
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0_linux.tar.gz",
+  repos = NULL
+)
+
+# macOS:
+install.packages(
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.tgz",
+  repos = NULL
+)
+
+# Windows:
+install.packages(
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.zip",
+  repos = NULL
+)
+```
+
+#### From source (requires a Rust toolchain)
+
+Use this if you're on an R version the pre-built binaries don't
+match, or for dev builds. You'll need [Rust](https://rustup.rs/)
+(MSRV 1.88) on `PATH`.
+
+```r
+# Source tarball — fetches internal crates from crates.io:
 install.packages(
   "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.tar.gz",
   repos = NULL, type = "source"
 )
 
-# Option B: install straight from GitHub master (useful for dev builds).
-#   Clones the whole repo and builds the internal crates locally.
+# Or straight from GitHub master for dev builds:
 remotes::install_github("PoHsuanLai/gsem", subdir = "bindings/r")
 ```
 
