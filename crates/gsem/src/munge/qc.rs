@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use statrs::distribution::{ChiSquared, ContinuousCDF};
+use statrs::distribution::{ContinuousCDF, Normal};
 
 use crate::io::gwas_reader::{GwasRecord, MungedRecord};
 
@@ -25,7 +25,7 @@ pub fn run_qc_pipeline(
     reference: &HashMap<String, RefSnp>,
     config: &MungeConfig,
 ) -> Result<Vec<MungedRecord>> {
-    let chi2_dist = ChiSquared::new(1.0).unwrap();
+    let normal = Normal::standard();
     let mut output = Vec::new();
     let mut n_no_ref = 0usize;
     let mut n_missing = 0usize;
@@ -127,7 +127,7 @@ pub fn run_qc_pipeline(
         }
 
         // Compute Z-score: sign(effect) * sqrt(qchisq(p, df=1, lower.tail=FALSE))
-        let z = compute_z(effect, p, &chi2_dist);
+        let z = compute_z(effect, p, &normal);
 
         output.push(MungedRecord {
             snp: rec.snp,
@@ -171,28 +171,34 @@ fn detect_or(records: &[GwasRecord]) -> bool {
     median.round() == 1.0
 }
 
-/// Compute Z-score: sign(effect) * sqrt(qchisq(p, 1, lower.tail=FALSE))
+/// Compute Z-score: sign(effect) * sqrt(qchisq(p, 1, lower.tail=FALSE)).
 ///
-/// For very small p-values (< 1e-300), uses log-space approximation.
-fn compute_z(effect: f64, p: f64, chi2_dist: &ChiSquared) -> f64 {
+/// For chi-square with 1 df the identity
+/// `sqrt(qchisq(p, 1, lower.tail=FALSE)) = qnorm(1 - p/2)`
+/// holds for all `p` in `[0, 1]`, and `Normal::inverse_cdf` is
+/// numerically stable across the full range. The earlier chi-square
+/// path hit a NaN regression in `statrs::distribution::ChiSquared`
+/// around `p ≳ 0.97` which silently collapsed large-p SNPs to `Z = 0`.
+///
+/// When `effect` is exactly zero, the Z is zero — this mirrors R's
+/// `sign(0) == 0` so records with a literal `Effect = 0` entry from
+/// upstream pipelines produce `Z = 0` instead of an arbitrary-sign
+/// near-zero value.
+fn compute_z(effect: f64, p: f64, normal: &Normal) -> f64 {
+    if effect == 0.0 {
+        return 0.0;
+    }
     if p == 0.0 {
-        // Extreme: return large Z with correct sign
-        return if effect >= 0.0 { 37.0 } else { -37.0 };
+        // Extreme: return large Z with correct sign.
+        return if effect > 0.0 { 37.0 } else { -37.0 };
     }
 
-    // qchisq(p, 1, lower.tail=FALSE) = inverse_survival(p) for chi2(1)
-    let chi2_val = if p < 1e-300 {
-        // Log-space approximation for tiny p-values
-        // For chi2(1), survival function ≈ erfc(sqrt(x/2))/2
-        // So for very small p: x ≈ 2 * (erfcinv(2p))^2 ≈ -2 * ln(p)
-        -2.0 * p.ln()
-    } else {
-        // Standard inverse: qchisq(p, 1, lower.tail=FALSE) = inverse_cdf(1-p)
-        chi2_dist.inverse_cdf(1.0 - p)
-    };
+    let z_abs = normal.inverse_cdf(1.0 - p / 2.0);
+    if !z_abs.is_finite() {
+        return if effect > 0.0 { 37.0 } else { -37.0 };
+    }
 
-    let z_abs = chi2_val.max(0.0).sqrt();
-    if effect >= 0.0 { z_abs } else { -z_abs }
+    if effect > 0.0 { z_abs } else { -z_abs }
 }
 
 /// Check if an allele string is a valid single nucleotide (A, C, G, T).
@@ -206,31 +212,52 @@ mod tests {
 
     #[test]
     fn test_compute_z_positive() {
-        let chi2 = ChiSquared::new(1.0).unwrap();
-        let z = compute_z(0.5, 0.05, &chi2);
+        let normal = Normal::standard();
+        let z = compute_z(0.5, 0.05, &normal);
         assert!(z > 0.0);
         assert!((z - 1.96).abs() < 0.01);
     }
 
     #[test]
     fn test_compute_z_negative() {
-        let chi2 = ChiSquared::new(1.0).unwrap();
-        let z = compute_z(-0.5, 0.05, &chi2);
+        let normal = Normal::standard();
+        let z = compute_z(-0.5, 0.05, &normal);
         assert!(z < 0.0);
         assert!((z + 1.96).abs() < 0.01);
     }
 
     #[test]
+    fn test_compute_z_large_p() {
+        // Regression: statrs 0.18's ChiSquared::inverse_cdf returned NaN
+        // for p ≳ 0.97, collapsing Z to 0. The Normal-based path must
+        // survive the full range and match R's qnorm(1 - p/2).
+        let normal = Normal::standard();
+        for &p in &[0.9722_f64, 0.98, 0.99, 0.999] {
+            let z = compute_z(-0.001, p, &normal);
+            assert!(z.is_finite(), "z non-finite at p={p}");
+            // R: qnorm(1 - p/2) for these p: 0.0348, 0.0251, 0.0125, 0.00125
+            let expected = -match p {
+                p if (p - 0.9722).abs() < 1e-9 => 0.034849,
+                p if (p - 0.98).abs() < 1e-9 => 0.025069,
+                p if (p - 0.99).abs() < 1e-9 => 0.012533,
+                p if (p - 0.999).abs() < 1e-9 => 0.001253,
+                _ => unreachable!(),
+            };
+            assert!((z - expected).abs() < 1e-4, "p={p} z={z} expected≈{expected}");
+        }
+    }
+
+    #[test]
     fn test_compute_z_tiny_p() {
-        let chi2 = ChiSquared::new(1.0).unwrap();
-        let z = compute_z(1.0, 1e-300, &chi2);
+        let normal = Normal::standard();
+        let z = compute_z(1.0, 1e-300, &normal);
         assert!(z > 30.0);
     }
 
     #[test]
     fn test_compute_z_zero_p() {
-        let chi2 = ChiSquared::new(1.0).unwrap();
-        let z = compute_z(1.0, 0.0, &chi2);
+        let normal = Normal::standard();
+        let z = compute_z(1.0, 0.0, &normal);
         assert_eq!(z, 37.0);
     }
 

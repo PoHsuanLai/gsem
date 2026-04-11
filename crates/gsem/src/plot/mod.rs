@@ -32,14 +32,22 @@ pub fn neg_log10_p(p: f64) -> f64 {
 
 /// Genomic inflation factor lambda = median(chi^2) / 0.4549364.
 ///
-/// Converts two-sided p-values to chi^2(1) statistics first.
+/// Converts two-sided p-values to chi^2(1) statistics via the identity
+/// `qchisq(p, 1, lower=F) == qnorm(1 - p/2)^2`, which uses
+/// `Normal::inverse_cdf` and is numerically stable across the full
+/// range. The `ChiSquared::inverse_cdf` path used earlier hit a
+/// statrs 0.18 NaN regression for `p ≳ 0.97`, silently dropping
+/// ~3% of SNPs and biasing lambda_gc downward.
 pub fn lambda_gc(p_values: &[f64]) -> f64 {
-    use statrs::distribution::{ChiSquared, ContinuousCDF};
-    let chi1 = ChiSquared::new(1.0).expect("df=1 is valid");
+    use statrs::distribution::{ContinuousCDF, Normal};
+    let normal = Normal::standard();
     let mut chisq: Vec<f64> = p_values
         .iter()
         .filter(|p| p.is_finite() && **p > 0.0 && **p <= 1.0)
-        .map(|p| chi1.inverse_cdf(1.0 - *p))
+        .map(|p| {
+            let z = normal.inverse_cdf(1.0 - *p / 2.0);
+            z * z
+        })
         .filter(|q| q.is_finite())
         .collect();
     if chisq.is_empty() {
