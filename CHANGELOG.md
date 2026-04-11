@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Target: **0.1.1**. All changes on `master` since the v0.1.0 tag live here
-until the next release is cut.
+Changes on `master` past the most recent release tag live here until the
+next version is cut.
+
+## [0.1.1] — 2026-04-11
 
 ### Added
 
@@ -146,5 +148,6 @@ shipped across four distribution channels:
   support are now attached to the v0.1.0 release via a manual publish
   re-trigger.
 
-[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/PoHsuanLai/gsem/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PoHsuanLai/gsem/releases/tag/v0.1.0

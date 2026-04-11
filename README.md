@@ -64,19 +64,19 @@ for your platform — **no Rust toolchain needed**:
 ```r
 # Linux (x86_64):
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0_linux.tar.gz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1_linux.tar.gz",
   repos = NULL
 )
 
 # macOS:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.tgz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1.tgz",
   repos = NULL
 )
 
 # Windows:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.zip",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1.zip",
   repos = NULL
 )
 ```
@@ -90,7 +90,7 @@ match, or for dev builds. You'll need [Rust](https://rustup.rs/)
 ```r
 # Source tarball — fetches internal crates from crates.io:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.tar.gz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1.tar.gz",
   repos = NULL, type = "source"
 )
 

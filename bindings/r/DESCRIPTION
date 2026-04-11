@@ -1,6 +1,6 @@
 Package: gsemr
 Title: Genomic Structural Equation Modeling (Rust Backend)
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: c(
     person("Po-Hsuan", "Lai", role = c("aut", "cre"), email = "pohsuanlai0208@gmail.com"),
     person("Andrew", "Grotzinger", role = "ctb", comment = "Original GenomicSEM R package")

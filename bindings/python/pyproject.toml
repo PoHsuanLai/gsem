@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "genomicsem"
-version = "0.1.0"
+version = "0.1.1"
 description = "Rust-accelerated Genomic Structural Equation Modeling"
 readme = "README.md"
 license = {text = "GPL-3.0"}
