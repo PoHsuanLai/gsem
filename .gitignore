@@ -45,5 +45,13 @@ src/*.dll
 ldsc_result.json
 sem_result.tsv
 gwas_result.tsv
+# Drop-in filenames from GenomicSEM::paLDSC / simLDSC we now emit
+PA_LDSC.pdf
+Diagonalized_PA_LDSC.pdf
+FA_PA_LDSC.pdf
+FA_Diagonalized_PA_LDSC.pdf
+iter*GWAS*.sumstats
+iter*GWAS*.sumstats.gz
+PopCovMat.RData
 
 .claude/
