@@ -370,7 +370,10 @@ rs6\tT\tA\t0.05\t0.01\t0.01\t8000\t0.2
         assert_eq!(data.records.len(), 6, "no rows should be dropped by reader");
 
         // rs2 has NA beta
-        assert!(data.records[1].effect.is_none(), "rs2 effect should be None");
+        assert!(
+            data.records[1].effect.is_none(),
+            "rs2 effect should be None"
+        );
         // rs3 has "." SE
         assert!(data.records[2].se.is_none(), "rs3 se should be None");
         // rs4 has NA P
