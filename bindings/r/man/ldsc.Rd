@@ -29,7 +29,7 @@ ldsc(
 
 \item{population.prev}{Numeric vector of population prevalences (NA for continuous)}
 
-\item{ld}{Path to LD score directory (containing {chr}.l2.ldscore.gz files)}
+\item{ld}{Path to LD score directory (containing \code{<chr>.l2.ldscore.gz} files)}
 
 \item{wld}{Path to weight LD score directory (defaults to \code{ld})}
 

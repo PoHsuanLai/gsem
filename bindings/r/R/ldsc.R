@@ -7,7 +7,7 @@
 #' @param traits Character vector of paths to .sumstats.gz files
 #' @param sample.prev Numeric vector of sample prevalences (NA for continuous traits)
 #' @param population.prev Numeric vector of population prevalences (NA for continuous)
-#' @param ld Path to LD score directory (containing {chr}.l2.ldscore.gz files)
+#' @param ld Path to LD score directory (containing \code{<chr>.l2.ldscore.gz} files)
 #' @param wld Path to weight LD score directory (defaults to \code{ld})
 #' @param trait.names Character vector of trait names (defaults to V1, V2, ...)
 #' @param sep_weights Use separate weight LD scores (ignored in gsemr)

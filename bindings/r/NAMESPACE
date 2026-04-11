@@ -1,5 +1,10 @@
 useDynLib(gsemr, .registration = TRUE)
 
+# Base-R functions used from stats/utils — declared explicitly to
+# silence `R CMD check` "no visible global function definition" notes.
+importFrom(stats, pnorm, setNames)
+importFrom(utils, read.table, write.table)
+
 export(ldsc)
 export(usermodel)
 export(commonfactor)

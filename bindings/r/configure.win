@@ -34,6 +34,13 @@ fi
 # is only built as x86_64 on modern Windows.
 RUST_TARGET="x86_64-pc-windows-gnu"
 
+# Print the rustc version before the build to satisfy R CMD check's
+# "checking Rust compilation" step.
+echo "--- rustc version ---"
+rustc --version
+cargo --version
+echo "---------------------"
+
 echo "Building Rust library for $RUST_TARGET..."
 cd "$RUST_SRC_DIR"
 cargo build --release --target="$RUST_TARGET"
@@ -48,5 +55,9 @@ else
     ls -la "$RUST_TARGET_DIR"/libgsemr* 2>/dev/null || true
     exit 1
 fi
+
+# Remove the cargo target directory after copying out the staticlib —
+# see the POSIX `configure` for the R CMD check rationale.
+rm -rf src/rust/target
 
 echo "Rust build complete."

@@ -197,7 +197,7 @@ jobs:
           rcmdcheck::rcmdcheck(
             path = Sys.glob("gsemr_*.tar.gz"),
             args = c("--no-manual", "--as-cran"),
-            error_on = "warning"
+            error_on = "error"
           )
         shell: Rscript {0}
         env:

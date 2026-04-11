@@ -62,6 +62,8 @@ to avoid oversubscribing CPUs with nested BLAS threads.}
 \item{ambig}{Keep ambiguous SNPs (default FALSE)}
 
 \item{direct.filter}{Apply MAF filter directly to GWAS file frequencies (default FALSE)}
+
+\item{out}{Output file path for the merged sumstats TSV (default "merged_sumstats.tsv")}
 }
 \value{
 Path to the merged output file

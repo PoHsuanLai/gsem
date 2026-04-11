@@ -35,6 +35,13 @@ if [ ! -d "$RUST_SRC_DIR/../../../../crates/gsem" ]; then
     mv "$RUST_SRC_DIR/Cargo.toml.stripped" "$RUST_SRC_DIR/Cargo.toml"
 fi
 
+# R CMD check's "checking Rust compilation" step wants us to print the
+# rustc version before the build — otherwise it emits a WARNING.
+echo "--- rustc version ---"
+rustc --version
+cargo --version
+echo "---------------------"
+
 echo "Building Rust library..."
 cd "$RUST_SRC_DIR"
 cargo build --release
@@ -53,5 +60,11 @@ else
     ls -la "$RUST_TARGET_DIR"/libgsemr* 2>/dev/null || true
     exit 1
 fi
+
+# Remove the cargo target directory after copying out the staticlib.
+# Otherwise R CMD check scans `src/rust/target/release/libgsemr.a` in
+# addition to the copied `src/libgsemr.a` and double-reports the
+# `_exit`/`abort`/`exit` C-runtime symbols Rust's stdlib pulls in.
+rm -rf src/rust/target
 
 echo "Rust build complete."
