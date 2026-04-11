@@ -448,7 +448,7 @@ fn munge_rust(
     info_filter: f64,
     maf_filter: f64,
     out_dir: &str,
-    n_override: Rfloat,
+    n_overrides: Vec<Rfloat>,
     column_names_json: &str,
 ) -> Vec<String> {
     ensure_logger();
@@ -461,26 +461,32 @@ fn munge_rust(
         }
     };
 
-    let n_opt = if n_override.is_na() || n_override.inner().is_nan() {
-        None
-    } else {
-        Some(n_override.inner())
-    };
-
     let col_overrides: Option<std::collections::HashMap<String, String>> =
         parse_simple_json_map(column_names_json);
-
-    let config = gsem::munge::MungeConfig {
-        info_filter,
-        maf_filter,
-        n_override: n_opt,
-        column_overrides: col_overrides,
-    };
 
     let mut output_paths = Vec::new();
     for (i, file) in files.iter().enumerate() {
         let name = trait_names.get(i).map(|s| s.as_str()).unwrap_or("trait");
         let out_path = std::path::Path::new(out_dir).join(format!("{name}.sumstats.gz"));
+
+        // Rebuild the config inside the loop so each trait picks up
+        // its own N override. `column_overrides` is shared across
+        // traits (the R wrapper's `column.names = list(...)` applies
+        // uniformly), so we clone it per iteration. `NA_real_` /
+        // `NaN` slots drop through as "no override" for that trait.
+        let n_for_trait = n_overrides.get(i).and_then(|v| {
+            if v.is_na() || v.inner().is_nan() {
+                None
+            } else {
+                Some(v.inner())
+            }
+        });
+        let config = gsem::munge::MungeConfig {
+            info_filter,
+            maf_filter,
+            n_override: n_for_trait,
+            column_overrides: col_overrides.clone(),
+        };
 
         match gsem::munge::munge_and_write(
             std::path::Path::new(file),
