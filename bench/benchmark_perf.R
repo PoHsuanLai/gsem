@@ -1297,10 +1297,10 @@ headline_df <- headline_df[headline_df$func %in% headline_funcs, ]
 
 # Build a per-row label that collapses the scaling sweep into "userGWAS
 # (N=10 000)" etc., and normalises the impl column to {R, gsemr} so the
-# headline shows exactly one red bar and one blue bar per row.
+# headline shows exactly one blue bar (ours) and one red bar (R) per row.
 headline_df$family <- sub("^(\\w+).*$", "\\1", headline_df$impl)
 headline_df <- headline_df[headline_df$family %in% c("R", "Rust"), ]
-headline_df$impl_clean <- ifelse(headline_df$family == "R", "R GenomicSEM", "gsemr (Rust)")
+headline_df$impl_clean <- ifelse(headline_df$family == "R", "R GenomicSEM", "gsemr (ours)")
 
 # Extract the size suffix from impls like "Rust (N=10000)" /
 # "Rust (N=4936648, full)" to build a per-row label.
@@ -1348,7 +1348,7 @@ for (lbl in names(r_times)) {
 row_order <- names(sort(r_times, decreasing = TRUE, na.last = TRUE))
 headline_df$row_label <- factor(headline_df$row_label, levels = rev(row_order))
 headline_df$impl_clean <- factor(headline_df$impl_clean,
-                                  levels = c("R GenomicSEM", "gsemr (Rust)"))
+                                  levels = c("gsemr (ours)", "R GenomicSEM"))
 
 # Format time labels: sub-second in ms, seconds otherwise; anything
 # over 60s also annotated with minutes in the label itself.
@@ -1364,39 +1364,32 @@ fmt_time_label <- function(t) {
 headline_df$label <- vapply(headline_df$time_s, fmt_time_label, character(1))
 
 headline_palette <- c(
-  "R GenomicSEM" = "#E41A1C",
-  "gsemr (Rust)" = "#377EB8"
+  "gsemr (ours)" = "#377EB8",
+  "R GenomicSEM" = "#E41A1C"
 )
 
-# Which rows have no R bar? Annotate them inline so the absence is
-# explicit. The annotation sits on the red-bar row of the dodge (so it
-# lines up where the red bar *would* be, not on top of the blue bar)
-# and uses a negative hjust so the text starts just right of x=0.
+# Which rows have no R bar? For those rows, append the "R GenomicSEM:
+# not attempted at this scale" annotation directly to the blue "ours"
+# bar's numeric label, separated by an en dash. This keeps the text
+# flow to one label per bar so nothing can collide with the bar
+# itself — and it visually reads as "57s, and R wasn't tried here".
 rows_with_r    <- unique(headline_df$row_label[headline_df$impl_clean == "R GenomicSEM"])
 rows_missing_r <- setdiff(levels(headline_df$row_label), as.character(rows_with_r))
 
-# For each missing-R row, inject a zero-height R bar so the dodge
-# reserves the slot; the annotation text then lands on that slot.
-if (length(rows_missing_r) > 0) {
-  placeholder <- data.frame(
-    row_label  = rows_missing_r,
-    impl_clean = "R GenomicSEM",
-    time_s     = 0,
-    label      = "R GenomicSEM: not attempted at this scale",
-    stringsAsFactors = FALSE
+missing_mask <- headline_df$row_label %in% rows_missing_r &
+                headline_df$impl_clean == "gsemr (ours)"
+if (any(missing_mask)) {
+  headline_df$label[missing_mask] <- paste0(
+    headline_df$label[missing_mask],
+    "   — R GenomicSEM: not attempted at this scale"
   )
-  placeholder$row_label  <- factor(placeholder$row_label,  levels = levels(headline_df$row_label))
-  placeholder$impl_clean <- factor(placeholder$impl_clean, levels = levels(headline_df$impl_clean))
-  headline_df <- rbind(headline_df, placeholder)
 }
 
-# Labels for real rows are grey; labels for the injected placeholder
-# rows (no R bar) are red so the "not attempted" message reads as an
-# annotation rather than a bar value.
-headline_df$label_colour <- ifelse(
-  headline_df$time_s == 0 & headline_df$impl_clean == "R GenomicSEM",
-  "#B22222", "grey20"
-)
+# Real numeric labels are grey; the appended "not attempted" sits on
+# the same geom_text run so it inherits grey too. A separate red
+# re-render of just the appendix would require dual text layers and
+# re-introduce the collision we're trying to avoid.
+headline_df$label_colour <- "grey20"
 
 png(png_path, width = 1400, height = 900, res = 150)
 if (nrow(headline_df) > 0) {
