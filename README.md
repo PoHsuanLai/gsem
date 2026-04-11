@@ -3,6 +3,7 @@
 [![CI](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml/badge.svg)](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/gsem.svg)](https://crates.io/crates/gsem)
 [![PyPI](https://img.shields.io/pypi/v/genomicsem.svg)](https://pypi.org/project/genomicsem/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 Rust implementation of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) — multivariate LD Score Regression and Structural Equation Modeling on GWAS summary statistics.
@@ -17,7 +18,7 @@ Benchmarked end-to-end against [R GenomicSEM](https://github.com/GenomicSEM/Geno
 summary statistics — the same worked example used in the upstream
 tutorial. Wall-clock seconds, lower is better:
 
-| Function                         | R GenomicSEM | gsemr (Rust) | Speedup |
+| Function                         | R GenomicSEM | gsemr (ours) | Speedup |
 |----------------------------------|-------------:|-------------:|--------:|
 | `munge`                          | 1m 44s       | 21.1s        |      5× |
 | `ldsc`                           | 10.5s        | 1.8s         |      6× |
@@ -55,23 +56,40 @@ pass tolerance-based output checks against R on shared inputs. See
 
 ### R (gsemr)
 
+The R package is source-only — installing it builds the bundled Rust
+crate against your local toolchain, so you'll need
+[Rust](https://rustup.rs/) (MSRV 1.88) on `PATH`. Linux and macOS are
+supported today; Windows support is tracked in
+[`TODO.md`](./TODO.md).
+
 ```r
-# Requires Rust toolchain (https://rustup.rs)
+# Option A: install the release tarball attached to the GitHub release.
+#   Faster: only downloads bindings/r and pulls the internal crates
+#   (gsem-matrix, gsem-ldsc, gsem-sem, gsem) from crates.io.
+install.packages(
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.0/gsemr_0.1.0.tar.gz",
+  repos = NULL, type = "source"
+)
+
+# Option B: install straight from GitHub master (useful for dev builds).
+#   Clones the whole repo and builds the internal crates locally.
 remotes::install_github("PoHsuanLai/gsem", subdir = "bindings/r")
 ```
 
 ### Python (genomicsem)
 
 ```sh
-# Requires Rust toolchain
-pip install genomicsem
-# or from source:
+pip install genomicsem       # pulls pre-built wheels for Linux/macOS/Windows
+
+# From source (requires Rust toolchain):
 cd bindings/python && maturin develop --release
 ```
 
 ### CLI
 
 ```sh
+cargo install gsem           # latest release from crates.io
+# Or from source:
 cargo install --path crates/gsem
 ```
 
@@ -79,8 +97,10 @@ cargo install --path crates/gsem
 
 ```toml
 [dependencies]
-gsem-ldsc = { git = "https://github.com/PoHsuanLai/gsem" }
-gsem-sem  = { git = "https://github.com/PoHsuanLai/gsem" }
+gsem-matrix = "0.1"
+gsem-ldsc   = "0.1"
+gsem-sem    = "0.1"
+gsem        = "0.1"   # pipeline + binary
 ```
 
 ## Usage

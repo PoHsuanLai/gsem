@@ -6,6 +6,7 @@ build-backend = "maturin"
 name = "genomicsem"
 version = "0.1.0"
 description = "Rust-accelerated Genomic Structural Equation Modeling"
+readme = "README.md"
 license = {text = "GPL-3.0"}
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.20"]
@@ -14,6 +15,12 @@ dependencies = ["numpy>=1.20"]
 fa = ["factor-analyzer>=0.4"]
 plot = ["matplotlib>=3.5"]
 all = ["factor-analyzer>=0.4", "matplotlib>=3.5"]
+
+# Surface key links on the PyPI project page.
+[project.urls]
+Homepage = "https://github.com/PoHsuanLai/gsem"
+Repository = "https://github.com/PoHsuanLai/gsem"
+Issues = "https://github.com/PoHsuanLai/gsem/issues"
 
 [tool.maturin]
 manifest-path = "src/rust/Cargo.toml"

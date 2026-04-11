@@ -2,9 +2,7 @@
 
 Rust-accelerated [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) for Python. Multivariate LD Score Regression and Structural Equation Modeling on GWAS summary statistics.
 
-> See [`/API_COMPAT.md`](../../API_COMPAT.md) for parameter compatibility
-> with R GenomicSEM and [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) for
-> algorithmic and performance notes.
+[**Repository**](https://github.com/PoHsuanLai/gsem) · [**Issue tracker**](https://github.com/PoHsuanLai/gsem/issues) · [**API compatibility notes**](https://github.com/PoHsuanLai/gsem/blob/master/API_COMPAT.md) · [**Architecture & performance**](https://github.com/PoHsuanLai/gsem/blob/master/ARCHITECTURE.md)
 
 ## Install
 
@@ -88,13 +86,19 @@ disk, but they are no longer on the hot path between functions.
 
 ## Functions
 
-`ldsc`, `commonfactor`, `usermodel`, `munge`, `sumstats`, `commonfactor_gwas`, `user_gwas`, `parallel_analysis`, `write_model`, `rgmodel`
+Every exported function has a worked example in its docstring — run
+`help(gsem.ldsc)`, `help(gsem.commonfactor)`, etc. to see them.
 
-> **Note on `commonfactor_gwas`:** gsem's `commonfactor_gwas` matches
-> R `GenomicSEM::userGWAS` on the equivalent single-factor model, but
-> does **not** numerically match R `GenomicSEM::commonfactorGWAS`, which
-> uses a different internal parameterization. See
-> [`ARCHITECTURE.md` §3.3](../../ARCHITECTURE.md#33-commonfactorgwas-parameterization)
+**Core pipeline:** `munge`, `ldsc`, `sumstats`, `commonfactor`, `usermodel`, `user_gwas`, `commonfactor_gwas`
+
+**Advanced:** `hdl`, `s_ldsc`, `enrich`, `parallel_analysis`, `write_model`, `rgmodel`, `multi_snp`, `multi_gene`, `sim_ldsc`, `summary_gls`
+
+> **Note on `commonfactor_gwas`:** genomicsem's `commonfactor_gwas`
+> matches R `GenomicSEM::userGWAS` on the equivalent single-factor
+> model, but does **not** numerically match R
+> `GenomicSEM::commonfactorGWAS`, which uses a different internal
+> parameterization. See
+> [ARCHITECTURE.md §3.3](https://github.com/PoHsuanLai/gsem/blob/master/ARCHITECTURE.md#33-commonfactorgwas-parameterization)
 > for the full rationale. A one-time warning is emitted on first use;
 > suppress it by setting `GSEMR_COMMONFACTOR_GWAS_QUIET=1` in the
 > environment.

@@ -162,6 +162,11 @@ jobs:
   check-r-package:
     name: R CMD check (${{ matrix.os }})
     needs: build-r-source
+    # Explicit `if` needed so GitHub doesn't apply the implicit
+    # `success()` gate, which cascades skips through the whole needs
+    # chain (publish-crates is skipped on workflow_dispatch and the
+    # transitive `success()` evaluates to false).
+    if: always() && needs.build-r-source.result == 'success'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -201,6 +206,12 @@ jobs:
   upload-r-to-release:
     name: Attach R tarball to GitHub release
     needs: [build-r-source, check-r-package]
+    # Same workaround as check-r-package: force a ternary condition so
+    # the transitive skip cascade doesn't take us out.
+    if: |
+      always() &&
+      needs.build-r-source.result == 'success' &&
+      needs.check-r-package.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
