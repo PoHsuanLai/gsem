@@ -5,7 +5,15 @@ STATLIB = $(LIBDIR)/libgsemr.a
 # `cargo build` on x86_64-pc-windows-gnu emits references to ws2_32,
 # advapi32, userenv, bcrypt, and ntdll; drop the POSIX-only -lpthread
 # / -ldl / -lm that the macOS / Linux Makevars passes.
-PKG_LIBS = -L$(LIBDIR) -lgsemr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll
+#
+# --export-all-symbols: extendr's entrypoint.c only registers one
+# static routine (wrap__make_gsemr_wrappers) and relies on
+# R_useDynamicSymbols(dll, TRUE) for everything else. On Linux and
+# macOS the default shared-object export-table covers that, but MinGW
+# only exports symbols explicitly requested, so `R .Call("wrap__foo")`
+# fails to resolve at runtime. --export-all-symbols tells the linker
+# to put every symbol from libgsemr.a into gsemr.dll's export table.
+PKG_LIBS = -L$(LIBDIR) -lgsemr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -Wl,--export-all-symbols
 
 all: C_clean
 
