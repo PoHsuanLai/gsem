@@ -13,4 +13,4 @@ License: GPL-3
 Encoding: UTF-8
 SystemRequirements: Rust (>= 1.70), cargo
 Suggests: bench, psych
-RoxygenNote: 7.3.0
+RoxygenNote: 7.3.3
