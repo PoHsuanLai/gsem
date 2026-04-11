@@ -10,6 +10,10 @@
 
 - [ ] **PyPI 0.1.0 project page missing description.** The `0.1.0` wheels were published before `readme = "README.md"` was added to `pyproject.toml`, so `pypi.org/project/genomicsem/` shows "The author of this package has not provided a project description". Fixed in master for 0.1.1 onwards; the 0.1.0 page can't be updated because PyPI doesn't allow re-uploading the same version.
 
+## Breaking changes queued for 0.1.1 release notes
+
+- [ ] **`PyLdscResult.to_json()` / `gsem.LdscResult.from_json(s)` removed.** The dead compat path was deleted in master (commit `867ba6d`). Users who were serializing LDSC results to disk via `r.to_json()` should switch to `pickle` or pass the result object directly into downstream functions (all 17 hot-path functions already accept it). Mention prominently in the 0.1.1 release notes — this is the only visible API break.
+
 ## Also noted while fixing Windows R CMD check
 
 Non-blocking warnings that still surface in `R CMD check --as-cran`
