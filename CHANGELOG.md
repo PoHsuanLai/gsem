@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes on `master` past the most recent release tag live here until the
 next version is cut.
 
+## [0.1.3] — 2026-04-13
+
+### Fixed
+
+- **LDSC cross-trait allele alignment.** Z-scores were not flipped when
+  the effect allele (A1) differed between traits in a cross-trait pair.
+  This corrupted the Z₁·Z₂ product, producing wrong-sign genetic
+  covariance and inflated cross-trait intercepts (e.g. 0.64 instead of
+  0.05). Diagonal (heritability) estimates were unaffected.
+  (`crates/gsem-ldsc/src/lib.rs`)
+
+- **LDSC per-trait chi² filtering.** R GenomicSEM filters each trait's
+  SNPs independently (threshold = `max(0.001·max(N), 80)`) before
+  merging cross-trait pairs. gsemr was computing the threshold per-pair
+  using `max(N_j, N_k)`, which kept SNPs that R would have excluded.
+  Now matches R's pre-filter-then-merge behavior; cross-trait SNP
+  counts agree exactly.
+
 ## [0.1.2] — 2026-04-13
 
 ### Changed
@@ -198,7 +216,8 @@ shipped across four distribution channels:
   support are now attached to the v0.1.0 release via a manual publish
   re-trigger.
 
-[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/PoHsuanLai/gsem/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/PoHsuanLai/gsem/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/PoHsuanLai/gsem/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PoHsuanLai/gsem/releases/tag/v0.1.0

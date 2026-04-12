@@ -164,6 +164,21 @@ pub fn ldsc(
         })
         .collect();
 
+    // Pre-compute per-trait chi² thresholds and build sets of SNPs that
+    // survive the filter. R filters each trait independently before
+    // merging cross-trait pairs, so a SNP with chi²>80 in trait 1 is
+    // excluded from all pairs involving trait 1, even if its chi² in
+    // trait 2 is below the (higher) per-trait-2 threshold.
+    let trait_chisq_max: Vec<f64> = traits
+        .iter()
+        .map(|t| {
+            let max_n = t.n.iter().cloned().fold(0.0f64, f64::max);
+            config
+                .chisq_max
+                .unwrap_or_else(|| (0.001 * max_n).max(80.0))
+        })
+        .collect();
+
     let kstar = vech::vech_size(k);
 
     // Build (j, jj) pairs in vech order for parallel processing
@@ -194,7 +209,7 @@ pub fn ldsc(
                     j,
                     jj,
                     m_total,
-                    config,
+                    &trait_chisq_max,
                 )?;
                 let n_blocks = config.n_blocks.min(merged.n_snps);
 
@@ -295,7 +310,7 @@ fn merge_pair(
     j: usize,
     jj: usize,
     m_total: f64,
-    config: &LdscConfig,
+    trait_chisq_max: &[f64],
 ) -> Result<PairMergedData> {
     // Iterate over LD SNPs in genomic order (chr1, chr2, ..., chr22).
     // This matches R's `merged[order(CHR, BP), ]` which is critical for
@@ -320,21 +335,25 @@ fn merge_pair(
             continue;
         };
 
-        // Chi-square max filter (max across the two traits in this pair)
+        // Per-trait chi² filter: each trait is filtered independently
+        // using its own threshold, matching R's pre-filter-then-merge.
         let chi_j = traits[j].z[idx_j].powi(2);
+        if chi_j > trait_chisq_max[j] {
+            continue;
+        }
         let chi_k = traits[jj].z[idx_jj].powi(2);
-        let max_chi = chi_j.max(chi_k);
-
-        let chisq_max = config.chisq_max.unwrap_or_else(|| {
-            let max_n = traits[j].n[idx_j].max(traits[jj].n[idx_jj]);
-            (0.001 * max_n).max(80.0)
-        });
-
-        if max_chi > chisq_max {
+        if chi_k > trait_chisq_max[jj] {
             continue;
         }
 
-        z_j.push(traits[j].z[idx_j]);
+        // Allele alignment: flip Z_j when A1 differs between traits.
+        // Matches R: y$Z.x <- ifelse(y$A1.y == y$A1.x, y$Z.x, -y$Z.x)
+        let z_j_val = if j != jj && traits[j].a1[idx_j] != traits[jj].a1[idx_jj] {
+            -traits[j].z[idx_j]
+        } else {
+            traits[j].z[idx_j]
+        };
+        z_j.push(z_j_val);
         z_k.push(traits[jj].z[idx_jj]);
         n_j.push(traits[j].n[idx_j]);
         n_k.push(traits[jj].n[idx_jj]);

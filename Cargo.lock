@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "gsem"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "approx",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "gsem-cli"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "gsem-ldsc"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "approx",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "gsem-matrix"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "approx",
  "criterion",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "gsem-sem"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "approx",
