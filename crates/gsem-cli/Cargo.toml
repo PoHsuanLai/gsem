@@ -1,15 +1,17 @@
 [package]
-name = "gsem"
-description = "Genomic Structural Equation Modeling from GWAS summary statistics"
+name = "gsem-cli"
+description = "CLI for Genomic Structural Equation Modeling"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-plot = ["plotters"]
+[[bin]]
+name = "gsem"
+path = "src/main.rs"
 
 [dependencies]
+gsem = { workspace = true, features = ["plot"] }
 gsem-matrix = { workspace = true }
 gsem-ldsc = { workspace = true }
 gsem-sem = { workspace = true }
@@ -20,11 +22,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+env_logger = { workspace = true }
 flate2 = { workspace = true }
-plotters = { workspace = true, optional = true }
+clap = { workspace = true }
+indicatif = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
-
-[dev-dependencies]
-approx = { workspace = true }
-tempfile = { workspace = true }

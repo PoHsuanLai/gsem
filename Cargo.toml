@@ -4,6 +4,7 @@ members = [
     "crates/gsem-ldsc",
     "crates/gsem-sem",
     "crates/gsem",
+    "crates/gsem-cli",
 ]
 resolver = "2"
 
@@ -57,3 +58,4 @@ gsem-matrix = { version = "0.1.1", path = "crates/gsem-matrix" }
 gsem-ldsc = { version = "0.1.1", path = "crates/gsem-ldsc" }
 gsem-sem = { version = "0.1.1", path = "crates/gsem-sem" }
 gsem = { version = "0.1.1", path = "crates/gsem" }
+gsem-cli = { version = "0.1.1", path = "crates/gsem-cli" }

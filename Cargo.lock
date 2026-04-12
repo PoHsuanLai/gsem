@@ -826,14 +826,11 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "approx",
- "clap",
- "env_logger",
  "faer",
  "flate2",
  "gsem-ldsc",
  "gsem-matrix",
  "gsem-sem",
- "indicatif",
  "log",
  "plotters",
  "rand 0.10.0",
@@ -843,6 +840,29 @@ dependencies = [
  "serde_json",
  "statrs",
  "tempfile",
+]
+
+[[package]]
+name = "gsem-cli"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger",
+ "faer",
+ "flate2",
+ "gsem",
+ "gsem-ldsc",
+ "gsem-matrix",
+ "gsem-sem",
+ "indicatif",
+ "log",
+ "rand 0.10.0",
+ "rand_distr 0.6.0",
+ "rayon",
+ "serde",
+ "serde_json",
+ "statrs",
 ]
 
 [[package]]

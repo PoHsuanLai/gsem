@@ -5,8 +5,11 @@
 //! already-prepared data.  The CLI calls these from its `--save-plot-*`
 //! flags on the corresponding analysis subcommands.
 
+#[cfg(feature = "plot")]
 pub mod manhattan;
+#[cfg(feature = "plot")]
 pub mod qq;
+#[cfg(feature = "plot")]
 pub mod scree;
 
 /// Point in a Manhattan plot: (chromosome, base-pair, -log10(p)).
