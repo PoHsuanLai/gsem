@@ -306,20 +306,6 @@ where
 
     model.set_param_vec(&params);
 
-    // Check for negative variances (Heywood cases) after final fit
-    let bad_vars = model.negative_variances();
-    if !bad_vars.is_empty() {
-        let names: Vec<String> = bad_vars
-            .iter()
-            .map(|(name, val)| format!("{name}={val:.6}"))
-            .collect();
-        log::warn!(
-            "Negative variance estimates (Heywood case): {}. \
-             Consider adding lower bounds on residual variances or re-specifying the model.",
-            names.join(", ")
-        );
-    }
-
     FitResult {
         params,
         objective: obj,

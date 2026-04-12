@@ -934,6 +934,20 @@ fn run_sem(args: SemArgs) -> Result<()> {
         fit
     };
 
+    // Warn about negative variances (Heywood cases)
+    let bad_vars = sem_model.negative_variances();
+    if !bad_vars.is_empty() {
+        let names: Vec<String> = bad_vars
+            .iter()
+            .map(|(name, val)| format!("{name}={val:.6}"))
+            .collect();
+        log::warn!(
+            "Negative variance estimates (Heywood case): {}. \
+             Consider adding lower bounds on residual variances or re-specifying the model.",
+            names.join(", ")
+        );
+    }
+
     eprintln!("Converged: {}", fit.converged);
     eprintln!("Objective: {:.6}", fit.objective);
 

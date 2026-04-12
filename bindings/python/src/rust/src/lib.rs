@@ -900,6 +900,20 @@ fn usermodel<'py>(
         }
     };
 
+    // Warn about negative variances (Heywood cases)
+    let bad_vars = sem_model.negative_variances();
+    if !bad_vars.is_empty() {
+        let names: Vec<String> = bad_vars
+            .iter()
+            .map(|(name, val)| format!("{name}={val:.6}"))
+            .collect();
+        log::warn!(
+            "Negative variance estimates (Heywood case): {}. \
+             Consider adding lower bounds on residual variances or re-specifying the model.",
+            names.join(", ")
+        );
+    }
+
     // Build a columnar parameter dict: {lhs, op, rhs, est}. SE/Z/p are not
     // computed on this code path (matches the R binding's usermodel shape).
     let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();

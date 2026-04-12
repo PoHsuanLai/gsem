@@ -325,6 +325,21 @@ fn usermodel_rust(
     let mut fitted_model = gsem_sem::model::Model::from_partable(&final_pt, &obs_names);
     fitted_model.set_param_vec(&fit.params);
 
+    // Warn about negative variances (Heywood cases) — only in usermodel,
+    // not in per-SNP GWAS fits where it would spam millions of warnings.
+    let bad_vars = fitted_model.negative_variances();
+    if !bad_vars.is_empty() {
+        let names: Vec<String> = bad_vars
+            .iter()
+            .map(|(name, val)| format!("{name}={val:.6}"))
+            .collect();
+        log::warn!(
+            "Negative variance estimates (Heywood case): {}. \
+             Consider adding lower bounds on residual variances or re-specifying the model.",
+            names.join(", ")
+        );
+    }
+
     let sigma_hat = fitted_model.implied_cov();
 
     // Compute fit indices
