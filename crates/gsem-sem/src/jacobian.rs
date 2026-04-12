@@ -298,6 +298,7 @@ fn fill_beta_deriv(
 
 /// Precompute intermediate matrices for Beta-path Jacobian.
 /// Returns (la, la_psi_at, a_psi_at_lt, m_lt, lm, at_lt).
+#[allow(clippy::type_complexity)]
 fn precompute_beta_intermediates(
     model: &Model,
     m: usize,
