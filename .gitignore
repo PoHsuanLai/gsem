@@ -42,6 +42,9 @@ src/*.dll
 
 # Test data / outputs
 *.sumstats.gz
+*.rds
+*_ldsc.log
+merged_sumstats.tsv
 ldsc_result.json
 sem_result.tsv
 gwas_result.tsv
