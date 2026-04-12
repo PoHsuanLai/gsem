@@ -64,19 +64,19 @@ for your platform — **no Rust toolchain needed**:
 ```r
 # Linux (x86_64):
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1_linux.tar.gz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.2/gsemr_0.1.2_linux.tar.gz",
   repos = NULL
 )
 
 # macOS:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1.tgz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.2/gsemr_0.1.2.tgz",
   repos = NULL
 )
 
 # Windows:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1.zip",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.2/gsemr_0.1.2.zip",
   repos = NULL
 )
 ```
@@ -90,7 +90,7 @@ match, or for dev builds. You'll need [Rust](https://rustup.rs/)
 ```r
 # Source tarball — fetches internal crates from crates.io:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.1/gsemr_0.1.1.tar.gz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.2/gsemr_0.1.2.tar.gz",
   repos = NULL, type = "source"
 )
 
@@ -236,7 +236,7 @@ bindings/
 
 ```sh
 cargo build --release
-cargo test --workspace      # 117 tests including R validation
+cargo test --workspace      # 151 tests including R validation
 cargo bench                 # criterion micro-benchmarks
 cd bench && Rscript benchmark_perf.R  # R vs gsemr comparison
 ```
