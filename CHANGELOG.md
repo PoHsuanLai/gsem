@@ -12,6 +12,13 @@ next version is cut.
 
 ## [0.1.2] — 2026-04-13
 
+### Changed
+
+- **Publish CI R version pinned to `oldrel`** (currently R 4.4.x) instead
+  of `release` (R 4.5.0). Pre-built binaries are now compiled against the
+  previous R release so users who haven't upgraded to the latest R can
+  install them directly.
+
 ### Fixed
 
 - **Equality constraints in SEM models** (`a*V1 + a*V2` syntax) now
