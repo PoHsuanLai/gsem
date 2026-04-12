@@ -341,8 +341,6 @@ fn process_single_snp(
     let kstar_full = (k + 1) * (k + 2) / 2;
     let v_diag: Vec<f64> = (0..kstar_full).map(|i| v_full[(i, i)]).collect();
 
-    // Fit with the strict SEM convergence regime — this matches R GenomicSEM's
-    // `userGWAS` per-SNP estimates when `fix_measurement` is enabled.
     let fit = match config.estimation {
         EstimationMethod::Ml => estimator::fit_ml(&mut model, &s_full, config.max_iter, None),
         EstimationMethod::Dwls => {

@@ -24,6 +24,8 @@ pub struct Model {
     pub free_params: Vec<ParamLocation>,
     /// Lower bounds for free parameters (None = unbounded)
     pub lower_bounds: Vec<Option<f64>>,
+    /// Equality-constrained cells that mirror a primary free parameter
+    aliases: Vec<ParamAlias>,
 }
 
 /// Which matrix and position a free parameter belongs to.
@@ -44,6 +46,16 @@ pub struct ParamLocation {
     pub row: usize,
     /// Column index within the matrix
     pub col: usize,
+}
+
+/// An alias: a matrix cell that shares a free parameter with another cell
+/// (equality constraint via label, e.g. `a*V1 + a*V2`).
+#[derive(Debug, Clone, Copy)]
+struct ParamAlias {
+    /// Index into `free_params` that this cell mirrors
+    source: usize,
+    /// The matrix cell to keep in sync
+    loc: ParamLocation,
 }
 
 impl Model {
@@ -88,14 +100,47 @@ impl Model {
         let mut psi = Mat::zeros(m, m);
         let mut theta = Mat::zeros(p, p);
         let mut beta = Mat::zeros(m, m);
-        let mut free_params = Vec::new();
-        let mut lower_bounds = Vec::new();
+        let mut free_params: Vec<ParamLocation> = Vec::new();
+        let mut lower_bounds: Vec<Option<f64>> = Vec::new();
+        let mut aliases: Vec<ParamAlias> = Vec::new();
+        // label -> index into free_params (for equality constraints)
+        let mut label_map: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         // Set up phantom latents: Lambda[obs, phantom] = 1.0 (fixed)
         for (obs_name, &phantom_lat_idx) in &phantom_map {
             if let Some(obs_idx) = obs_names.iter().position(|n| n == obs_name) {
                 lambda[(obs_idx, phantom_lat_idx)] = 1.0;
             }
+        }
+
+        /// Register a free parameter, respecting equality constraints via labels.
+        /// If the label has been seen before, add an alias instead of a new free
+        /// parameter so both cells share the same optimizer slot.
+        #[inline]
+        fn add_free(
+            loc: ParamLocation,
+            label: &Option<String>,
+            lower_bound: Option<f64>,
+            free_params: &mut Vec<ParamLocation>,
+            lower_bounds: &mut Vec<Option<f64>>,
+            aliases: &mut Vec<ParamAlias>,
+            label_map: &mut std::collections::HashMap<String, usize>,
+        ) {
+            if let Some(lbl) = label {
+                if let Some(&existing_idx) = label_map.get(lbl) {
+                    // Equality constraint: alias this cell to the existing free param
+                    aliases.push(ParamAlias {
+                        source: existing_idx,
+                        loc,
+                    });
+                    return;
+                }
+                // First occurrence of this label
+                label_map.insert(lbl.clone(), free_params.len());
+            }
+            free_params.push(loc);
+            lower_bounds.push(lower_bound);
         }
 
         for row in &pt.rows {
@@ -105,12 +150,20 @@ impl Model {
                     let obs_idx = obs_names.iter().position(|n| n == &row.rhs);
                     if let (Some(li), Some(oi)) = (lat_idx, obs_idx) {
                         if row.free > 0 {
-                            free_params.push(ParamLocation {
+                            let loc = ParamLocation {
                                 matrix: MatrixId::Lambda,
                                 row: oi,
                                 col: li,
-                            });
-                            lower_bounds.push(row.lower_bound);
+                            };
+                            add_free(
+                                loc,
+                                &row.label,
+                                row.lower_bound,
+                                &mut free_params,
+                                &mut lower_bounds,
+                                &mut aliases,
+                                &mut label_map,
+                            );
                             // Start value
                             lambda[(oi, li)] = if row.value != 0.0 { row.value } else { 0.5 };
                         } else {
@@ -127,12 +180,20 @@ impl Model {
                     if let (Some(li), Some(ri)) = (lhs_lat, rhs_lat) {
                         // Latent covariance/variance (includes phantom latents)
                         if row.free > 0 {
-                            free_params.push(ParamLocation {
+                            let loc = ParamLocation {
                                 matrix: MatrixId::Psi,
                                 row: li,
                                 col: ri,
-                            });
-                            lower_bounds.push(row.lower_bound);
+                            };
+                            add_free(
+                                loc,
+                                &row.label,
+                                row.lower_bound,
+                                &mut free_params,
+                                &mut lower_bounds,
+                                &mut aliases,
+                                &mut label_map,
+                            );
                             psi[(li, ri)] = if row.value != 0.0 { row.value } else { 0.5 };
                             if li != ri {
                                 psi[(ri, li)] = psi[(li, ri)];
@@ -146,12 +207,20 @@ impl Model {
                     } else if let (Some(li), Some(ri)) = (lhs_obs, rhs_obs) {
                         // Residual covariance/variance
                         if row.free > 0 {
-                            free_params.push(ParamLocation {
+                            let loc = ParamLocation {
                                 matrix: MatrixId::Theta,
                                 row: li,
                                 col: ri,
-                            });
-                            lower_bounds.push(row.lower_bound);
+                            };
+                            add_free(
+                                loc,
+                                &row.label,
+                                row.lower_bound,
+                                &mut free_params,
+                                &mut lower_bounds,
+                                &mut aliases,
+                                &mut label_map,
+                            );
                             theta[(li, ri)] = if row.value != 0.0 { row.value } else { 0.5 };
                             if li != ri {
                                 theta[(ri, li)] = theta[(li, ri)];
@@ -171,16 +240,20 @@ impl Model {
 
                     if let (Some(li), Some(ri)) = (lhs_idx, rhs_idx) {
                         if row.free > 0 {
-                            free_params.push(ParamLocation {
+                            let loc = ParamLocation {
                                 matrix: MatrixId::Beta,
                                 row: li,
                                 col: ri,
-                            });
-                            lower_bounds.push(row.lower_bound);
-                            // Start the regression slope at row.value (zero by
-                            // default, matching lavaan). Callers that want a
-                            // warm start should set row.value before building
-                            // the model.
+                            };
+                            add_free(
+                                loc,
+                                &row.label,
+                                row.lower_bound,
+                                &mut free_params,
+                                &mut lower_bounds,
+                                &mut aliases,
+                                &mut label_map,
+                            );
                             beta[(li, ri)] = row.value;
                         } else {
                             beta[(li, ri)] = row.value;
@@ -202,6 +275,7 @@ impl Model {
             lat_names,
             free_params,
             lower_bounds,
+            aliases,
         }
     }
 
@@ -221,23 +295,38 @@ impl Model {
     /// Set free parameter values from a vector.
     pub fn set_param_vec(&mut self, x: &[f64]) {
         debug_assert_eq!(x.len(), self.free_params.len());
-        for (i, loc) in self.free_params.iter().enumerate() {
-            match loc.matrix {
-                MatrixId::Lambda => self.lambda[(loc.row, loc.col)] = x[i],
-                MatrixId::Psi => {
-                    self.psi[(loc.row, loc.col)] = x[i];
-                    if loc.row != loc.col {
-                        self.psi[(loc.col, loc.row)] = x[i];
-                    }
+        // Copy free_params to avoid borrow conflict
+        let locs: Vec<ParamLocation> = self.free_params.clone();
+        for (i, loc) in locs.iter().enumerate() {
+            self.write_cell(loc, x[i]);
+        }
+        // Propagate equality constraints: aliased cells get the same value
+        // as their source free parameter.
+        let aliases = self.aliases.clone();
+        for alias in &aliases {
+            let val = x[alias.source];
+            self.write_cell(&alias.loc, val);
+        }
+    }
+
+    /// Write a value to the matrix cell indicated by `loc`, handling
+    /// symmetric off-diagonal entries in Psi and Theta.
+    fn write_cell(&mut self, loc: &ParamLocation, val: f64) {
+        match loc.matrix {
+            MatrixId::Lambda => self.lambda[(loc.row, loc.col)] = val,
+            MatrixId::Psi => {
+                self.psi[(loc.row, loc.col)] = val;
+                if loc.row != loc.col {
+                    self.psi[(loc.col, loc.row)] = val;
                 }
-                MatrixId::Theta => {
-                    self.theta[(loc.row, loc.col)] = x[i];
-                    if loc.row != loc.col {
-                        self.theta[(loc.col, loc.row)] = x[i];
-                    }
-                }
-                MatrixId::Beta => self.beta[(loc.row, loc.col)] = x[i],
             }
+            MatrixId::Theta => {
+                self.theta[(loc.row, loc.col)] = val;
+                if loc.row != loc.col {
+                    self.theta[(loc.col, loc.row)] = val;
+                }
+            }
+            MatrixId::Beta => self.beta[(loc.row, loc.col)] = val,
         }
     }
 
@@ -275,6 +364,32 @@ impl Model {
     /// Number of free parameters.
     pub fn n_free(&self) -> usize {
         self.free_params.len()
+    }
+
+    /// Returns alias (source_index, location) pairs for the Jacobian.
+    pub fn alias_pairs(&self) -> Vec<(usize, ParamLocation)> {
+        self.aliases.iter().map(|a| (a.source, a.loc)).collect()
+    }
+
+    /// Check for negative variance estimates (Heywood cases).
+    ///
+    /// Returns a list of (variable_name, variance_value) for any diagonal
+    /// entries in Theta (residual) or Psi (factor) that are negative.
+    pub fn negative_variances(&self) -> Vec<(String, f64)> {
+        let mut bad = Vec::new();
+        for i in 0..self.obs_names.len() {
+            let v = self.theta[(i, i)];
+            if v < 0.0 {
+                bad.push((self.obs_names[i].clone(), v));
+            }
+        }
+        for i in 0..self.lat_names.len() {
+            let v = self.psi[(i, i)];
+            if v < 0.0 {
+                bad.push((self.lat_names[i].clone(), v));
+            }
+        }
+        bad
     }
 
     /// Degrees of freedom.
@@ -335,5 +450,70 @@ mod tests {
         for (a, b) in modified.iter().zip(recovered.iter()) {
             assert!((a - b).abs() < 1e-15);
         }
+    }
+
+    #[test]
+    fn test_equality_constraint_reduces_free_params() {
+        // Without equality: F1 =~ NA*V1 + V2 → 2 free loadings
+        let pt1 = parse_model("F1 =~ NA*V1 + V2\nF1 ~~ 1*F1", false).unwrap();
+        let m1 = Model::from_partable(&pt1, &[]);
+
+        // With equality: F1 =~ a*V1 + a*V2 → 1 free loading (shared)
+        let pt2 = parse_model("F1 =~ a*V1 + a*V2\nF1 ~~ 1*F1", false).unwrap();
+        let m2 = Model::from_partable(&pt2, &[]);
+
+        // Both have auto-added residual variances (V1~~V1, V2~~V2)
+        assert_eq!(m1.n_free(), 4, "2 free loadings + 2 residuals");
+        assert_eq!(m2.n_free(), 3, "1 shared loading + 2 residuals");
+    }
+
+    #[test]
+    fn test_equality_constraint_propagates_values() {
+        let pt = parse_model("F1 =~ a*V1 + a*V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2", false).unwrap();
+        let mut model = Model::from_partable(&pt, &["V1".into(), "V2".into()]);
+
+        // Set the shared loading to 0.7, residuals to 0.3 and 0.4
+        model.set_param_vec(&[0.7, 0.3, 0.4]);
+
+        // Both Lambda entries should be 0.7
+        assert!(
+            (model.lambda[(0, 0)] - 0.7).abs() < 1e-15,
+            "Lambda[V1,F1] should be 0.7, got {}",
+            model.lambda[(0, 0)]
+        );
+        assert!(
+            (model.lambda[(1, 0)] - 0.7).abs() < 1e-15,
+            "Lambda[V2,F1] should be 0.7 (aliased), got {}",
+            model.lambda[(1, 0)]
+        );
+    }
+
+    #[test]
+    fn test_equality_constraint_implied_cov() {
+        // F1 =~ a*V1 + a*V2, F1~~1*F1, V1~~V1, V2~~V2
+        // Lambda = [a, a]', Psi = 1, Theta = diag(t1, t2)
+        // Sigma = a^2 * [[1,1],[1,1]] + diag(t1, t2)
+        let pt = parse_model("F1 =~ a*V1 + a*V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2", false).unwrap();
+        let mut model = Model::from_partable(&pt, &["V1".into(), "V2".into()]);
+        model.set_param_vec(&[0.6, 0.2, 0.3]);
+
+        let sigma = model.implied_cov();
+        let a = 0.6;
+        assert!((sigma[(0, 0)] - (a * a + 0.2)).abs() < 1e-10);
+        assert!((sigma[(1, 1)] - (a * a + 0.3)).abs() < 1e-10);
+        assert!((sigma[(0, 1)] - a * a).abs() < 1e-10);
+        assert!((sigma[(1, 0)] - a * a).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_negative_variances_detected() {
+        let pt = parse_model("F1 =~ NA*V1 + V2\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2", false).unwrap();
+        let mut model = Model::from_partable(&pt, &["V1".into(), "V2".into()]);
+        // Set V2 residual variance negative
+        model.set_param_vec(&[0.5, 0.5, 0.3, -0.1]);
+        let bad = model.negative_variances();
+        assert_eq!(bad.len(), 1);
+        assert_eq!(bad[0].0, "V2");
+        assert!((bad[0].1 - (-0.1)).abs() < 1e-15);
     }
 }

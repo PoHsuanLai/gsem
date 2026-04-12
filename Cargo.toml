@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "GPL-3.0"
 repository = "https://github.com/PoHsuanLai/gsem"
@@ -54,8 +54,8 @@ criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3"
 
 # Internal crates
-gsem-matrix = { version = "0.1.1", path = "crates/gsem-matrix" }
-gsem-ldsc = { version = "0.1.1", path = "crates/gsem-ldsc" }
-gsem-sem = { version = "0.1.1", path = "crates/gsem-sem" }
-gsem = { version = "0.1.1", path = "crates/gsem" }
-gsem-cli = { version = "0.1.1", path = "crates/gsem-cli" }
+gsem-matrix = { version = "0.1.2", path = "crates/gsem-matrix" }
+gsem-ldsc = { version = "0.1.2", path = "crates/gsem-ldsc" }
+gsem-sem = { version = "0.1.2", path = "crates/gsem-sem" }
+gsem = { version = "0.1.2", path = "crates/gsem" }
+gsem-cli = { version = "0.1.2", path = "crates/gsem-cli" }

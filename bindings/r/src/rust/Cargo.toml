@@ -1,6 +1,6 @@
 [package]
 name = "gsemr"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 
@@ -18,10 +18,10 @@ extendr-api = "0.8"
 # source tree. When the package is installed from a tarball, the relative
 # paths don't resolve, the patch is ignored, and cargo fetches the
 # published crates from crates.io.
-gsem = "0.1.1"
-gsem-matrix = "0.1.1"
-gsem-ldsc = "0.1.1"
-gsem-sem = "0.1.1"
+gsem = "0.1.2"
+gsem-matrix = "0.1.2"
+gsem-ldsc = "0.1.2"
+gsem-sem = "0.1.2"
 faer = "0.24"
 log = "0.4"
 rayon = "1"

@@ -229,15 +229,20 @@ fn usermodel_rust(
             }
         }
         if names.is_empty() {
-            // No loadings found — try self-covariances (models without =~)
+            // No loadings found — collect all unique variable names from
+            // covariance and regression terms (models without =~).
             for row in &pt.rows {
                 if row.op == gsem_sem::syntax::Op::Covariance
-                    && row.lhs == row.rhs
-                    && !latents.contains(&row.lhs)
-                    && row.lhs != "SNP"
-                    && !names.contains(&row.lhs)
+                    || row.op == gsem_sem::syntax::Op::Regression
                 {
-                    names.push(row.lhs.clone());
+                    for name in [&row.lhs, &row.rhs] {
+                        if !latents.contains(name)
+                            && name != "SNP"
+                            && !names.contains(name)
+                        {
+                            names.push(name.clone());
+                        }
+                    }
                 }
             }
         }
@@ -319,6 +324,7 @@ fn usermodel_rust(
     // Build the fitted model for implied_cov / fit indices / Q_Factor
     let mut fitted_model = gsem_sem::model::Model::from_partable(&final_pt, &obs_names);
     fitted_model.set_param_vec(&fit.params);
+
     let sigma_hat = fitted_model.implied_cov();
 
     // Compute fit indices

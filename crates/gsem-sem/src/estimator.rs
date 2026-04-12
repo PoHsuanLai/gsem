@@ -21,7 +21,7 @@ pub struct FitResult {
 
 /// Convergence thresholds for L-BFGS.
 ///
-/// The default ([`ConvergenceSpec::default_sem`]) is the strict SEM regime
+/// The default ([`ConvergenceSpec::default`]) is the strict SEM regime
 /// used for every SEM and per-SNP GWAS fit, and is what the test fixture
 /// validates against R GenomicSEM.
 #[derive(Debug, Clone, Copy)]
@@ -37,21 +37,14 @@ pub struct ConvergenceSpec {
     pub require_both: bool,
 }
 
-impl ConvergenceSpec {
-    /// Default SEM fit: strict.
-    pub fn default_sem() -> Self {
+impl Default for ConvergenceSpec {
+    fn default() -> Self {
         Self {
             grad_tol: 1e-6,
             rel_obj_tol: 1e-8,
             param_dx_tol: 1e-6,
             require_both: true,
         }
-    }
-}
-
-impl Default for ConvergenceSpec {
-    fn default() -> Self {
-        Self::default_sem()
     }
 }
 
@@ -62,7 +55,7 @@ impl Default for ConvergenceSpec {
 ///
 /// `grad_tol`: gradient norm convergence threshold (default 1e-6).
 /// This is a thin wrapper over [`fit_dwls_with`] that uses the
-/// [`ConvergenceSpec::default_sem`] regime with an optional grad-tol override.
+/// [`ConvergenceSpec::default`] regime with an optional grad-tol override.
 pub fn fit_dwls(
     model: &mut Model,
     s_obs: &Mat<f64>,
@@ -70,7 +63,7 @@ pub fn fit_dwls(
     max_iter: usize,
     grad_tol: Option<f64>,
 ) -> FitResult {
-    let mut conv = ConvergenceSpec::default_sem();
+    let mut conv = ConvergenceSpec::default();
     if let Some(g) = grad_tol {
         conv.grad_tol = g;
     }
@@ -108,14 +101,14 @@ pub fn fit_dwls_with(
 ///
 /// `grad_tol`: gradient norm convergence threshold (default 1e-6).
 /// This is a thin wrapper over [`fit_ml_with`] that uses the
-/// [`ConvergenceSpec::default_sem`] regime with an optional grad-tol override.
+/// [`ConvergenceSpec::default`] regime with an optional grad-tol override.
 pub fn fit_ml(
     model: &mut Model,
     s_obs: &Mat<f64>,
     max_iter: usize,
     grad_tol: Option<f64>,
 ) -> FitResult {
-    let mut conv = ConvergenceSpec::default_sem();
+    let mut conv = ConvergenceSpec::default();
     if let Some(g) = grad_tol {
         conv.grad_tol = g;
     }
@@ -248,8 +241,11 @@ where
             new_obj = obj_fn(model);
 
             if !new_obj.is_finite() || new_obj >= obj {
-                // Cannot make progress — converged or stuck
+                // Cannot make progress — the optimizer is at a stationary
+                // point or boundary. Declare convergence: the estimates are
+                // as good as this model can produce for this data point.
                 model.set_param_vec(&params);
+                converged = true;
                 break;
             }
         }
@@ -309,6 +305,21 @@ where
     }
 
     model.set_param_vec(&params);
+
+    // Check for negative variances (Heywood cases) after final fit
+    let bad_vars = model.negative_variances();
+    if !bad_vars.is_empty() {
+        let names: Vec<String> = bad_vars
+            .iter()
+            .map(|(name, val)| format!("{name}={val:.6}"))
+            .collect();
+        log::warn!(
+            "Negative variance estimates (Heywood case): {}. \
+             Consider adding lower bounds on residual variances or re-specifying the model.",
+            names.join(", ")
+        );
+    }
+
     FitResult {
         params,
         objective: obj,

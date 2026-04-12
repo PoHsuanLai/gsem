@@ -10,6 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes on `master` past the most recent release tag live here until the
 next version is cut.
 
+## [0.1.2] — 2026-04-13
+
+### Fixed
+
+- **Equality constraints in SEM models** (`a*V1 + a*V2` syntax) now
+  correctly share a single free parameter across aliased cells. Previously
+  each labelled term got its own independent parameter, silently ignoring
+  the equality constraint. The Jacobian (analytical delta matrix) is
+  updated to accumulate gradient contributions from aliased cells.
+
+- **Labelled loadings treated as free parameters.** A label on the first
+  indicator (e.g. `F1 =~ a*V1 + a*V2`) was incorrectly caught by the
+  "fix first loading to 1" default, making it fixed instead of free.
+  Labelled terms now bypass the first-loading rule, matching lavaan
+  semantics.
+
+- **Observed variable detection for covariance-only models.** Models like
+  `RL ~~ MDD` (cross-covariance, no `=~` terms) failed with "model has
+  0 observed variables". The fallback heuristic now collects all unique
+  variable names from covariance and regression terms, not just
+  self-covariances.
+
+- **L-BFGS convergence flag on line-search exit.** When the line search
+  exhausts all step sizes without improvement, the optimizer has reached
+  a stationary point (or constrained boundary). This exit path now sets
+  `converged = true`, matching the practical semantics of R GenomicSEM's
+  `optim.force.converged = TRUE`. Estimates were already correct; only
+  the flag was wrong.
+
+### Added
+
+- **Heywood case warnings.** After every SEM fit, negative diagonal
+  entries in Theta (residual variances) or Psi (factor variances) are
+  detected and logged at WARN level via the `log` crate. The warning
+  names the offending variable(s) and suggests adding lower bounds or
+  re-specifying the model. Surfaces in R, Python, and CLI.
+
+- New tests for equality constraints: shared-parameter count reduction,
+  value propagation through aliases, implied covariance correctness,
+  and analytical-vs-numerical Jacobian agreement with labels.
+
+- Negative variance detection test (`test_negative_variances_detected`).
+
 ## [0.1.1] — 2026-04-11
 
 ### Added
@@ -148,6 +191,7 @@ shipped across four distribution channels:
   support are now attached to the v0.1.0 release via a manual publish
   re-trigger.
 
-[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/PoHsuanLai/gsem/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/PoHsuanLai/gsem/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PoHsuanLai/gsem/releases/tag/v0.1.0

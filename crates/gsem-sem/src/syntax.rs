@@ -143,8 +143,8 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
                 // Explicit fixed value: e.g., 1*V1
                 is_free = false;
                 value = fv;
-            } else if is_na {
-                // NA* prefix: free this parameter
+            } else if is_na || label.is_some() {
+                // NA* prefix or labelled parameter: free this parameter
                 is_free = true;
                 value = 0.0;
             } else if op == Op::Loading && is_first_loading && !std_lv {
