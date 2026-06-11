@@ -29,6 +29,13 @@ next version is cut.
   them. Fixed to `keep_ambig = !ambig` across the R binding, Python
   binding, and CLI (which gains an `--ambig` flag), matching R's default.
 
+- **`rgmodel` V_R dimension.** `rgmodel` returned `V_R` as the full
+  `kstar × kstar` sampling covariance of `vech(R)` (including the fixed
+  diagonal-1 correlations, which have ~zero variance). R GenomicSEM returns
+  `V_R` for the off-diagonal correlations only (`k(k−1)/2` square). Fixed to
+  extract the off-diagonal vech block, matching R's shape and ordering (so
+  the bindings now return R's shape too). (`crates/gsem-sem/src/rgmodel.rs`)
+
 ### Added
 
 - **In-CI R-equivalence coverage for the LDSC half** (`ldsc`, `munge`,
@@ -36,10 +43,11 @@ next version is cut.
   running R GenomicSEM (`tests/generate_synthetic_reference.R`).
   Previously only the data-dependent bench script covered these.
 
-- **R-equivalence coverage for `summaryGLS` and `paLDSC`** (observed
-  eigenvalue spectrum) via `tests/generate_covstruc_reference.R`, plus
-  **ML-estimator and 3-factor SEM** cases — broadening the estimator and
-  model-size combinations checked against R.
+- **R-equivalence coverage for `summaryGLS`, `paLDSC` (observed eigenvalue
+  spectrum), `rgmodel`, and `write.model`** (factor→indicator structure)
+  via `tests/generate_covstruc_reference.R`, plus **ML-estimator and
+  3-factor SEM** cases — broadening the function, estimator, and model-size
+  combinations checked against R.
 
 - **Tightened R-validation tolerances** to observed precision (SEM /
   commonfactor estimates now checked at 1e-6 vs the prior 5e-2; fit
