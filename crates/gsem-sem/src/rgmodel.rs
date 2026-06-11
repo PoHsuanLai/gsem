@@ -280,9 +280,28 @@ fn compute_v_r(r: &Mat<f64>, v_stand: &Mat<f64>, k: usize) -> Result<Mat<f64>> {
         }
     }
 
-    // V_R = J * V_stand * J'
+    // V_R = J * V_stand * J' (sampling covariance of vech(R)).
     let jv = &jacobian * v_stand;
-    Ok(&jv * jacobian.transpose())
+    let v_r_full = &jv * jacobian.transpose();
+
+    // R GenomicSEM's rgmodel returns V_R for the OFF-DIAGONAL correlations
+    // only — the diagonal correlations are fixed at 1 with zero sampling
+    // variance. Extract the k*(k-1)/2 off-diagonal vech positions (preserving
+    // the column-major lower-triangle order, which matches R's ordering).
+    let mut offdiag: Vec<usize> = Vec::new();
+    let mut p = 0usize;
+    for col in 0..k {
+        for row in col..k {
+            if row != col {
+                offdiag.push(p);
+            }
+            p += 1;
+        }
+    }
+    let m = offdiag.len();
+    Ok(Mat::from_fn(m, m, |a, b| {
+        v_r_full[(offdiag[a], offdiag[b])]
+    }))
 }
 
 #[cfg(test)]

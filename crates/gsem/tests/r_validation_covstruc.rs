@@ -82,6 +82,48 @@ fn test_summary_gls_matches_r() {
     }
 }
 
+// ── rgmodel: genetic correlation matrix R and its sampling cov V_R ──────────
+
+#[test]
+fn test_rgmodel_matches_r() {
+    let fix = load_fixture("rgmodel");
+    let s = json_to_mat(&fix["s"]);
+    let v = json_to_mat(&fix["v"]);
+    let r_r = json_to_mat(&fix["r"]);
+    let r_vr = json_to_mat(&fix["v_r"]);
+
+    let res = gsem_sem::rgmodel::run_rgmodel(&s, &v, gsem_sem::EstimationMethod::Dwls)
+        .expect("rgmodel should run");
+
+    // Genetic correlation matrix R == cov2cor(S) (deterministic).
+    assert_eq!(res.r.nrows(), r_r.nrows(), "rgmodel R dim");
+    for i in 0..r_r.nrows() {
+        for j in 0..r_r.ncols() {
+            assert_close(
+                res.r[(i, j)],
+                r_r[(i, j)],
+                1e-6,
+                &format!("rgmodel R[{i},{j}]"),
+            );
+        }
+    }
+
+    // V_R: sampling covariance of the off-diagonal correlations. gsem uses a
+    // numerical-Jacobian delta method vs R's sandwich on the standardized fit,
+    // so allow a slightly looser tolerance than the (exact) R matrix.
+    assert_eq!(res.v_r.nrows(), r_vr.nrows(), "rgmodel V_R dim");
+    for i in 0..r_vr.nrows() {
+        for j in 0..r_vr.ncols() {
+            assert_close(
+                res.v_r[(i, j)],
+                r_vr[(i, j)],
+                1e-5,
+                &format!("rgmodel V_R[{i},{j}]"),
+            );
+        }
+    }
+}
+
 // ── paLDSC: observed eigenvalue spectrum ────────────────────────────────────
 
 #[test]

@@ -81,5 +81,24 @@ write_fixture(list(
   observed_eig   = as.numeric(obs_eig)
 ), "paldsc")
 
+# ---------------------------------------------------------------------------
+# rgmodel: saturated genetic-correlation model. Returns R (the genetic
+# correlation matrix) and V_R (its sampling covariance) — matching gsem's
+# run_rgmodel RgModelResult.{r, v_r}. R GenomicSEM's rgmodel reads a full
+# covstruc list(V, S, I, N, m).
+# ---------------------------------------------------------------------------
+cat("=== rgmodel ===\n")
+I_mat <- diag(k)
+N_vec <- rep(50000, k)
+m_snps <- 1000
+covstruc <- list(V = V, S = S, I = I_mat, N = N_vec, m = m_snps)
+rg <- GenomicSEM::rgmodel(covstruc)
+write_fixture(list(
+  s   = mat_to_list(S),
+  v   = mat_to_list(V),
+  r   = mat_to_list(as.matrix(rg$R)),
+  v_r = mat_to_list(as.matrix(rg$V_R))
+), "rgmodel")
+
 cat("\n=== covstruc reference fixtures generated ===\n")
 unlink(list.files(".", pattern = "\\.log$", full.names = TRUE))
