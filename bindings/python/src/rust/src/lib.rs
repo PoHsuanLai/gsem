@@ -1026,7 +1026,7 @@ fn sumstats<'py>(
     keep_indel: bool,
     parallel: bool,
     cores: Option<usize>,
-    ambig: bool,          // ignored
+    ambig: bool,          // R GenomicSEM: TRUE removes ambiguous SNPs (default FALSE keeps)
     direct_filter: bool,  // ignored
     out: &str,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -1048,7 +1048,8 @@ fn sumstats<'py>(
         info_filter,
         maf_filter,
         keep_indel,
-        keep_ambig: ambig,
+        // keep_ambig is the inverse of R's `ambig` (TRUE removes).
+        keep_ambig: !ambig,
         se_logit: se_logit.unwrap_or_else(|| vec![false; k]),
         ols: ols.unwrap_or_else(|| vec![false; k]),
         linprob: linprob.unwrap_or_else(|| vec![false; k]),

@@ -337,6 +337,10 @@ struct SumstatsArgs {
     /// rows will be dropped with a warning at load time.
     #[arg(long)]
     keep_indel: bool,
+    /// Remove strand-ambiguous SNPs (A/T, C/G). Matches R GenomicSEM's
+    /// `ambig` argument: default (unset) KEEPS ambiguous SNPs.
+    #[arg(long)]
+    ambig: bool,
     #[arg(short, long, default_value = "merged_sumstats.tsv")]
     out: PathBuf,
     /// Number of threads for parallel file reads. Defaults to rayon's
@@ -644,7 +648,9 @@ fn run_sumstats(args: SumstatsArgs) -> Result<()> {
         ols: vec![false; k],
         linprob: vec![false; k],
         keep_indel: args.keep_indel,
-        keep_ambig: false,
+        // R GenomicSEM removes ambiguous SNPs only when ambig=TRUE; its
+        // default keeps them. keep_ambig is the inverse of R's `ambig`.
+        keep_ambig: !args.ambig,
         beta_overrides: Vec::new(),
         direct_filter: false,
         num_threads: args.threads,
