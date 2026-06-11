@@ -55,6 +55,15 @@ fn json_to_vec(val: &Value) -> Vec<f64> {
 fn assert_mat_close(a: &Mat<f64>, b: &Mat<f64>, tol: f64, msg: &str) {
     assert_eq!(a.nrows(), b.nrows(), "{msg}: row count mismatch");
     assert_eq!(a.ncols(), b.ncols(), "{msg}: col count mismatch");
+    if std::env::var("MEASURE").is_ok() {
+        let mut md = 0.0_f64;
+        for i in 0..a.nrows() {
+            for j in 0..a.ncols() {
+                md = md.max((a[(i, j)] - b[(i, j)]).abs());
+            }
+        }
+        eprintln!("MEASURE mat {msg}: max|Δ|={md:.3e} (tol={tol:.0e})");
+    }
     for i in 0..a.nrows() {
         for j in 0..a.ncols() {
             let diff = (a[(i, j)] - b[(i, j)]).abs();
@@ -76,6 +85,14 @@ fn assert_vec_close(a: &[f64], b: &[f64], tol: f64, msg: &str) {
         a.len(),
         b.len()
     );
+    if std::env::var("MEASURE").is_ok() {
+        let md = a
+            .iter()
+            .zip(b.iter())
+            .map(|(&av, &bv)| (av - bv).abs())
+            .fold(0.0_f64, f64::max);
+        eprintln!("MEASURE vec {msg}: max|Δ|={md:.3e} (tol={tol:.0e})");
+    }
     for (i, (&av, &bv)) in a.iter().zip(b.iter()).enumerate() {
         let diff = (av - bv).abs();
         assert!(
@@ -83,6 +100,26 @@ fn assert_vec_close(a: &[f64], b: &[f64], tol: f64, msg: &str) {
             "{msg}: [{i}] Rust={av} R={bv} diff={diff} (tol={tol})"
         );
     }
+}
+
+/// Measurement helper: under `MEASURE=1`, record the running max |Δ| per
+/// label and print it (so tolerances can be set from observed precision
+/// rather than guessed). Always returns the diff so call sites stay terse.
+fn meas(label: &str, diff: f64, tol: f64) -> f64 {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+    static MAXES: OnceLock<Mutex<HashMap<String, f64>>> = OnceLock::new();
+    if std::env::var("MEASURE").is_ok() {
+        let m = MAXES.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut g = m.lock().unwrap();
+        let e = g.entry(label.to_string()).or_insert(0.0);
+        if diff > *e {
+            *e = diff;
+            eprintln!("MEASURE2 {label}: max|Δ|={diff:.3e} (tol={tol:.0e})");
+        }
+    }
+    diff
 }
 
 // ── Test Case 1: nearPD ─────────────────────────────────────────────────────
@@ -136,7 +173,7 @@ fn test_cov_to_cor_matches_r() {
     let expected = json_to_mat(&fix["expected"]);
 
     let result = gsem_matrix::smooth::cov_to_cor(&input);
-    assert_mat_close(&result, &expected, 1e-12, "cov_to_cor");
+    assert_mat_close(&result, &expected, 1e-14, "cov_to_cor");
 }
 
 // ── Test Case 4: V_SNP construction ─────────────────────────────────────────
@@ -238,7 +275,7 @@ fn test_v_full_matches_r() {
         gsem::gwas::gc_correction::GcMode::Standard,
         k,
     );
-    assert_mat_close(&result, &expected, 1e-10, "V_Full");
+    assert_mat_close(&result, &expected, 1e-13, "V_Full");
 }
 
 // ── Test Case 7: Z_pre (GC-adjusted Z-scores) ──────────────────────────────
@@ -277,9 +314,9 @@ fn test_z_pre_matches_r() {
     let expected_con = json_to_vec(&fix["conservative"]);
     let expected_none = json_to_vec(&fix["none"]);
 
-    assert_vec_close(&z_std, &expected_std, 1e-10, "Z_pre standard");
-    assert_vec_close(&z_con, &expected_con, 1e-10, "Z_pre conservative");
-    assert_vec_close(&z_none, &expected_none, 1e-10, "Z_pre none");
+    assert_vec_close(&z_std, &expected_std, 1e-13, "Z_pre standard");
+    assert_vec_close(&z_con, &expected_con, 1e-13, "Z_pre conservative");
+    assert_vec_close(&z_none, &expected_none, 1e-13, "Z_pre none");
 }
 
 // ── Test Case 8: SEM fitting ────────────────────────────────────────────────
@@ -329,9 +366,9 @@ fn test_sem_estimates_match_r() {
             .iter()
             .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
         {
-            let diff = (est - r_est.3).abs();
+            let diff = meas("sem1f est", (est - r_est.3).abs(), 1e-6);
             assert!(
-                diff < 0.05,
+                diff < 1e-6,
                 "SEM param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
                 row.lhs,
                 row.op,
@@ -366,9 +403,9 @@ fn test_sem_estimates_match_r() {
         r_sandwich_se.len()
     );
     for (i, (&rust_se, &r_se)) in se_vec.iter().zip(r_sandwich_se.iter()).enumerate() {
-        let diff = (rust_se - r_se).abs();
+        let diff = meas("sem1f SE", (rust_se - r_se).abs(), 1e-6);
         assert!(
-            diff < 0.01,
+            diff < 1e-6,
             "1-factor sandwich SE[{i}]: Rust={rust_se:.6} R={r_se:.6} diff={diff:.6}"
         );
     }
@@ -385,15 +422,15 @@ fn test_sem_estimates_match_r() {
     assert_eq!(df, r_df, "1-factor df mismatch");
 
     let fit_stats = gsem_sem::fit_indices::compute_fit(&s, &sigma_hat, &v, df, n_free, None, None);
-    let chisq_diff = (fit_stats.chisq - r_chisq).abs();
+    let chisq_diff = meas("sem chisq", (fit_stats.chisq - r_chisq).abs(), 1e-10);
     assert!(
-        chisq_diff < 1e-4,
+        chisq_diff < 1e-10,
         "1-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
         fit_stats.chisq
     );
-    let srmr_diff = (fit_stats.srmr - r_srmr).abs();
+    let srmr_diff = meas("sem srmr", (fit_stats.srmr - r_srmr).abs(), 1e-7);
     assert!(
-        srmr_diff < 1e-6,
+        srmr_diff < 1e-7,
         "1-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
         fit_stats.srmr
     );
@@ -468,9 +505,9 @@ fn test_sem_2factor_all_params_match_r() {
             .iter()
             .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
         {
-            let diff = (est - r_est.3).abs();
+            let diff = meas("sem2f est", (est - r_est.3).abs(), 1e-6);
             assert!(
-                diff < 0.05,
+                diff < 1e-6,
                 "2-factor param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
                 row.lhs,
                 row.op,
@@ -505,9 +542,9 @@ fn test_sem_2factor_all_params_match_r() {
         r_sandwich_se.len()
     );
     for (i, (&rust_se, &r_se)) in se_vec.iter().zip(r_sandwich_se.iter()).enumerate() {
-        let diff = (rust_se - r_se).abs();
+        let diff = meas("sem2f SE", (rust_se - r_se).abs(), 1e-6);
         assert!(
-            diff < 0.01,
+            diff < 1e-6,
             "2-factor sandwich SE[{i}]: Rust={rust_se:.6} R={r_se:.6} diff={diff:.6}"
         );
     }
@@ -524,15 +561,15 @@ fn test_sem_2factor_all_params_match_r() {
     assert_eq!(df, r_df, "2-factor df mismatch");
 
     let fit_stats = gsem_sem::fit_indices::compute_fit(&s, &sigma_hat, &v, df, n_free, None, None);
-    let chisq_diff = (fit_stats.chisq - r_chisq).abs();
+    let chisq_diff = meas("sem chisq", (fit_stats.chisq - r_chisq).abs(), 1e-4);
     assert!(
-        chisq_diff < 1e-4,
+        chisq_diff < 1e-10,
         "2-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
         fit_stats.chisq
     );
-    let srmr_diff = (fit_stats.srmr - r_srmr).abs();
+    let srmr_diff = meas("sem srmr", (fit_stats.srmr - r_srmr).abs(), 1e-6);
     assert!(
-        srmr_diff < 1e-6,
+        srmr_diff < 1e-7,
         "2-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
         fit_stats.srmr
     );
@@ -598,9 +635,9 @@ fn test_commonfactor_matches_r() {
     for (rust_p, r_p) in result.parameters.iter().zip(r_params.iter()) {
         assert_eq!(rust_p.lhs, r_p.0, "lhs mismatch");
         assert_eq!(rust_p.rhs, r_p.2, "rhs mismatch");
-        let diff = (rust_p.est - r_p.3).abs();
+        let diff = meas("commonfactor est", (rust_p.est - r_p.3).abs(), 1e-6);
         assert!(
-            diff < 0.02,
+            diff < 1e-6,
             "commonfactor param {}.{}.{}: Rust={:.6} R={:.6} diff={diff:.6}",
             rust_p.lhs,
             rust_p.op,
@@ -617,9 +654,9 @@ fn test_commonfactor_matches_r() {
         .zip(r_sandwich_se.iter())
         .enumerate()
     {
-        let diff = (rust_p.se - r_se).abs();
+        let diff = meas("commonfactor SE", (rust_p.se - r_se).abs(), 1e-7);
         assert!(
-            diff < 0.01,
+            diff < 1e-7,
             "commonfactor SE[{i}]: Rust={:.6} R={r_se:.6} diff={diff:.6}",
             rust_p.se
         );
@@ -629,7 +666,7 @@ fn test_commonfactor_matches_r() {
     assert_mat_close(
         &result.implied_cov,
         &r_implied,
-        1e-6,
+        1e-7,
         "commonfactor implied cov",
     );
 
@@ -641,21 +678,21 @@ fn test_commonfactor_matches_r() {
 
     assert_eq!(result.fit.df, r_df, "commonfactor df mismatch");
 
-    let chisq_diff = (result.fit.chisq - r_chisq).abs();
+    let chisq_diff = meas("cf chisq", (result.fit.chisq - r_chisq).abs(), 1e-10);
     assert!(
-        chisq_diff < 1e-4,
+        chisq_diff < 1e-10,
         "commonfactor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
         result.fit.chisq
     );
-    let cfi_diff = (result.fit.cfi - r_cfi).abs();
+    let cfi_diff = meas("cf cfi", (result.fit.cfi - r_cfi).abs(), 1e-6);
     assert!(
-        cfi_diff < 0.01,
+        cfi_diff < 1e-6,
         "commonfactor CFI: Rust={:.6} R={r_cfi:.6} diff={cfi_diff:.6}",
         result.fit.cfi
     );
-    let srmr_diff = (result.fit.srmr - r_srmr).abs();
+    let srmr_diff = meas("cf srmr", (result.fit.srmr - r_srmr).abs(), 1e-7);
     assert!(
-        srmr_diff < 1e-6,
+        srmr_diff < 1e-7,
         "commonfactor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
         result.fit.srmr
     );
@@ -819,9 +856,9 @@ fn test_commonfactor_gwas_per_snp_match_r() {
         // Common factor orientation is not identified (F1 and -F1 fit equally
         // well), so we compare |est| against |R est|. The SNP effect magnitude
         // is invariant under F1 sign flip.
-        let est_diff = (snp_param.est.abs() - r_est.abs()).abs();
+        let est_diff = meas("cfGWAS |est|", (snp_param.est.abs() - r_est.abs()).abs(), 1e-3);
         assert!(
-            est_diff < 0.002,
+            est_diff < 1e-3,
             "commonfactorGWAS |est| for {}: Rust={:.6} R={r_est:.6} diff={est_diff:.6}",
             r_snp,
             snp_param.est
@@ -960,18 +997,18 @@ fn test_user_gwas_per_snp_match_r() {
             .unwrap_or_else(|| panic!("No F1~SNP parameter for SNP {r_snp}"));
 
         // Common factor orientation is not identified — compare |est|.
-        let est_diff = (snp_param.est.abs() - r_est.abs()).abs();
+        let est_diff = meas("userGWAS |est|", (snp_param.est.abs() - r_est.abs()).abs(), 1e-3);
         assert!(
-            est_diff < 0.01,
+            est_diff < 1e-3,
             "userGWAS |est| for {r_snp}: Rust={:.6} R={r_est:.6} diff={est_diff:.6}",
             snp_param.est
         );
 
         // Also check chisq if available
         if let Some(r_chisq) = r_row["chisq"].as_f64() {
-            let chisq_diff = (rust_res.chisq - r_chisq).abs();
+            let chisq_diff = meas("userGWAS chisq", (rust_res.chisq - r_chisq).abs(), 1e-1);
             assert!(
-                chisq_diff < 0.5,
+                chisq_diff < 1e-1,
                 "userGWAS chisq for {r_snp}: Rust={:.4} R={r_chisq:.4} diff={chisq_diff:.4}",
                 rust_res.chisq
             );
