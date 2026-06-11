@@ -42,6 +42,146 @@ pub struct MultiSnpResult {
     pub converged: bool,
 }
 
+/// Build the augmented `S_Full` (observed covariance) and `V_Full` (sampling
+/// covariance of vech(S_Full)) matrices for a joint multi-SNP analysis.
+///
+/// This is the deterministic core of R GenomicSEM's `multiSNP()`, which returns
+/// these two matrices (the SEM fit is performed separately by `usermodel` /
+/// `userGWAS`). gsem reproduces R's construction exactly:
+///
+/// `S_Full` (total = n_snps + k variables, SNPs first then traits):
+/// - SNP variances on the diagonal (`2*MAF*(1-MAF)`),
+/// - SNP-SNP covariances `LD[i,j]*sqrt(varSNP_i*varSNP_j)`,
+/// - SNP-trait covariances `varSNP*beta`,
+/// - the trait-trait LDSC block `S_LD`.
+///
+/// `V_Full` (kstar_full = total*(total+1)/2), with `SE_SNP2[s,t] = se[s,t] *
+/// I_LD_diag[t] * varSNP[s]` (univariate intercepts clamped to >= 1):
+/// - SNP variances and SNP-SNP covariances: fixed `snp_var_se^2` on the diagonal,
+/// - SNP-trait variances: `SE_SNP2[s,t]^2` on the diagonal,
+/// - off-diagonals between two SNP-trait elements `(sa,ta)` and `(sb,tb)`:
+///   `SE_SNP2[sa,ta]*SE_SNP2[sb,tb] * (I_LD[ta,tb] if ta!=tb) * (LD[sa,sb] if sa!=sb)`,
+/// - the trait-trait block: `V_LD` (last kstar_ld vech elements).
+///
+/// Divergence from R (documented): R's cross-SNP cross-trait block weights every
+/// cell by a single CONSTANT LD value (`LD2[(f^2-f)/2]`, the last lower-triangle
+/// entry) rather than the actual SNP-pair LD — an indexing bug in `multiSNP.R`.
+/// gsem uses the correct per-pair `LD[sa,sb]`; the two agree whenever the
+/// off-diagonal LD is constant.
+#[allow(clippy::too_many_arguments)]
+pub fn build_multi_snp_sv(
+    s_ld: &Mat<f64>,
+    v_ld: &Mat<f64>,
+    i_ld: &Mat<f64>,
+    beta: &[&[f64]],
+    se: &[&[f64]],
+    var_snp: &[f64],
+    ld_matrix: &Mat<f64>,
+    n_snps: usize,
+    snp_var_se_raw: f64,
+) -> (Mat<f64>, Mat<f64>) {
+    let k = s_ld.nrows();
+    let f = n_snps;
+    let total = f + k;
+
+    // ── S_Full ───────────────────────────────────────────────────────────────
+    let mut s_full = Mat::zeros(total, total);
+    for i in 0..f {
+        s_full[(i, i)] = var_snp[i];
+        for j in (i + 1)..f {
+            let cov = ld_matrix[(i, j)] * (var_snp[i] * var_snp[j]).sqrt();
+            s_full[(i, j)] = cov;
+            s_full[(j, i)] = cov;
+        }
+    }
+    for snp_i in 0..f {
+        for t in 0..k {
+            let cov = beta[snp_i][t] * var_snp[snp_i];
+            s_full[(snp_i, f + t)] = cov;
+            s_full[(f + t, snp_i)] = cov;
+        }
+    }
+    for i in 0..k {
+        for j in 0..k {
+            s_full[(f + i, f + j)] = s_ld[(i, j)];
+        }
+    }
+
+    // ── V_Full ───────────────────────────────────────────────────────────────
+    let kstar_full = total * (total + 1) / 2;
+    let kstar_ld = k * (k + 1) / 2;
+    let snp_var_se2 = snp_var_se_raw * snp_var_se_raw;
+
+    // Univariate intercepts clamped to >= 1 (R: diag(I_LD)<-ifelse(<=1,1,.)).
+    let i_diag: Vec<f64> = (0..k).map(|t| i_ld[(t, t)].max(1.0)).collect();
+    // SE_SNP2[snp][trait] = se * I_LD_diag * varSNP.
+    let se_snp2 = |snp: usize, t: usize| -> f64 { se[snp][t] * i_diag[t] * var_snp[snp] };
+
+    // Enumerate vech elements (column-major lower triangle) as (row, col).
+    let mut elems: Vec<(usize, usize)> = Vec::with_capacity(kstar_full);
+    for c in 0..total {
+        for r in c..total {
+            elems.push((r, c));
+        }
+    }
+    // Classify an S_Full element: SNP index if it is a variable < f, else trait.
+    // Returns the SNP-trait pair if the element is a SNP×trait covariance.
+    let snp_trait = |r: usize, c: usize| -> Option<(usize, usize)> {
+        if c < f && r >= f {
+            Some((c, r - f)) // (snp, trait)
+        } else {
+            None
+        }
+    };
+
+    let mut v_full = Mat::zeros(kstar_full, kstar_full);
+
+    // Diagonal.
+    for (a, &(r, c)) in elems.iter().enumerate() {
+        if let Some((snp, t)) = snp_trait(r, c) {
+            v_full[(a, a)] = se_snp2(snp, t).powi(2);
+        } else if r >= f && c >= f {
+            // trait-trait: filled from V_LD below.
+        } else {
+            // SNP variance or SNP-SNP covariance: fixed sampling variance.
+            v_full[(a, a)] = snp_var_se2;
+        }
+    }
+
+    // Off-diagonals between two SNP-trait elements.
+    for a in 0..kstar_full {
+        let (ra, ca) = elems[a];
+        let Some((sa, ta)) = snp_trait(ra, ca) else {
+            continue;
+        };
+        for b in (a + 1)..kstar_full {
+            let (rb, cb) = elems[b];
+            let Some((sb, tb)) = snp_trait(rb, cb) else {
+                continue;
+            };
+            let mut val = se_snp2(sa, ta) * se_snp2(sb, tb);
+            if ta != tb {
+                val *= i_ld[(ta, tb)];
+            }
+            if sa != sb {
+                val *= ld_matrix[(sa, sb)];
+            }
+            v_full[(a, b)] = val;
+            v_full[(b, a)] = val;
+        }
+    }
+
+    // Trait-trait block = V_LD (last kstar_ld vech elements).
+    let offset = kstar_full - kstar_ld;
+    for i in 0..kstar_ld {
+        for j in 0..kstar_ld {
+            v_full[(offset + i, offset + j)] = v_ld[(i, j)];
+        }
+    }
+
+    (s_full, v_full)
+}
+
 /// Run multi-SNP analysis.
 ///
 /// Port of R GenomicSEM's `multiSNP()`.
@@ -56,6 +196,7 @@ pub fn run_multi_snp(
     config: &MultiSnpConfig,
     s_ld: &Mat<f64>,
     v_ld: &Mat<f64>,
+    i_ld: &Mat<f64>,
     beta: &[&[f64]],      // n_snps x k betas (borrowed rows)
     se: &[&[f64]],        // n_snps x k SEs   (borrowed rows)
     var_snp: &[f64],      // n_snps variances
@@ -65,101 +206,12 @@ pub fn run_multi_snp(
     let k = s_ld.nrows();
     let n_snps = snp_names.len();
     let total = n_snps + k;
-
-    // Build augmented S matrix (n_snps + k) x (n_snps + k)
-    let mut s_full = Mat::zeros(total, total);
-
-    // SNP-SNP block: variances on diagonal, LD correlations off-diagonal
-    for i in 0..n_snps {
-        s_full[(i, i)] = var_snp[i];
-        for j in (i + 1)..n_snps {
-            let cov = ld_matrix[(i, j)] * (var_snp[i] * var_snp[j]).sqrt();
-            s_full[(i, j)] = cov;
-            s_full[(j, i)] = cov;
-        }
-    }
-
-    // SNP-trait block
-    for snp_i in 0..n_snps {
-        for t in 0..k {
-            let cov = beta[snp_i][t] * var_snp[snp_i];
-            s_full[(snp_i, n_snps + t)] = cov;
-            s_full[(n_snps + t, snp_i)] = cov;
-        }
-    }
-
-    // Trait-trait block
-    for i in 0..k {
-        for j in 0..k {
-            s_full[(n_snps + i, n_snps + j)] = s_ld[(i, j)];
-        }
-    }
-
-    // Build V_Full (simplified: diagonal approximation for SNP blocks)
     let kstar_full = total * (total + 1) / 2;
-    let mut v_full = Mat::zeros(kstar_full, kstar_full);
 
-    // Copy trait-trait V block
-    let kstar_trait = k * (k + 1) / 2;
-
-    // Map trait V indices to full V indices.
-    // In vech ordering (column-major lower triangle), the trait-trait block
-    // occupies the last kstar_trait elements since traits are the last k
-    // variables in the (n_snps + k) total.
-    // Compute the vech offset for the trait-trait sub-block.
-    let trait_vech_offset = kstar_full - kstar_trait;
-    for i in 0..kstar_trait {
-        for j in 0..kstar_trait {
-            if trait_vech_offset + i < kstar_full && trait_vech_offset + j < kstar_full {
-                v_full[(trait_vech_offset + i, trait_vech_offset + j)] = v_ld[(i, j)];
-            }
-        }
-    }
-
-    // SNP variance elements: small fixed value (or user override)
-    let snp_var_se = config.snp_var_se.unwrap_or(0.0005_f64).powi(2);
-    for i in 0..n_snps {
-        // vech index for diagonal element (i, i) in column-major lower triangle:
-        // For column j, offset = sum_{c=0..j-1} (total - c), then row offset = i - j.
-        // For diagonal (i, i): col=i, row offset=0
-        let idx = vech_index(i, i, total);
-        if idx < kstar_full {
-            v_full[(idx, idx)] = snp_var_se;
-        }
-    }
-
-    // SNP-trait covariance elements: use se^2 * var_snp^2 as approximate variance
-    for (snp_i, var_snp_i) in var_snp.iter().enumerate().take(n_snps) {
-        for t in 0..k {
-            let row_idx = n_snps + t;
-            let col_idx = snp_i;
-            // vech uses lower triangle, so ensure row >= col
-            let (r, c) = if row_idx >= col_idx {
-                (row_idx, col_idx)
-            } else {
-                (col_idx, row_idx)
-            };
-            let idx = vech_index(r, c, total);
-            if idx < kstar_full {
-                let se_val = se
-                    .get(snp_i)
-                    .and_then(|s| s.get(t))
-                    .copied()
-                    .unwrap_or(f64::NAN);
-                v_full[(idx, idx)] = (se_val * var_snp_i).powi(2);
-            }
-        }
-    }
-
-    // SNP-SNP off-diagonal covariance elements: small fixed value
-    for i in 0..n_snps {
-        for j in (i + 1)..n_snps {
-            let idx = vech_index(j, i, total);
-            if idx < kstar_full {
-                v_full[(idx, idx)] = snp_var_se;
-            }
-        }
-    }
+    let snp_var_se = config.snp_var_se.unwrap_or(0.0005_f64);
+    let (s_full, v_full) = build_multi_snp_sv(
+        s_ld, v_ld, i_ld, beta, se, var_snp, ld_matrix, n_snps, snp_var_se,
+    );
 
     // Build observed variable names
     let mut obs_names: Vec<String> = snp_names.to_vec();
@@ -227,6 +279,7 @@ pub fn run_multi_snp(
 
 /// Compute the vech index for element (row, col) in a p x p symmetric matrix.
 /// Assumes row >= col (lower triangle, column-major order).
+#[cfg(test)]
 fn vech_index(row: usize, col: usize, p: usize) -> usize {
     debug_assert!(row >= col, "vech_index requires row >= col");
     // For column c, the offset is: sum_{j=0..c-1} (p - j) = c*p - c*(c-1)/2
@@ -367,8 +420,40 @@ mod tests {
     }
 
     #[test]
+    fn test_build_sv_cross_snp_cross_trait_uses_per_pair_ld() {
+        // gsem's corrected cross-SNP cross-trait block uses the actual SNP-pair
+        // LD (R uses a constant; documented bug). With unequal off-diagonal LD,
+        // the (T1-S1) x (T2-S2) cell must use LD[0,1], not LD[2,1].
+        let s_ld = faer::mat![[0.4, 0.18], [0.18, 0.5]];
+        let i_ld = faer::mat![[1.02, 0.05], [0.05, 1.03]];
+        let v_ld = Mat::from_fn(3, 3, |i, j| if i == j { 1e-4 } else { 0.0 });
+        let beta = [vec![0.03, 0.018], vec![-0.02, 0.025]];
+        let se = [vec![0.006, 0.007], vec![0.005, 0.006]];
+        let var_snp = vec![0.375_f64, 0.48];
+        let ld = faer::mat![[1.0, 0.2], [0.2, 1.0]];
+        let beta_refs: Vec<&[f64]> = beta.iter().map(Vec::as_slice).collect();
+        let se_refs: Vec<&[f64]> = se.iter().map(Vec::as_slice).collect();
+
+        let (_s, v) =
+            build_multi_snp_sv(&s_ld, &v_ld, &i_ld, &beta_refs, &se_refs, &var_snp, &ld, 2, 0.0005);
+
+        // Variables: S1,S2,T1,T2 (total=4). vech idx: 0=S1S1,1=S2S1,2=T1S1,
+        // 3=T2S1,4=S2S2,5=T1S2,6=T2S2,7=T1T1,8=T2T1,9=T2T2.
+        // (T1-S1) is vech idx 2 -> snp0,trait0; (T2-S2) is vech idx 6 -> snp1,trait1.
+        let se_snp2 = |s: usize, t: usize| se[s][t] * i_ld[(t, t)].max(1.0) * var_snp[s];
+        let expected = se_snp2(0, 0) * se_snp2(1, 1) * i_ld[(0, 1)] * ld[(0, 1)];
+        assert!(
+            (v[(2, 6)] - expected).abs() < 1e-15,
+            "cross-SNP cross-trait must use per-pair LD: got {} expected {}",
+            v[(2, 6)],
+            expected
+        );
+    }
+
+    #[test]
     fn test_run_multi_snp_basic() {
         let s_ld = faer::mat![[0.5, 0.2], [0.2, 0.4]];
+        let i_ld = faer::mat![[1.0, 0.0], [0.0, 1.0]];
         let v_ld = Mat::from_fn(3, 3, |i, j| if i == j { 0.001 } else { 0.0 });
         let beta = [vec![0.1, 0.05], vec![0.08, 0.12]];
         let se = [vec![0.02, 0.02], vec![0.02, 0.02]];
@@ -386,7 +471,7 @@ mod tests {
         let beta_refs: Vec<&[f64]> = beta.iter().map(Vec::as_slice).collect();
         let se_refs: Vec<&[f64]> = se.iter().map(Vec::as_slice).collect();
         let result = run_multi_snp(
-            &config, &s_ld, &v_ld, &beta_refs, &se_refs, &var_snp, &ld_matrix, &snp_names,
+            &config, &s_ld, &v_ld, &i_ld, &beta_refs, &se_refs, &var_snp, &ld_matrix, &snp_names,
         );
 
         // Should produce some parameters (even if not converged, we check structure)

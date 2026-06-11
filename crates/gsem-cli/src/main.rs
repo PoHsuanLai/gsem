@@ -1921,6 +1921,7 @@ fn run_multi_snp_cmd(args: MultiSnpArgs) -> Result<()> {
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
+        &ldsc_result.i_mat,
         &beta_snp,
         &se_snp,
         &var_snp,

@@ -2013,6 +2013,7 @@ fn multi_snp<'py>(
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
+        &ldsc_result.i_mat,
         &beta_refs,
         &se_refs,
         &var_snp,
