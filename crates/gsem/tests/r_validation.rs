@@ -575,6 +575,142 @@ fn test_sem_2factor_all_params_match_r() {
     );
 }
 
+// ── Test Case 8c: 1-factor SEM with the ML estimator (different code path) ───
+
+#[test]
+fn test_sem_1factor_ml_matches_r() {
+    let fix = load_fixture("sem_1factor_ml");
+    let s = json_to_mat(&fix["s"]);
+
+    let r_estimates: Vec<(String, String, String, f64)> = fix["estimates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["lhs"].as_str().unwrap().to_string(),
+                e["op"].as_str().unwrap().to_string(),
+                e["rhs"].as_str().unwrap().to_string(),
+                e["est"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+
+    let model_str = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3";
+    let pt = gsem_sem::syntax::parse_model(model_str, false).unwrap();
+    let obs_names: Vec<String> = vec!["V1", "V2", "V3"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+
+    let fit = gsem_sem::estimator::fit_ml(&mut model, &s, 1000, None);
+    assert!(fit.converged, "ML SEM should converge");
+
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    assert_eq!(free_rows.len(), fit.params.len(), "free param count");
+    for (i, row) in free_rows.iter().enumerate() {
+        let est = fit.params[i];
+        let r_est = r_estimates
+            .iter()
+            .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
+            .unwrap_or_else(|| {
+                panic!(
+                    "free param {} {} {} not in R ML ref",
+                    row.lhs, row.op, row.rhs
+                )
+            });
+        let diff = meas("ml est", (est - r_est.3).abs(), 1e-4);
+        assert!(
+            diff < 1e-4,
+            "ML param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
+            row.lhs,
+            row.op,
+            row.rhs,
+            r_est.3
+        );
+    }
+}
+
+// ── Test Case 8d: 3-factor SEM (DWLS), 6 indicators ─────────────────────────
+
+#[test]
+fn test_sem_3factor_matches_r() {
+    let fix = load_fixture("sem_3factor");
+    let s = json_to_mat(&fix["s"]);
+    let v_diag = json_to_vec(&fix["v_diag"]);
+    let v = json_to_mat(&fix["v"]);
+
+    let r_estimates: Vec<(String, String, String, f64)> = fix["estimates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["lhs"].as_str().unwrap().to_string(),
+                e["op"].as_str().unwrap().to_string(),
+                e["rhs"].as_str().unwrap().to_string(),
+                e["est"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+
+    let model_str = "F1 =~ NA*V1 + V2\nF2 =~ NA*V3 + V4\nF3 =~ NA*V5 + V6\n\
+                     F1 ~~ 1*F1\nF2 ~~ 1*F2\nF3 ~~ 1*F3\nF1 ~~ F2\nF1 ~~ F3\nF2 ~~ F3\n\
+                     V1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3\nV4 ~~ V4\nV5 ~~ V5\nV6 ~~ V6";
+    let pt = gsem_sem::syntax::parse_model(model_str, false).unwrap();
+    let obs_names: Vec<String> = (1..=6).map(|i| format!("V{i}")).collect();
+    let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+
+    let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000, None);
+    assert!(fit.converged, "3-factor SEM should converge");
+
+    let free_rows: Vec<_> = pt.rows.iter().filter(|r| r.free > 0).collect();
+    assert_eq!(free_rows.len(), fit.params.len(), "free param count");
+    for (i, row) in free_rows.iter().enumerate() {
+        let est = fit.params[i];
+        let r_est = r_estimates
+            .iter()
+            .find(|(l, o, r, _)| *l == row.lhs && *o == row.op.to_string() && *r == row.rhs)
+            .unwrap_or_else(|| {
+                panic!("free param {} {} {} not in R ref", row.lhs, row.op, row.rhs)
+            });
+        let diff = meas("sem3f est", (est - r_est.3).abs(), 1e-6);
+        assert!(
+            diff < 1e-6,
+            "3-factor param {} {} {}: Rust={est:.6} R={:.6} diff={diff:.6}",
+            row.lhs,
+            row.op,
+            row.rhs,
+            r_est.3
+        );
+    }
+
+    // Fit indices against R.
+    let kstar = 6 * 7 / 2;
+    let r_fit = &fix["fit_indices"];
+    let r_chisq = r_fit["chisq"].as_f64().unwrap();
+    let r_df = r_fit["df"].as_f64().unwrap() as usize;
+    let r_srmr = r_fit["srmr"].as_f64().unwrap();
+    let sigma_hat = model.implied_cov();
+    let n_free = model.n_free();
+    let df = kstar - n_free;
+    assert_eq!(df, r_df, "3-factor df mismatch");
+    let fit_stats = gsem_sem::fit_indices::compute_fit(&s, &sigma_hat, &v, df, n_free, None, None);
+    let chisq_diff = meas("sem3f chisq", (fit_stats.chisq - r_chisq).abs(), 1e-4);
+    assert!(
+        chisq_diff < 1e-4,
+        "3-factor chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.6}",
+        fit_stats.chisq
+    );
+    let srmr_diff = meas("sem3f srmr", (fit_stats.srmr - r_srmr).abs(), 1e-6);
+    assert!(
+        srmr_diff < 1e-6,
+        "3-factor SRMR: Rust={:.10} R={r_srmr:.10} diff={srmr_diff:.10}",
+        fit_stats.srmr
+    );
+}
+
 // ── Test Case 9: V reorder ──────────────────────────────────────────────────
 
 #[test]

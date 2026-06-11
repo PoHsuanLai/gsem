@@ -36,6 +36,11 @@ next version is cut.
   running R GenomicSEM (`tests/generate_synthetic_reference.R`).
   Previously only the data-dependent bench script covered these.
 
+- **R-equivalence coverage for `summaryGLS` and `paLDSC`** (observed
+  eigenvalue spectrum) via `tests/generate_covstruc_reference.R`, plus
+  **ML-estimator and 3-factor SEM** cases — broadening the estimator and
+  model-size combinations checked against R.
+
 - **Tightened R-validation tolerances** to observed precision (SEM /
   commonfactor estimates now checked at 1e-6 vs the prior 5e-2; fit
   indices at 1e-10), with a `MEASURE=1` env-gated max-diff tracker.

@@ -392,6 +392,76 @@ if (!is.null(fit_2f)) {
   cat("Skipping 2-factor fixture\n")
 }
 
+# ============================================================
+# Test Case 11: 1-factor SEM fit with ML (different estimator path)
+# ============================================================
+cat("=== 1-factor ML ===\n")
+# sample.cov.rescale=FALSE so lavaan fits the raw S (no (N-1)/N rescaling),
+# matching gsem's fit_ml — isolates ML estimator/objective equivalence.
+fit_ml <- tryCatch(
+  sem("F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3",
+      sample.cov = S_sem, estimator = "ML", sample.nobs = 200,
+      sample.cov.rescale = FALSE),
+  error = function(e) { cat("ML fit failed:", e$message, "\n"); NULL }
+)
+if (!is.null(fit_ml)) {
+  pe_ml <- parameterEstimates(fit_ml)
+  free_ml <- pe_ml[pe_ml$op %in% c("=~", "~~") & pe_ml$se > 0, ]
+  write_fixture(list(
+    s     = mat_to_list(S_sem),
+    model = "F1 =~ NA*V1 + V2 + V3\nF1 ~~ 1*F1\nV1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3",
+    estimates = lapply(seq_len(nrow(free_ml)), function(i) list(
+      lhs = free_ml$lhs[i], op = free_ml$op[i], rhs = free_ml$rhs[i],
+      est = free_ml$est[i]
+    ))
+  ), "sem_1factor_ml")
+}
+
+# ============================================================
+# Test Case 12: 3-factor SEM (DWLS), 6 indicators, 2 per factor
+# ============================================================
+cat("=== 3-factor SEM ===\n")
+lam <- c(0.7, 0.6, 0.65, 0.55, 0.6, 0.5)
+phi <- matrix(c(1, 0.3, 0.2, 0.3, 1, 0.35, 0.2, 0.35, 1), 3, 3)
+L3 <- matrix(0, 6, 3)
+L3[1, 1] <- lam[1]; L3[2, 1] <- lam[2]
+L3[3, 2] <- lam[3]; L3[4, 2] <- lam[4]
+L3[5, 3] <- lam[5]; L3[6, 3] <- lam[6]
+S_3f <- L3 %*% phi %*% t(L3)
+diag(S_3f) <- diag(S_3f) + c(0.30, 0.40, 0.35, 0.45, 0.40, 0.50)
+colnames(S_3f) <- rownames(S_3f) <- paste0("V", 1:6)
+kstar_3f <- 6 * 7 / 2  # 21
+V_3f <- diag(kstar_3f) * 0.001
+model_3f <- "F1 =~ NA*V1 + V2\nF2 =~ NA*V3 + V4\nF3 =~ NA*V5 + V6\n\
+F1 ~~ 1*F1\nF2 ~~ 1*F2\nF3 ~~ 1*F3\nF1 ~~ F2\nF1 ~~ F3\nF2 ~~ F3\n\
+V1 ~~ V1\nV2 ~~ V2\nV3 ~~ V3\nV4 ~~ V4\nV5 ~~ V5\nV6 ~~ V6"
+W_3f <- solve(diag(as.numeric(diag(V_3f)), nrow = kstar_3f))
+fit_3f <- tryCatch(
+  sem(model_3f, sample.cov = S_3f, estimator = "DWLS", WLS.V = W_3f,
+      sample.nobs = 200, se = "standard", optim.dx.tol = 0.01),
+  error = function(e) { cat("3-factor fit failed:", e$message, "\n"); NULL }
+)
+if (!is.null(fit_3f)) {
+  pe_3f <- parameterEstimates(fit_3f)
+  free_3f <- pe_3f[pe_3f$op %in% c("=~", "~~") & pe_3f$se > 0, ]
+  fm_3f <- fitMeasures(fit_3f, c("chisq", "df", "srmr"))
+  write_fixture(list(
+    s      = mat_to_list(S_3f),
+    v      = mat_to_list(V_3f),
+    v_diag = as.numeric(diag(V_3f)),
+    model  = model_3f,
+    estimates = lapply(seq_len(nrow(free_3f)), function(i) list(
+      lhs = free_3f$lhs[i], op = free_3f$op[i], rhs = free_3f$rhs[i],
+      est = free_3f$est[i]
+    )),
+    fit_indices = list(
+      chisq = as.numeric(fm_3f["chisq"]),
+      df    = as.numeric(fm_3f["df"]),
+      srmr  = as.numeric(fm_3f["srmr"])
+    )
+  ), "sem_3factor")
+}
+
 cat("\n=== All fixtures generated ===\n")
 cat("Files in", outdir, ":\n")
 cat(paste(" ", list.files(outdir)), sep = "\n")
