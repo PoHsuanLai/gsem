@@ -1328,6 +1328,85 @@ fn enrich_rust(
     )
 }
 
+/// Model-based functional enrichment (R GenomicSEM's `enrich`). Fits the
+/// model to a baseline annotation, fixes the regressions/loadings (per
+/// `fix`), re-fits per annotation, and returns per-(annotation, parameter)
+/// enrichment with SE and 1-sided p. `s_list[0]`/`v_list[0]` is the baseline.
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn enrich_model_rust(
+    s_list: List,
+    v_list: List,
+    prop: Vec<f64>,
+    obs_names: Vec<String>,
+    annot_names: Vec<String>,
+    model: &str,
+    params: Vec<String>,
+    fix: &str,
+) -> List {
+    ensure_logger();
+    let parse_mats = |list: &List, label: &str| -> Result<Vec<faer::Mat<f64>>> {
+        list.values()
+            .enumerate()
+            .map(|(i, obj)| {
+                conversions::robj_to_mat(&obj)
+                    .map_err(|e| Error::Other(format!("{label}[{}]: {e}", i + 1)))
+            })
+            .collect()
+    };
+    let s_mats = match parse_mats(&s_list, "S") {
+        Ok(v) => v,
+        Err(e) => return conversions::error_list(e.to_string()),
+    };
+    let v_mats = match parse_mats(&v_list, "V") {
+        Ok(v) => v,
+        Err(e) => return conversions::error_list(e.to_string()),
+    };
+    let fix_mode = match fix {
+        "covariances" => gsem_sem::enrich_model::FixMode::Covariances,
+        "variances" => gsem_sem::enrich_model::FixMode::Variances,
+        _ => gsem_sem::enrich_model::FixMode::Regressions,
+    };
+    let res = match gsem_sem::enrich_model::model_enrichment(
+        &s_mats,
+        &v_mats,
+        &prop,
+        &annot_names,
+        &obs_names,
+        model,
+        &params,
+        fix_mode,
+        gsem_sem::EstimationMethod::Dwls,
+    ) {
+        Ok(r) => r,
+        Err(e) => return conversions::error_list(e.to_string()),
+    };
+
+    // Flatten to per-(annotation, parameter) rows.
+    let n_annot = res.annotations.len();
+    let mut out_annot = Vec::new();
+    let mut out_param = Vec::new();
+    let mut out_enr = Vec::new();
+    let mut out_se = Vec::new();
+    let mut out_p = Vec::new();
+    for (pi, pk) in res.params.iter().enumerate() {
+        for a in 0..n_annot {
+            out_annot.push(res.annotations[a].clone());
+            out_param.push(pk.clone());
+            out_enr.push(res.enrichment[pi][a]);
+            out_se.push(res.se[pi][a]);
+            out_p.push(res.p[pi][a]);
+        }
+    }
+    list!(
+        annotation = out_annot,
+        parameter = out_param,
+        enrichment = out_enr,
+        enrichment_se = out_se,
+        enrichment_p = out_p
+    )
+}
+
 /// Simulate GWAS summary statistics.
 ///
 /// Returns an `RMatrix<f64>` of simulated Z-scores with shape `k × n_snps`.
@@ -1507,6 +1586,7 @@ extendr_module! {
     fn hdl_rust;
     fn s_ldsc_rust;
     fn enrich_rust;
+    fn enrich_model_rust;
     fn sim_ldsc_rust;
     fn multi_snp_rust;
     fn multi_gene_rust;

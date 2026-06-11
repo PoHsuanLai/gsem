@@ -36,6 +36,20 @@ next version is cut.
   extract the off-diagonal vech block, matching R's shape and ordering (so
   the bindings now return R's shape too). (`crates/gsem-sem/src/rgmodel.rs`)
 
+- **`enrich` model-based functional enrichment.** gsem's `enrich`
+  (`enrichment_test`) computed the classic LDSC heritability-enrichment ratio
+  (`prop_h²/prop_SNPs`, the original Finucane statistic), not R GenomicSEM's
+  model-based `enrich`. R fits a SEM to a baseline annotation, fixes the
+  regressions/loadings (per `fix`) to their baseline estimates, re-fits each
+  annotation freeing the remaining parameters, and reports per-parameter
+  `enrichment = (est_annot/est_baseline)/Prop` with SE and a 1-sided p-value.
+  Added `gsem_sem::enrich_model::model_enrichment` (+ a shared `gsem_sem::fit`
+  helper) implementing this with the regressions/covariances/variances fix
+  modes, wired through the R binding (`enrich(s_covstruc, model, params, fix)`)
+  and the Python binding (`model_enrichment`). Validated against live R
+  GenomicSEM on a factor-variance covstruc. gsem's classic ratio is retained
+  as `enrichment_test`. (`crates/gsem-sem/src/enrich_model.rs`)
+
 - **`s_ldsc` overlap-weighted partitioned heritability.** Stratified LDSC
   returned per-annotation `S` as the raw coefficient contribution `tau · M`
   (R's `S_Tau`), missing R's overlap weighting. R computes each category's

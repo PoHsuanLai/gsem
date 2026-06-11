@@ -1839,6 +1839,76 @@ fn enrich<'py>(
     Ok(out)
 }
 
+/// Model-based functional enrichment (R GenomicSEM's `enrich`). Fits `model`
+/// to the baseline annotation (`s_list[0]`/`v_list[0]`), fixes the
+/// regressions/loadings (per `fix`), re-fits each annotation, and returns
+/// per-(annotation, parameter) enrichment = (est_annot/est_base)/prop with
+/// SE and 1-sided p.
+#[pyfunction]
+#[pyo3(signature = (s_list, v_list, prop, obs_names, annotation_names, model, params, fix="regressions"))]
+#[allow(clippy::too_many_arguments)]
+fn model_enrichment<'py>(
+    py: Python<'py>,
+    s_list: &Bound<'py, PyAny>,
+    v_list: &Bound<'py, PyAny>,
+    prop: Vec<f64>,
+    obs_names: Vec<String>,
+    annotation_names: Vec<String>,
+    model: &str,
+    params: Vec<String>,
+    fix: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let extract_mats = |obj: &Bound<'_, PyAny>, label: &str| -> PyResult<Vec<faer::Mat<f64>>> {
+        let mut mats = Vec::new();
+        for (i, item) in obj.try_iter()?.enumerate() {
+            let item = item?;
+            let arr: PyReadonlyArray2<'_, f64> = item.extract().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("{label}[{i}]: {e}"))
+            })?;
+            mats.push(pyarray_to_mat(&arr));
+        }
+        Ok(mats)
+    };
+    let s_mats = extract_mats(s_list, "s_list")?;
+    let v_mats = extract_mats(v_list, "v_list")?;
+    let fix_mode = match fix {
+        "covariances" => gsem_sem::enrich_model::FixMode::Covariances,
+        "variances" => gsem_sem::enrich_model::FixMode::Variances,
+        _ => gsem_sem::enrich_model::FixMode::Regressions,
+    };
+    let res = gsem_sem::enrich_model::model_enrichment(
+        &s_mats,
+        &v_mats,
+        &prop,
+        &annotation_names,
+        &obs_names,
+        model,
+        &params,
+        fix_mode,
+        gsem_sem::EstimationMethod::Dwls,
+    )
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+
+    let (mut a_out, mut p_out, mut e_out, mut se_out, mut pv_out) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (pi, pk) in res.params.iter().enumerate() {
+        for a in 0..res.annotations.len() {
+            a_out.push(res.annotations[a].clone());
+            p_out.push(pk.clone());
+            e_out.push(res.enrichment[pi][a]);
+            se_out.push(res.se[pi][a]);
+            pv_out.push(res.p[pi][a]);
+        }
+    }
+    let out = PyDict::new(py);
+    out.set_item("annotation", a_out)?;
+    out.set_item("parameter", p_out)?;
+    out.set_item("enrichment", e_out)?;
+    out.set_item("enrichment_se", se_out)?;
+    out.set_item("enrichment_p", pv_out)?;
+    Ok(out)
+}
+
 /// Simulate GWAS summary statistics.
 ///
 /// Returns a NumPy 2D array of simulated Z-scores with shape `k × n_snps`.
@@ -2065,6 +2135,7 @@ fn genomicsem(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hdl, m)?)?;
     m.add_function(wrap_pyfunction!(s_ldsc, m)?)?;
     m.add_function(wrap_pyfunction!(enrich, m)?)?;
+    m.add_function(wrap_pyfunction!(model_enrichment, m)?)?;
     m.add_function(wrap_pyfunction!(sim_ldsc, m)?)?;
     m.add_function(wrap_pyfunction!(multi_snp, m)?)?;
     m.add_function(wrap_pyfunction!(multi_gene, m)?)?;
