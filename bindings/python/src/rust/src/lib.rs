@@ -1678,6 +1678,19 @@ fn s_ldsc<'py>(
         }
     }
 
+    // Overlap cross-product (from .annot.gz membership + .frq) for R's
+    // overlap-weighted partitioned heritability. Requires the frq dir.
+    let mut annot_cross = if !frq.is_empty() {
+        gsem_ldsc::annot_reader::read_annot_cross(
+            std::path::Path::new(ld),
+            std::path::Path::new(frq),
+            &chromosomes,
+        )
+        .ok()
+    } else {
+        None
+    };
+
     // Filter out continuous annotations if exclude_cont is true
     if exclude_cont {
         let n_snps = annot_data.annot_ld.nrows();
@@ -1713,6 +1726,11 @@ fn s_ldsc<'py>(
             annot_data.annot_ld = new_annot_ld;
             annot_data.annotation_names = new_names;
             annot_data.m_annot = new_m;
+            annot_cross = annot_cross.map(|c| {
+                faer::Mat::from_fn(kept_indices.len(), kept_indices.len(), |i, j| {
+                    c[(kept_indices[i], kept_indices[j])]
+                })
+            });
         }
     }
 
@@ -1737,6 +1755,7 @@ fn s_ldsc<'py>(
                 &config,
                 Some(&annot_data.chr),
                 Some(&annot_data.bp),
+                annot_cross.as_ref(),
             )
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;

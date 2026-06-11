@@ -468,6 +468,10 @@ struct SLdscArgs {
     ld: PathBuf,
     #[arg(long)]
     wld: Option<PathBuf>,
+    /// Directory of `.frq` allele-frequency files. Required for R's
+    /// overlap-weighted partitioned heritability (otherwise raw tau is used).
+    #[arg(long)]
+    frq: Option<PathBuf>,
     #[arg(long, default_value = "200")]
     n_blocks: usize,
     #[arg(long, default_value = "22")]
@@ -821,6 +825,11 @@ fn run_s_ldsc(args: SLdscArgs) -> Result<()> {
         flank_kb: 500,
     };
 
+    // Overlap cross-product for R's overlap-weighted partitioned heritability.
+    let annot_cross = args.frq.as_ref().and_then(|frq| {
+        gsem_ldsc::annot_reader::read_annot_cross(&args.ld, frq, &chromosomes).ok()
+    });
+
     eprintln!("Running stratified LDSC...");
     let result = gsem_ldsc::stratified::s_ldsc(
         &trait_data,
@@ -834,6 +843,7 @@ fn run_s_ldsc(args: SLdscArgs) -> Result<()> {
         &config,
         Some(&annot_data.chr),
         Some(&annot_data.bp),
+        annot_cross.as_ref(),
     )?;
 
     // Write JSON output

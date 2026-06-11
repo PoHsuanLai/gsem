@@ -1181,6 +1181,15 @@ fn s_ldsc_rust(
         }
     }
 
+    // Annotation overlap cross-product (from .annot.gz membership + .frq),
+    // needed for R's overlap-weighted partitioned heritability. Requires frq.
+    let mut annot_cross = if !frq_dir.is_empty() {
+        gsem_ldsc::annot_reader::read_annot_cross(ld, std::path::Path::new(frq_dir), &chromosomes)
+            .ok()
+    } else {
+        None
+    };
+
     // Filter out continuous annotations if exclude_cont is true
     if exclude_cont {
         let n_snps = annot_data.annot_ld.nrows();
@@ -1216,6 +1225,12 @@ fn s_ldsc_rust(
             annot_data.annot_ld = new_annot_ld;
             annot_data.annotation_names = new_names;
             annot_data.m_annot = new_m;
+            // Keep the overlap cross-product aligned with surviving annotations.
+            annot_cross = annot_cross.map(|c| {
+                faer::Mat::from_fn(kept_indices.len(), kept_indices.len(), |i, j| {
+                    c[(kept_indices[i], kept_indices[j])]
+                })
+            });
         }
     }
 
@@ -1237,12 +1252,17 @@ fn s_ldsc_rust(
         &config,
         Some(&annot_data.chr),
         Some(&annot_data.bp),
+        annot_cross.as_ref(),
     ) {
         Ok(result) => {
             let s_annot_list =
                 List::from_values(result.s_annot.iter().map(conversions::mat_to_rmatrix));
             let v_annot_list =
                 List::from_values(result.v_annot.iter().map(conversions::mat_to_rmatrix));
+            let s_tau_list =
+                List::from_values(result.s_tau.iter().map(conversions::mat_to_rmatrix));
+            let v_tau_list =
+                List::from_values(result.v_tau.iter().map(conversions::mat_to_rmatrix));
             list!(
                 annotations = result.annotations,
                 m_annot = result.m_annot,
@@ -1250,7 +1270,9 @@ fn s_ldsc_rust(
                 prop = result.prop,
                 I = conversions::mat_to_rmatrix(&result.i_mat),
                 S_annot = s_annot_list,
-                V_annot = v_annot_list
+                V_annot = v_annot_list,
+                S_Tau = s_tau_list,
+                V_Tau = v_tau_list
             )
         }
         Err(e) => conversions::error_list(e.to_string()),

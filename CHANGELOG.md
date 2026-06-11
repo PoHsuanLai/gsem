@@ -36,6 +36,21 @@ next version is cut.
   extract the off-diagonal vech block, matching R's shape and ordering (so
   the bindings now return R's shape too). (`crates/gsem-sem/src/rgmodel.rs`)
 
+- **`s_ldsc` overlap-weighted partitioned heritability.** Stratified LDSC
+  returned per-annotation `S` as the raw coefficient contribution `tau · M`
+  (R's `S_Tau`), missing R's overlap weighting. R computes each category's
+  partitioned (co)heritability as `S = overlap · (tau · M)`, where
+  `overlap[f,a] = M(f,a)/M_a` and `M(f,a)` is the number of SNPs in both
+  annotations `f` and `a` (from the `.annot.gz` membership + `.frq` MAF
+  filter). These agree only for disjoint annotations and diverge for the
+  realistic overlapping baselineLD model. Added a `.annot.gz`/`.frq`
+  cross-product reader and applied the overlap transform to both `S` and the
+  jackknife-based `V`; the result now exposes `s_annot`/`v_annot` (R's
+  `S`/`V`) and `s_tau`/`v_tau` (R's `S_Tau`/`V_Tau`). Threaded through the R
+  binding, Python binding, and CLI (new `--frq` flag). Validated against R
+  on synthetic overlapping annotations.
+  (`crates/gsem-ldsc/src/stratified.rs`, `crates/gsem-ldsc/src/annot_reader.rs`)
+
 ### Added
 
 - **In-CI R-equivalence coverage for the LDSC half** (`ldsc`, `munge`,

@@ -19,10 +19,15 @@ use crate::weights;
 pub struct StratifiedLdscResult {
     /// Annotation names.
     pub annotations: Vec<String>,
-    /// Per-annotation S matrices (k x k genetic covariance). Length = n_annot.
+    /// Per-annotation S matrices (k x k genetic covariance), overlap-weighted
+    /// partitioned heritability (`overlap · cats`) — matches R's `S`. Length = n_annot.
     pub s_annot: Vec<Mat<f64>>,
-    /// Per-annotation V matrices (kstar x kstar sampling covariance). Length = n_annot.
+    /// Per-annotation V matrices (kstar x kstar sampling covariance) of `s_annot`.
     pub v_annot: Vec<Mat<f64>>,
+    /// Per-annotation raw coefficient contributions `tau · M` (R's `S_Tau`).
+    pub s_tau: Vec<Mat<f64>>,
+    /// Sampling covariance of `s_tau` (R's `V_Tau`).
+    pub v_tau: Vec<Mat<f64>>,
     /// Intercept matrix (k x k), same as standard LDSC.
     pub i_mat: Mat<f64>,
     /// Per-annotation M counts (number of SNPs in each annotation).
@@ -80,6 +85,7 @@ pub fn s_ldsc(
     config: &StratifiedLdscConfig,
     snp_chr: Option<&[u32]>,
     snp_bp: Option<&[u64]>,
+    annot_cross: Option<&Mat<f64>>,
 ) -> Result<StratifiedLdscResult> {
     let k = traits.len();
     let n_annot = annot_names.len();
@@ -266,8 +272,10 @@ pub fn s_ldsc(
         }
     }
 
-    // Construct V matrices per annotation from jackknife pseudo-values
-    let v_annot: Vec<Mat<f64>> = (0..n_annot)
+    // Raw per-annotation contributions (R's S_Tau): s_annot/all_pseudos as
+    // computed by the partitioned regression (cats = tau · M).
+    let s_tau = s_annot.clone();
+    let v_tau: Vec<Mat<f64>> = (0..n_annot)
         .map(|a| {
             crate::jackknife::construct_v_matrix(
                 &all_pseudos_per_annot[a],
@@ -278,17 +286,69 @@ pub fn s_ldsc(
         })
         .collect();
 
-    // Apply liability scale if prevalences provided
+    // Overlap-weighted partitioned heritability (R's S): for each category f,
+    //   S[f] = Σ_a overlap[f,a] · cats[a],   overlap[f,a] = M(f,a) / M_a.
+    // The transform is linear, so apply it to the point estimates AND the
+    // jackknife pseudo-values, then rebuild V from the transformed pseudos.
+    let (s_annot, v_annot) = if let Some(cross) = annot_cross {
+        // overlap[f,a] = cross[f,a] / m_annot[a]
+        let overlap = Mat::from_fn(n_annot, n_annot, |f, a| {
+            if m_annot[a].abs() > 1e-30 {
+                cross[(f, a)] / m_annot[a]
+            } else {
+                0.0
+            }
+        });
+
+        // S[f] = Σ_a overlap[f,a] · s_tau[a]   (per matrix cell)
+        let s_overlap: Vec<Mat<f64>> = (0..n_annot)
+            .map(|f| {
+                Mat::from_fn(k, k, |i, j| {
+                    (0..n_annot)
+                        .map(|a| overlap[(f, a)] * s_tau[a][(i, j)])
+                        .sum()
+                })
+            })
+            .collect();
+
+        // pseudo_final[f][e][t] = Σ_a overlap[f,a] · raw_pseudo[a][e][t]
+        let v_overlap: Vec<Mat<f64>> = (0..n_annot)
+            .map(|f| {
+                let pseudos_f: Vec<Vec<f64>> = (0..kstar)
+                    .map(|e| {
+                        (0..n_blocks)
+                            .map(|t| {
+                                (0..n_annot)
+                                    .map(|a| overlap[(f, a)] * all_pseudos_per_annot[a][e][t])
+                                    .sum::<f64>()
+                            })
+                            .collect()
+                    })
+                    .collect();
+                crate::jackknife::construct_v_matrix(&pseudos_f, n_blocks, &n_vec, m_total)
+            })
+            .collect();
+        (s_overlap, v_overlap)
+    } else {
+        // No annotation membership → identity overlap → S == S_Tau, V == V_Tau.
+        (s_annot, v_tau.clone())
+    };
+
+    // Apply liability scale if prevalences provided (to both S and S_Tau).
+    let mut s_annot = s_annot;
+    let mut s_tau = s_tau;
     for a in 0..n_annot {
-        let mut partial_result = crate::LdscResult {
-            s: s_annot[a].to_owned(),
-            v: v_annot[a].to_owned(),
-            i_mat: i_mat.to_owned(),
-            n_vec: n_vec.clone(),
-            m: m_total,
-        };
-        crate::liability::apply_liability_scale(&mut partial_result, sample_prev, pop_prev);
-        s_annot[a] = partial_result.s;
+        for (s_list, v_list) in [(&mut s_annot, &v_annot), (&mut s_tau, &v_tau)] {
+            let mut partial = crate::LdscResult {
+                s: s_list[a].to_owned(),
+                v: v_list[a].to_owned(),
+                i_mat: i_mat.to_owned(),
+                n_vec: n_vec.clone(),
+                m: m_total,
+            };
+            crate::liability::apply_liability_scale(&mut partial, sample_prev, pop_prev);
+            s_list[a] = partial.s;
+        }
     }
 
     let prop: Vec<f64> = m_annot.iter().map(|&m| m / m_total).collect();
@@ -297,6 +357,8 @@ pub fn s_ldsc(
         annotations: annot_names.to_vec(),
         s_annot,
         v_annot,
+        s_tau,
+        v_tau,
         i_mat,
         m_annot: m_annot.to_vec(),
         m_total,
@@ -596,6 +658,26 @@ impl StratifiedLdscResult {
             }
             write!(out, "{}", mat_to_json(v))?;
         }
+        writeln!(out, "],")?;
+
+        // s_tau (raw per-annotation tau·M, R's S_Tau)
+        write!(out, "  \"s_tau\": [")?;
+        for (i, s) in self.s_tau.iter().enumerate() {
+            if i > 0 {
+                write!(out, ", ")?;
+            }
+            write!(out, "{}", mat_to_json(s))?;
+        }
+        writeln!(out, "],")?;
+
+        // v_tau (sampling cov of s_tau, R's V_Tau)
+        write!(out, "  \"v_tau\": [")?;
+        for (i, v) in self.v_tau.iter().enumerate() {
+            if i > 0 {
+                write!(out, ", ")?;
+            }
+            write!(out, "{}", mat_to_json(v))?;
+        }
         writeln!(out, "]")?;
 
         out.push('}');
@@ -716,6 +798,7 @@ mod tests {
             &config,
             None,
             None,
+            None,
         )
         .expect("s_ldsc should succeed");
 
@@ -796,6 +879,8 @@ mod tests {
             annotations: vec!["a1".to_string(), "a2".to_string()],
             s_annot: vec![faer::mat![[0.5]], faer::mat![[0.3]]],
             v_annot: vec![faer::mat![[0.01]], faer::mat![[0.02]]],
+            s_tau: vec![faer::mat![[0.5]], faer::mat![[0.3]]],
+            v_tau: vec![faer::mat![[0.01]], faer::mat![[0.02]]],
             i_mat: faer::mat![[1.0]],
             m_annot: vec![500000.0, 300000.0],
             m_total: 800000.0,
