@@ -100,5 +100,40 @@ write_fixture(list(
   v_r = mat_to_list(as.matrix(rg$V_R))
 ), "rgmodel")
 
+# ---------------------------------------------------------------------------
+# write.model: factor -> indicator assignment. R emits random residual-
+# variance labels (non-deterministic) and a different identification format
+# than gsem, so we compare the deterministic part: which indicators load on
+# which factor given the cutoff (|loading| > cutoff). Parse R's =~ lines.
+# ---------------------------------------------------------------------------
+cat("=== write.model ===\n")
+Lw <- matrix(c(0.80, 0.70, 0.10, 0.05, 0.00,
+               0.00, 0.10, 0.75, 0.65, 0.55), ncol = 2)
+rownames(Lw) <- paste0("V", 1:5)
+Sw <- diag(5); colnames(Sw) <- rownames(Sw) <- paste0("V", 1:5)
+cutoff_w <- 0.3
+model_str <- GenomicSEM::write.model(Lw, Sw, cutoff = cutoff_w)
+# Parse "F1=~V1 + V2" lines into factor -> indicators.
+lines <- strsplit(model_str, "\n")[[1]]
+facmap <- list()
+for (ln in lines) {
+  ln <- trimws(ln)
+  if (grepl("=~", ln)) {
+    parts <- strsplit(ln, "=~")[[1]]
+    fac <- trimws(parts[1])
+    inds <- trimws(strsplit(parts[2], "\\+")[[1]])
+    inds <- gsub("NA\\*", "", inds)
+    facmap[[fac]] <- inds
+  }
+}
+write_fixture(list(
+  loadings = mat_to_list(Lw),
+  names    = rownames(Lw),
+  cutoff   = cutoff_w,
+  factors  = names(facmap),
+  # one indicator list per factor, in factor order
+  indicators = unname(facmap)
+), "write_model")
+
 cat("\n=== covstruc reference fixtures generated ===\n")
 unlink(list.files(".", pattern = "\\.log$", full.names = TRUE))

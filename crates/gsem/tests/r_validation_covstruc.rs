@@ -124,6 +124,65 @@ fn test_rgmodel_matches_r() {
     }
 }
 
+// ── write.model: factor -> indicator assignment ─────────────────────────────
+
+#[test]
+fn test_write_model_structure_matches_r() {
+    let fix = load_fixture("write_model");
+    let loadings = json_to_mat(&fix["loadings"]);
+    let names: Vec<String> = fix["names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let cutoff = fix["cutoff"].as_f64().unwrap();
+
+    // R defaults: fix_resid=TRUE, bifactor=FALSE, mustload=FALSE, common=FALSE.
+    let model =
+        gsem_sem::write_model::write_model(&loadings, &names, cutoff, true, false, false, false);
+
+    // Parse "F.. =~ NA*Va + Vb" lines into factor -> indicators (gsem's format
+    // differs from R's — NA* markers, fixed factor variance — but the
+    // factor->indicator assignment is the deterministic, comparable part).
+    let mut fac: Vec<String> = Vec::new();
+    let mut inds: Vec<Vec<String>> = Vec::new();
+    for line in model.lines() {
+        let line = line.trim();
+        if let Some((lhs, rhs)) = line.split_once("=~") {
+            // Skip a bifactor/common "Common_F" line if present (not here).
+            fac.push(lhs.trim().to_string());
+            let list: Vec<String> = rhs
+                .split('+')
+                .map(|t| t.trim().replace("NA*", "").trim().to_string())
+                .collect();
+            inds.push(list);
+        }
+    }
+
+    let r_fac: Vec<String> = fix["factors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let r_inds: Vec<Vec<String>> = fix["indicators"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(fac, r_fac, "write.model factor names");
+    assert_eq!(inds, r_inds, "write.model factor->indicator assignment");
+}
+
 // ── paLDSC: observed eigenvalue spectrum ────────────────────────────────────
 
 #[test]
