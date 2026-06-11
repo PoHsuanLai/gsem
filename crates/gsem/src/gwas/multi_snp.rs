@@ -370,8 +370,8 @@ mod tests {
     fn test_run_multi_snp_basic() {
         let s_ld = faer::mat![[0.5, 0.2], [0.2, 0.4]];
         let v_ld = Mat::from_fn(3, 3, |i, j| if i == j { 0.001 } else { 0.0 });
-        let beta = vec![vec![0.1, 0.05], vec![0.08, 0.12]];
-        let se = vec![vec![0.02, 0.02], vec![0.02, 0.02]];
+        let beta = [vec![0.1, 0.05], vec![0.08, 0.12]];
+        let se = [vec![0.02, 0.02], vec![0.02, 0.02]];
         let var_snp = vec![0.3, 0.25];
         let ld_matrix = faer::mat![[1.0, 0.3], [0.3, 1.0]];
         let snp_names = vec!["SNP1".to_string(), "SNP2".to_string()];

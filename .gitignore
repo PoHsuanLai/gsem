@@ -44,6 +44,10 @@ src/*.dll
 *.sumstats.gz
 *.rds
 *_ldsc.log
+
+# ...but the committed synthetic LDSC fixtures ARE tracked (the
+# r_validation_ldsc tests need them in CI).
+!tests/fixtures/synth/*.sumstats.gz
 merged_sumstats.tsv
 ldsc_result.json
 sem_result.tsv

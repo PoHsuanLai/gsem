@@ -9,6 +9,10 @@ repository.workspace = true
 [[bin]]
 name = "gsem"
 path = "src/main.rs"
+# The binary is named `gsem`, which collides with the `gsem` library crate's
+# rustdoc output dir (target/doc/gsem) under `cargo doc --workspace`. The CLI
+# has no public API worth rendering, so skip documenting the binary target.
+doc = false
 
 [dependencies]
 gsem = { workspace = true, features = ["plot"] }
