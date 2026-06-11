@@ -97,8 +97,7 @@ fn test_ldsc_synth_matches_r() {
     // Mirror the binding's orchestration (bindings/r/src/rust/src/lib.rs).
     let trait_data = gsem::io::gwas_reader::load_trait_data(&munged).unwrap();
     let chromosomes: Vec<usize> = (1..=chr).collect();
-    let ld_data =
-        gsem::io::ld_reader::read_ld_scores(&ld_dir, &ld_dir, &chromosomes).unwrap();
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&ld_dir, &ld_dir, &chromosomes).unwrap();
     let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
     let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
 
@@ -202,8 +201,20 @@ fn test_munge_synth_matches_r() {
         let rec = by_snp
             .get(r_snp[idx].as_str())
             .unwrap_or_else(|| panic!("munge: SNP {} missing from Rust output", r_snp[idx]));
-        assert_close(rec.z, r_z[idx], 1e-5, 1e-6, &format!("munge Z {}", r_snp[idx]));
-        assert_close(rec.n, r_n[idx], 1e-9, 0.0, &format!("munge N {}", r_snp[idx]));
+        assert_close(
+            rec.z,
+            r_z[idx],
+            1e-5,
+            1e-6,
+            &format!("munge Z {}", r_snp[idx]),
+        );
+        assert_close(
+            rec.n,
+            r_n[idx],
+            1e-9,
+            0.0,
+            &format!("munge N {}", r_snp[idx]),
+        );
         assert_eq!(rec.a1, r_a1[idx], "munge A1 for {}", r_snp[idx]);
         assert_eq!(rec.a2, r_a2[idx], "munge A2 for {}", r_snp[idx]);
     }
@@ -270,23 +281,48 @@ fn test_sumstats_synth_matches_r() {
         r_snp.len()
     );
 
-    // This test validates the parts of `sumstats` gsem is responsible for
-    // and that are unambiguously equivalent to R: the merged SNP set (join +
-    // QC + ambiguous handling) and the reference-aligned alleles. The
-    // numeric beta/se standardization is checked separately (and is
-    // currently a known gap — see test_sumstats_standardized_betas_match_r).
+    // Full equivalence to R for the default OLS mode: merged SNP set, the
+    // reference-aligned alleles, and the standardized betas/SEs
+    // (beta = Z/sqrt(N*varSNP), se = 1/sqrt(N*varSNP)). The sign of beta can
+    // flip relative to R when A1/A2 orientation differs, so compare |beta|.
     let mut compared = 0;
     for idx in 0..r_snp.len() {
         let Some(&ri) = by_snp.get(&r_snp[idx]) else {
             panic!("sumstats: SNP {} missing from Rust output", r_snp[idx]);
         };
-        assert_eq!(merged.a1_string(ri), r_a1[idx], "sumstats A1 {}", r_snp[idx]);
-        assert_eq!(merged.a2_string(ri), r_a2[idx], "sumstats A2 {}", r_snp[idx]);
+        assert_eq!(
+            merged.a1_string(ri),
+            r_a1[idx],
+            "sumstats A1 {}",
+            r_snp[idx]
+        );
+        assert_eq!(
+            merged.a2_string(ri),
+            r_a2[idx],
+            "sumstats A2 {}",
+            r_snp[idx]
+        );
+        let beta = merged.beta_row(ri);
+        let se = merged.se_row(ri);
+        for t in 0..k {
+            assert_close(
+                beta[t].abs(),
+                r_beta[(idx, t)].abs(),
+                1e-7,
+                1e-5,
+                &format!("sumstats OLS |beta| {} trait {t}", r_snp[idx]),
+            );
+            assert_close(
+                se[t],
+                r_se[(idx, t)],
+                1e-7,
+                1e-5,
+                &format!("sumstats OLS se {} trait {t}", r_snp[idx]),
+            );
+        }
         compared += 1;
     }
     assert!(compared > 100, "too few SNPs compared: {compared}");
-    // Touch the beta/se accessors so the merge output shape is exercised.
-    let _ = (k, r_beta.nrows(), r_se.nrows());
 }
 
 /// Regression test for the `ambig` semantics. R GenomicSEM's `sumstats`
@@ -370,18 +406,12 @@ fn test_sumstats_ambiguous_semantics() {
     );
 }
 
-/// Strict R-parity target for `sumstats`: gsem's merged betas/SEs should
-/// equal R GenomicSEM's standardized output exactly. This is currently
-/// IGNORED because gsem's `sumstats` does not yet implement R's
-/// OLS/linprob/se.logit standardization — it writes the raw input beta/SE,
-/// whereas R writes beta = Z/sqrt(N*varSNP), se = 1/sqrt(N*varSNP) (OLS).
-/// The two relate by a sqrt(varSNP) factor, so the standardization-invariant
-/// quantity beta/se (== Z) matches, but the absolute scale does not — and
-/// userGWAS consumes the absolute scale via cov(SNP,trait)=var_snp*beta.
-/// Un-ignore once gsem `sumstats` applies the standardization (matching R).
+/// Validate every one of R GenomicSEM's `sumstats` standardization modes
+/// (OLS, linprob, se.logit, and the default "none") against R, formula for
+/// formula, on the same synthetic raw files. The reference for each mode is
+/// produced by running R `sumstats` with the corresponding flags.
 #[test]
-#[ignore = "gsem sumstats does not yet implement R's OLS/linprob/se.logit standardization"]
-fn test_sumstats_standardized_betas_match_r() {
+fn test_sumstats_all_modes_match_r() {
     let fix = load_fixture("sumstats_synth");
     let dir = fixtures_dir();
     let raw: Vec<PathBuf> = json_to_strs(&fix["raw_files"])
@@ -393,50 +423,71 @@ fn test_sumstats_standardized_betas_match_r() {
     let trait_names = json_to_strs(&fix["trait_names"]);
     let n = json_to_vec(&fix["n"]);
     let k = trait_names.len();
-    let config = gsem::sumstats::SumstatsConfig {
-        info_filter: 0.0,
-        maf_filter: 0.01,
-        n_overrides: n.iter().map(|&x| Some(x)).collect(),
-        se_logit: vec![false; k],
-        ols: vec![true; k],
-        linprob: vec![false; k],
-        keep_indel: false,
-        keep_ambig: true,
-        beta_overrides: vec![None; k],
-        direct_filter: false,
-        num_threads: Some(1),
-    };
-    let tmp = std::env::temp_dir().join(format!("gsem_ss_std_{}.tsv", std::process::id()));
-    gsem::sumstats::merge_sumstats(&raw_refs, &ref_file, &trait_names, &config, &tmp).unwrap();
-    let merged = gsem::io::sumstats_reader::read_merged_sumstats(&tmp).unwrap();
-    let _ = std::fs::remove_file(&tmp);
-
-    let mut by_snp: HashMap<String, usize> = HashMap::new();
-    for i in 0..merged.len() {
-        by_snp.insert(merged.snp[i].clone(), i);
-    }
     let r_snp = json_to_strs(&fix["snp"]);
-    let r_beta = json_to_mat(&fix["beta"]);
-    let r_se = json_to_mat(&fix["se"]);
-    for idx in 0..r_snp.len() {
-        let ri = by_snp[&r_snp[idx]];
-        let beta = merged.beta_row(ri);
-        let se = merged.se_row(ri);
-        for t in 0..k {
-            assert_close(
-                beta[t].abs(),
-                r_beta[(idx, t)].abs(),
-                1e-7,
-                1e-5,
-                &format!("sumstats |beta| {} trait {t}", r_snp[idx]),
-            );
-            assert_close(
-                se[t],
-                r_se[(idx, t)],
-                1e-7,
-                1e-5,
-                &format!("sumstats se {} trait {t}", r_snp[idx]),
-            );
+
+    // (mode name, ols, linprob, se_logit)
+    let modes = [
+        ("ols", true, false, false),
+        ("linprob", false, true, false),
+        ("se_logit", false, false, true),
+        ("none", false, false, false),
+    ];
+
+    for (name, ols, linprob, se_logit) in modes {
+        let config = gsem::sumstats::SumstatsConfig {
+            info_filter: 0.0,
+            maf_filter: 0.01,
+            n_overrides: n.iter().map(|&x| Some(x)).collect(),
+            se_logit: vec![se_logit; k],
+            ols: vec![ols; k],
+            linprob: vec![linprob; k],
+            keep_indel: false,
+            keep_ambig: true,
+            beta_overrides: vec![None; k],
+            direct_filter: false,
+            num_threads: Some(1),
+        };
+        let tmp = std::env::temp_dir().join(format!("gsem_ss_{name}_{}.tsv", std::process::id()));
+        gsem::sumstats::merge_sumstats(&raw_refs, &ref_file, &trait_names, &config, &tmp).unwrap();
+        let merged = gsem::io::sumstats_reader::read_merged_sumstats(&tmp).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+
+        let mut by_snp: HashMap<String, usize> = HashMap::new();
+        for i in 0..merged.len() {
+            by_snp.insert(merged.snp[i].clone(), i);
+        }
+        let r_beta = json_to_mat(&fix["modes"][name]["beta"]);
+        let r_se = json_to_mat(&fix["modes"][name]["se"]);
+
+        assert_eq!(
+            merged.len(),
+            r_snp.len(),
+            "[{name}] SNP count: Rust={} R={}",
+            merged.len(),
+            r_snp.len()
+        );
+
+        for idx in 0..r_snp.len() {
+            let ri = by_snp[&r_snp[idx]];
+            let beta = merged.beta_row(ri);
+            let se = merged.se_row(ri);
+            for t in 0..k {
+                // Sign may flip with A1/A2 orientation; compare |beta|.
+                assert_close(
+                    beta[t].abs(),
+                    r_beta[(idx, t)].abs(),
+                    1e-7,
+                    1e-5,
+                    &format!("[{name}] |beta| {} trait {t}", r_snp[idx]),
+                );
+                assert_close(
+                    se[t],
+                    r_se[(idx, t)],
+                    1e-7,
+                    1e-5,
+                    &format!("[{name}] se {} trait {t}", r_snp[idx]),
+                );
+            }
         }
     }
 }

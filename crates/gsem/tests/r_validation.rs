@@ -856,7 +856,11 @@ fn test_commonfactor_gwas_per_snp_match_r() {
         // Common factor orientation is not identified (F1 and -F1 fit equally
         // well), so we compare |est| against |R est|. The SNP effect magnitude
         // is invariant under F1 sign flip.
-        let est_diff = meas("cfGWAS |est|", (snp_param.est.abs() - r_est.abs()).abs(), 1e-3);
+        let est_diff = meas(
+            "cfGWAS |est|",
+            (snp_param.est.abs() - r_est.abs()).abs(),
+            1e-3,
+        );
         assert!(
             est_diff < 1e-3,
             "commonfactorGWAS |est| for {}: Rust={:.6} R={r_est:.6} diff={est_diff:.6}",
@@ -997,7 +1001,11 @@ fn test_user_gwas_per_snp_match_r() {
             .unwrap_or_else(|| panic!("No F1~SNP parameter for SNP {r_snp}"));
 
         // Common factor orientation is not identified — compare |est|.
-        let est_diff = meas("userGWAS |est|", (snp_param.est.abs() - r_est.abs()).abs(), 1e-3);
+        let est_diff = meas(
+            "userGWAS |est|",
+            (snp_param.est.abs() - r_est.abs()).abs(),
+            1e-3,
+        );
         assert!(
             est_diff < 1e-3,
             "userGWAS |est| for {r_snp}: Rust={:.6} R={r_est:.6} diff={est_diff:.6}",

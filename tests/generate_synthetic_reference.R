@@ -229,32 +229,59 @@ write_fixture(list(
 # ---------------------------------------------------------------------------
 # 6. Run R GenomicSEM sumstats -> merged per-SNP betas/SEs reference
 # ---------------------------------------------------------------------------
-cat("=== sumstats ===\n")
-r_ss <- suppressMessages(GenomicSEM::sumstats(
-  files       = raw_paths,
-  ref         = file.path(synthdir, "reference.txt.gz"),
-  trait.names = trait_names,
-  se.logit    = rep(FALSE, n_traits),
-  OLS         = rep(TRUE, n_traits),
-  linprob     = rep(FALSE, n_traits),
-  N           = Nj,
-  betas       = NULL,
-  info.filter = 0.0,
-  maf.filter  = 0.01
-))
-r_ss <- r_ss[order(r_ss$SNP), ]
-beta_cols <- grep("^beta\\.", colnames(r_ss), value = TRUE)
-se_cols   <- grep("^se\\.",   colnames(r_ss), value = TRUE)
+cat("=== sumstats (all standardization modes) ===\n")
+# Run R sumstats once per standardization mode on the SAME raw files. The
+# synthetic effects are continuous, so linprob/se.logit/none are not
+# biologically meaningful here — but R and gsem apply identical formulas, so
+# this still validates formula-for-formula equivalence of every mode.
+run_mode <- function(ols, linprob, se_logit) {
+  r <- suppressMessages(GenomicSEM::sumstats(
+    files       = raw_paths,
+    ref         = file.path(synthdir, "reference.txt.gz"),
+    trait.names = trait_names,
+    se.logit    = rep(se_logit, n_traits),
+    OLS         = rep(ols, n_traits),
+    linprob     = rep(linprob, n_traits),
+    N           = Nj,
+    betas       = NULL,
+    info.filter = 0.0,
+    maf.filter  = 0.01
+  ))
+  r <- r[order(r$SNP), ]
+  beta_cols <- grep("^beta\\.", colnames(r), value = TRUE)
+  se_cols   <- grep("^se\\.",   colnames(r), value = TRUE)
+  list(r = r, beta = beta_cols, se = se_cols)
+}
+
+modes <- list(
+  ols     = run_mode(TRUE,  FALSE, FALSE),
+  linprob = run_mode(FALSE, TRUE,  FALSE),
+  se_logit= run_mode(FALSE, FALSE, TRUE),
+  none    = run_mode(FALSE, FALSE, FALSE)
+)
+# All modes operate on the same merged SNP set / alleles.
+base <- modes$ols$r
+mode_fixture <- function(m) list(
+  beta = mat_to_list(as.matrix(m$r[, m$beta])),
+  se   = mat_to_list(as.matrix(m$r[, m$se]))
+)
 write_fixture(list(
   raw_files    = paste0("synth/", trait_names, ".raw.gz"),
   ref_file     = "synth/reference.txt.gz",
   trait_names  = trait_names,
   n            = Nj,
-  snp          = r_ss$SNP,
-  a1           = toupper(r_ss$A1),
-  a2           = toupper(r_ss$A2),
-  beta         = mat_to_list(as.matrix(r_ss[, beta_cols])),
-  se           = mat_to_list(as.matrix(r_ss[, se_cols]))
+  snp          = base$SNP,
+  a1           = toupper(base$A1),
+  a2           = toupper(base$A2),
+  # Back-compat: top-level beta/se are the OLS mode.
+  beta         = mat_to_list(as.matrix(modes$ols$r[, modes$ols$beta])),
+  se           = mat_to_list(as.matrix(modes$ols$r[, modes$ols$se])),
+  modes        = list(
+    ols      = mode_fixture(modes$ols),
+    linprob  = mode_fixture(modes$linprob),
+    se_logit = mode_fixture(modes$se_logit),
+    none     = mode_fixture(modes$none)
+  )
 ), "sumstats_synth")
 
 # GenomicSEM munge/sumstats write *.log files into the working dir; remove
