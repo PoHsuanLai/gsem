@@ -183,6 +183,72 @@ fn test_write_model_structure_matches_r() {
     assert_eq!(inds, r_inds, "write.model factor->indicator assignment");
 }
 
+// ── enrich: model-based functional enrichment ───────────────────────────────
+
+#[test]
+fn test_enrich_matches_r() {
+    let fix = load_fixture("enrich_synth");
+    let s_list: Vec<Mat<f64>> = fix["s"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(json_to_mat)
+        .collect();
+    let v_list: Vec<Mat<f64>> = fix["v"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(json_to_mat)
+        .collect();
+    let prop = json_to_vec(&fix["prop"]);
+    let obs_names: Vec<String> = fix["traits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let annot_names: Vec<String> = fix["annot_names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let model = fix["model"].as_str().unwrap();
+    let params: Vec<String> = fix["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+
+    let r_enrich = json_to_vec(&fix["enrichment"]);
+    let r_se = json_to_vec(&fix["enrichment_se"]);
+    let r_p = json_to_vec(&fix["enrichment_p"]);
+
+    let res = gsem_sem::enrich_model::model_enrichment(
+        &s_list,
+        &v_list,
+        &prop,
+        &annot_names,
+        &obs_names,
+        model,
+        &params,
+        gsem_sem::enrich_model::FixMode::Regressions,
+        gsem_sem::EstimationMethod::Dwls,
+    )
+    .expect("enrich should run");
+
+    // Single target param (F1~~F1); compare per-annotation enrichment/SE/p.
+    let enr = &res.enrichment[0];
+    let se = &res.se[0];
+    let p = &res.p[0];
+    for a in 0..annot_names.len() {
+        assert_close(enr[a], r_enrich[a], 1e-4, &format!("enrichment annot {a}"));
+        assert_close(se[a], r_se[a], 1e-5, &format!("enrichment_se annot {a}"));
+        assert_close(p[a], r_p[a], 1e-4, &format!("enrichment_p annot {a}"));
+    }
+}
+
 // ── paLDSC: observed eigenvalue spectrum ────────────────────────────────────
 
 #[test]
