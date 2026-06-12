@@ -188,7 +188,10 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: bindings/r
-          extra-packages: any::jsonlite, any::rcmdcheck
+          # testthat is needed because the package now ships a tests/testthat
+          # parity suite; R CMD check runs it (the tests skip themselves when
+          # the repo fixtures aren't present, but the package must still load).
+          extra-packages: any::jsonlite, any::rcmdcheck, any::testthat
       - uses: actions/download-artifact@v4
         with:
           name: r-source
