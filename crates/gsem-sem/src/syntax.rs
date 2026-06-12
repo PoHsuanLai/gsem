@@ -253,13 +253,21 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
 
         for name in &latents {
             if !has_variance.contains(name) {
-                free_counter += 1;
+                // Under std.lv the factor scale is set by fixing its variance to
+                // 1 (lavaan std.lv=TRUE: auto.fix.first=FALSE + latent var fixed
+                // to 1). Otherwise the latent variance is a free parameter.
+                let (free, value) = if std_lv {
+                    (0, 1.0)
+                } else {
+                    free_counter += 1;
+                    (free_counter, 0.0)
+                };
                 rows.push(ParRow {
                     lhs: name.clone(),
                     op: Op::Covariance,
                     rhs: name.clone(),
-                    free: free_counter,
-                    value: 0.0,
+                    free,
+                    value,
                     label: None,
                     expression: None,
                     lower_bound: None,

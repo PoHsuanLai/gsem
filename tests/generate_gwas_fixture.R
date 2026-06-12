@@ -280,15 +280,25 @@ extract_user_snp_effects <- function(res) {
   })
 }
 
-run_user_variant <- function(label, ...) {
+run_user_variant <- function(label, ..., model = user_model) {
   cat("  userGWAS variant:", label, "...\n")
   res <- tryCatch(
     GenomicSEM::userGWAS(covstruc = r_cov, SNPs = snps_subset,
-                         model = user_model, parallel = FALSE, ...),
+                         model = model, parallel = FALSE, ...),
     error = function(e) { cat("    (", label, " failed: ", e$message, ")\n"); NULL }
   )
   extract_user_snp_effects(res)
 }
+
+# std.lv variant uses a std.lv-style model: the first loading is FREE (no NA*
+# prefix) and the factor variance is identified by std.lv=TRUE instead of a
+# fixed "F1 ~~ 1*F1" constraint. The comparable quantity is still the F1~SNP
+# regression effect (loadings get SE=NA under std.lv, but the SNP effect does
+# not). Mirrors Rust `parse_model(model, std_lv=true)`.
+std_lv_model <- paste0(
+  "F1 =~ ", trait_names[1], " + ", trait_names[2], " + ", trait_names[3], "\n",
+  "F1 ~ SNP\nSNP ~~ SNP"
+)
 
 options_fixture <- list(
   # estimation = "ML" (baseline is DWLS) → EstimationMethod::Ml
@@ -299,6 +309,9 @@ options_fixture <- list(
   gc_none        = run_user_variant("gc_none", GC = "none")
   # Q_SNP heterogeneity statistic → compute_q_snp (Rust q_snp.rs, currently 0%)
   , q_snp        = run_user_variant("q_snp", Q_SNP = TRUE)
+  # std.lv=TRUE: factor scale set by fixing the factor variance to 1 internally
+  # rather than fixing the first loading → parse_model(..., std_lv=true).
+  , std_lv       = run_user_variant("std_lv", std.lv = TRUE, model = std_lv_model)
   # NB: fix_measurement=FALSE is NOT included — on this 3-trait / sample.nobs=2
   # subset R's free-measurement fit is computationally singular (reciprocal
   # condition ~2e-17), so there is no R reference to compare against. The
@@ -312,6 +325,7 @@ options_fixture$i_mat       <- fixture$i_mat
 options_fixture$trait_names <- trait_names
 options_fixture$snps        <- fixture$snps
 options_fixture$model       <- user_model
+options_fixture$std_lv_model <- std_lv_model
 
 setwd(file.path("..", "tests"))
 opath <- file.path(outdir, "gwas_options.json")

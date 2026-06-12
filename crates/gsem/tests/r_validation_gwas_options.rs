@@ -9,6 +9,8 @@
 //!   * GC = "conserv"             → `GcMode::Conservative`
 //!   * GC = "none"                → `GcMode::None`
 //!   * Q_SNP = TRUE               → `q_snp::compute_q_snp` (the heterogeneity stat)
+//!   * std.lv = TRUE              → `parse_model(.., std_lv=true)` (factor scaled
+//!                                  by fixing its variance, first loading freed)
 //!
 //! (fix_measurement=FALSE is intentionally absent: R's free-measurement fit is
 //! computationally singular on this subset, so there is no reference to match.)
@@ -78,6 +80,7 @@ struct Inputs {
     v: Mat<f64>,
     i_mat: Mat<f64>,
     model: String,
+    std_lv_model: String,
     beta_snp: Vec<Vec<f64>>,
     se_snp: Vec<Vec<f64>>,
     var_snp: Vec<f64>,
@@ -89,6 +92,7 @@ fn load_inputs(fix: &Value) -> Inputs {
     let v = json_to_mat(&fix["v"]);
     let i_mat = json_to_mat(&fix["i_mat"]);
     let model = fix["model"].as_str().unwrap().to_string();
+    let std_lv_model = fix["std_lv_model"].as_str().unwrap().to_string();
 
     let snps_arr = fix["snps"].as_array().unwrap();
     let mut beta_snp = Vec::new();
@@ -107,6 +111,7 @@ fn load_inputs(fix: &Value) -> Inputs {
         v,
         i_mat,
         model,
+        std_lv_model,
         beta_snp,
         se_snp,
         var_snp,
@@ -116,7 +121,18 @@ fn load_inputs(fix: &Value) -> Inputs {
 
 /// Build a UserGwasConfig off the baseline, applying one mutation closure.
 fn config_for(model_str: &str, mutate: impl FnOnce(&mut UserGwasConfig)) -> UserGwasConfig {
-    let pt = parse_model(model_str, false).unwrap();
+    config_for_with(model_str, false, mutate)
+}
+
+/// Like `config_for`, but parses the model with the given `std_lv` flag so the
+/// std.lv variant (free first loading, factor variance identified by the flag)
+/// is built exactly as R's `userGWAS(std.lv=TRUE)` does.
+fn config_for_with(
+    model_str: &str,
+    std_lv: bool,
+    mutate: impl FnOnce(&mut UserGwasConfig),
+) -> UserGwasConfig {
+    let pt = parse_model(model_str, std_lv).unwrap();
     let mut cfg = UserGwasConfig {
         model: pt,
         estimation: EstimationMethod::Dwls,
@@ -306,4 +322,19 @@ fn test_user_gwas_q_snp_matches_r() {
         n_q >= 10,
         "Too few SNPs had a comparable Q_SNP value ({n_q}); the statistic may not be wired"
     );
+}
+
+// ── std.lv = TRUE ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_user_gwas_std_lv_matches_r() {
+    let fix = load_fixture("gwas_options");
+    let inp = load_inputs(&fix);
+    let r_rows = fix["std_lv"].as_array().unwrap();
+    // The std.lv model frees the first loading and identifies the factor via
+    // std_lv=true (no fixed loading, no "F1 ~~ 1*F1"). The F1~SNP effect is on a
+    // different scale than the baseline model, so we compare against R's own
+    // std.lv reference rather than the baseline.
+    let cfg = config_for_with(&inp.std_lv_model, true, |_| {});
+    assert_est_parity(&inp, r_rows, &cfg, 1e-3, "userGWAS[std.lv]");
 }
