@@ -434,8 +434,9 @@ mod tests {
         let beta_refs: Vec<&[f64]> = beta.iter().map(Vec::as_slice).collect();
         let se_refs: Vec<&[f64]> = se.iter().map(Vec::as_slice).collect();
 
-        let (_s, v) =
-            build_multi_snp_sv(&s_ld, &v_ld, &i_ld, &beta_refs, &se_refs, &var_snp, &ld, 2, 0.0005);
+        let (_s, v) = build_multi_snp_sv(
+            &s_ld, &v_ld, &i_ld, &beta_refs, &se_refs, &var_snp, &ld, 2, 0.0005,
+        );
 
         // Variables: S1,S2,T1,T2 (total=4). vech idx: 0=S1S1,1=S2S1,2=T1S1,
         // 3=T2S1,4=S2S2,5=T1S2,6=T2S2,7=T1T1,8=T2T1,9=T2T2.

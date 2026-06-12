@@ -577,7 +577,6 @@ fn minimize_2d(
     (x[0], x[1])
 }
 
-
 /// Negative log-likelihood for h2 estimation.
 /// L = sum(log(lamh2)) + sum(bstar^2 / lamh2)
 fn h2_neg_loglik(
