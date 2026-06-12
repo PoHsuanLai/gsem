@@ -2,9 +2,23 @@
 
 Rust-accelerated drop-in replacement for [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM). Same functions, same arguments, 2–100x faster.
 
-> See [`/API_COMPAT.md`](../../API_COMPAT.md) for parameter compatibility
-> with R GenomicSEM and [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) for
-> algorithmic and performance notes.
+## Documentation
+
+`gsemr` mirrors R GenomicSEM's API, so the original project's tutorials apply
+directly — for conceptual guides (model specification, common-factor GWAS,
+stratified enrichment, T-SEM) see the
+**[GenomicSEM wiki](https://github.com/GenomicSEM/GenomicSEM/wiki)**.
+
+The [**gsemr documentation site**](https://pohsuanlai.github.io/gsem/)
+documents what is specific to the Rust port:
+
+- [Function reference](https://pohsuanlai.github.io/gsem/reference/index.html)
+  — every exported function.
+- [Compatibility](https://pohsuanlai.github.io/gsem/articles/compatibility.html)
+  — which R GenomicSEM parameters are implemented vs. accepted as stubs.
+- [Architecture](https://pohsuanlai.github.io/gsem/articles/architecture.html)
+  — why it's faster and where its algorithms / numerical outputs differ from
+  R GenomicSEM.
 
 ## Install
 
@@ -59,8 +73,8 @@ All 18 R GenomicSEM functions are implemented:
 > **Note on `commonfactorGWAS`:** gsemr's `commonfactorGWAS` matches
 > R `GenomicSEM::userGWAS` on the equivalent single-factor model, but
 > does **not** numerically match R `GenomicSEM::commonfactorGWAS`, which
-> uses a different internal parameterization. See
-> [`ARCHITECTURE.md` §3.3](../../ARCHITECTURE.md#33-commonfactorgwas-parameterization)
+> uses a different internal parameterization. See the
+> [Architecture article](https://pohsuanlai.github.io/gsem/articles/architecture.html)
 > for the full rationale. A one-time runtime warning is emitted on first
 > use and can be suppressed via `options(gsemr.commonfactorGWAS.quiet = TRUE)`.
 

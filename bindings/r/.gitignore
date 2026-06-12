@@ -8,3 +8,7 @@ src/rust/target/
 # pkgdown generates the site into docs/; CI builds and publishes it to the
 # gh-pages branch, so it is not committed to the source tree.
 docs/
+
+# Article vignettes are generated from the repo-root *.md by
+# tools/build-vignettes.R (single source of truth), so they are not committed.
+vignettes/*.Rmd

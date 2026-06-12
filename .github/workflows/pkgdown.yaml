@@ -36,6 +36,13 @@ jobs:
           r-version: release
           use-public-rspm: true
 
+      # Generate the compatibility/architecture article vignettes from the
+      # repo-root markdown (single source of truth) before the package is
+      # resolved and the site is built.
+      - name: Generate article vignettes
+        working-directory: bindings/r
+        run: Rscript tools/build-vignettes.R
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: bindings/r
