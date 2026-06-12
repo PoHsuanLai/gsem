@@ -58,6 +58,8 @@ jobs:
       #   after Phase 5 : lines 75.6% regions 76.5% branch 61.2% (write.model + rgmodel sub)
       #   gap-closure   : lines 75.7% regions 76.7% branch 72.1% (std.lv fix, stand/select/
       #                   ambig, misspecified CFI, twas/enrich/paLDSC-diag branches)
+      #   new ports     : lines 76.1% regions 76.9% branch 73.0% (read_fusion, subSV,
+      #                   summaryGLSbands numeric core — all R-validated)
       # Floors sit just below current so CI is green; raise them as tests land.
       - name: Enforce coverage floor
         run: cargo llvm-cov report --fail-under-lines 75 --fail-under-regions 76
