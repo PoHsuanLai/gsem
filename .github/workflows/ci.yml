@@ -32,6 +32,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      # Branch coverage is the headline drop-in metric; region% is the gate
+      # (cargo-llvm-cov gates reliably on lines/regions, tracks branch%).
+      # Floors are ratcheted upward as the test suite grows — see
+      # .claude/plans / CHANGELOG for the phased coverage plan.
+      - name: Coverage summary (with branch)
+        run: cargo llvm-cov --workspace --branch --summary-only
+      - name: Generate lcov report
+        run: cargo llvm-cov --workspace --branch --lcov --output-path lcov.info
+      # Coverage ratchet (workspace-wide, bumped per phase of the coverage plan):
+      #   session start : lines 72.5% regions 73.0% branch 58.6%
+      #   after Phase 1 : lines 73.1% regions 73.6% branch 59.4% (GWAS options + Q_SNP)
+      #   after Phase 3 : lines 74.6% regions 75.3% branch 59.6% (io writer/hdl_reader)
+      #   after Phase 4 : lines 74.7% regions 75.4% branch 60.1% (ldsc liability + chisq.max)
+      #   after Phase 5 : lines 75.6% regions 76.5% branch 61.2% (write.model + rgmodel sub)
+      # Floors sit just below current so CI is green; raise them as tests land.
+      - name: Enforce coverage floor
+        run: cargo llvm-cov report --fail-under-lines 75 --fail-under-regions 76
+      - name: Upload lcov artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-coverage
+          path: lcov.info
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -88,17 +121,51 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: bindings/r
-          extra-packages: any::jsonlite
+          extra-packages: |
+            any::jsonlite
+            any::testthat
       - name: Build Rust staticlib
         working-directory: bindings/r/src/rust
         run: cargo build --release
-      - name: R CMD check
+      - name: Install gsemr
         working-directory: bindings/r
         run: |
           cp src/rust/target/release/libgsemr.a src/
           R CMD INSTALL .
         env:
           _R_CHECK_FORCE_SUGGESTS_: false
+      - name: Run parity tests (vs R-reference fixtures)
+        working-directory: bindings/r
+        run: |
+          Rscript -e 'res <- as.data.frame(testthat::test_dir("tests/testthat", reporter="summary", stop_on_failure=TRUE)); if (sum(res$failed) > 0) quit(status=1)'
+        env:
+          GSEMR_FIXTURES_DIR: ${{ github.workspace }}/tests/fixtures
+
+  r-coverage:
+    name: R-side Coverage (advisory)
+    runs-on: ubuntu-latest
+    # Advisory only: measures how much of the *R* original our fixture
+    # generators exercise (the cross-language drop-in signal). Coupled to the
+    # GenomicSEM/ source tree + an R toolchain, so it never gates a PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: GenomicSEM
+          extra-packages: |
+            any::covr
+            any::jsonlite
+      - name: Run covr driven by fixture generators
+        run: Rscript tests/covr_fixture_coverage.R
+      - name: Upload covr report
+        uses: actions/upload-artifact@v4
+        with:
+          name: covr-by-function
+          path: bench/covr_by_function.txt
 
   python-binding:
     name: Python Binding Check
@@ -118,9 +185,12 @@ jobs:
       - name: Install maturin and build wheel
         working-directory: bindings/python
         run: |
-          pip install maturin numpy
+          pip install maturin numpy pytest
           maturin build --release
-      - name: Install and smoke test
+      - name: Install and run parity tests
         run: |
           pip install bindings/python/src/rust/target/wheels/genomicsem-*.whl
           python -c "import genomicsem; print('genomicsem imported OK')"
+          pytest bindings/python/tests -v
+        env:
+          GSEM_FIXTURES_DIR: ${{ github.workspace }}/tests/fixtures
