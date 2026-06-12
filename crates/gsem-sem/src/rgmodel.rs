@@ -148,29 +148,12 @@ fn run_rgmodel_inner(
         crate::commonfactor::run_commonfactor(&s_stand, &v_fit, estimation)?
     };
 
-    // Step 4: The model-implied covariance from fitting on S_Stand IS the correlation matrix
+    // Step 4: fitting on S_Stand makes the model-implied covariance the
+    // correlation matrix R.
     let r = sem_result.implied_cov.clone();
 
-    // Step 5: V_R — R returns the V from the standardized model fit
-    // R reshapes its V_R oddly (matrix of sqrt(length)), but the actual content
-    // is the sandwich SE covariance of the standardized model parameters
-    // For compatibility, return the same kstar x kstar V_R from the standardized fit
-    // But R returns k x k... it takes only the unique off-diagonal elements
-    // Actually R takes the full V from the standardized sandwich and returns it as-is
-    // Let's match R's output: extract the k*(k-1)/2 unique off-diagonal correlations
-    // and their sampling covariance
-
-    // For now, return the model-implied correlation matrix and the V from standardized fit
-    // R's V_R is actually the result of the sandwich on the standardized model
-    // which has n_free x n_free dimensions, reshaped to sqrt(n) x sqrt(n)
-    // For a common factor 3-trait model: 6 free params, V_R would be 6x6 reshaped... no
-    // R returns 3x3 for 3 traits. Let me check: the R code does:
-    //   rgmodel$V_R = matrix(rgmodel$V_R, nrow=sqrt(length(rgmodel$V_R)))
-    // If V_R has 9 elements → 3x3. Those 9 elements come from the 3 off-diagonal correlations
-    // and their sampling covariance.
-
-    // The simplest correct approach: compute V_R as the sampling covariance of vech(R)
-    // using delta method on the standardization transformation, same as before but on S_Stand
+    // Step 5: V_R = sampling covariance of vech(R), via the delta method on the
+    // standardization transform applied to the standardized fit's V.
     let v_r = compute_v_r(&r, &v_stand_fixed, k)?;
 
     Ok(RgModelResult { r, v_r, sem_result })
@@ -361,5 +344,53 @@ mod tests {
             "r[0,1]={} expected ~{expected_r12} (real-scale V)",
             result.r[(0, 1)]
         );
+    }
+
+    #[test]
+    fn test_rgmodel_sub_matches_manual_subset() {
+        // rgmodel with `sub=[0,1,2]` on a 4-trait S/V must equal rgmodel on the
+        // manually-extracted 3-trait S and its corresponding V vech-block. This
+        // pins the vech-index subsetting math in run_rgmodel_sub.
+        let s4 = faer::mat![
+            [0.60, 0.42, 0.35, 0.20],
+            [0.42, 0.50, 0.30, 0.18],
+            [0.35, 0.30, 0.40, 0.15],
+            [0.20, 0.18, 0.15, 0.45],
+        ];
+        let kstar4 = 4 * 5 / 2; // 10
+        let v4 = Mat::from_fn(kstar4, kstar4, |i, j| if i == j { 3e-5 } else { 0.0 });
+
+        let sub = [0usize, 1, 2];
+        let got =
+            run_rgmodel_sub(&s4, &v4, crate::EstimationMethod::Dwls, None, false, &sub).unwrap();
+
+        // Manual subset: 3x3 S, and the V block at vech indices for (0,1,2).
+        // Column-major lower-triangle vech order for k=4:
+        //   (0,0)=0 (1,0)=1 (2,0)=2 (3,0)=3 (1,1)=4 (2,1)=5 (3,1)=6 (2,2)=7 (3,2)=8 (3,3)=9
+        // The (0,1,2) sub-block uses vech indices [0,1,2,4,5,7].
+        let s3 = Mat::from_fn(3, 3, |i, j| s4[(i, j)]);
+        let keep = [0usize, 1, 2, 4, 5, 7];
+        let v3 = Mat::from_fn(6, 6, |i, j| v4[(keep[i], keep[j])]);
+        let expect = run_rgmodel(&s3, &v3, crate::EstimationMethod::Dwls).unwrap();
+
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (got.r[(i, j)] - expect.r[(i, j)]).abs() < 1e-10,
+                    "sub R[{i},{j}]: {} vs {}",
+                    got.r[(i, j)],
+                    expect.r[(i, j)]
+                );
+            }
+        }
+        assert_eq!(got.v_r.nrows(), expect.v_r.nrows(), "sub V_R dim");
+        for i in 0..got.v_r.nrows() {
+            for j in 0..got.v_r.ncols() {
+                assert!(
+                    (got.v_r[(i, j)] - expect.v_r[(i, j)]).abs() < 1e-10,
+                    "sub V_R[{i},{j}]"
+                );
+            }
+        }
     }
 }

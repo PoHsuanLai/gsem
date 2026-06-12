@@ -176,4 +176,72 @@ mod tests {
         assert_eq!(generate_label(1), "aaab");
         assert_eq!(generate_label(26), "aaba");
     }
+
+    #[test]
+    fn test_write_model_mustload_rescues_unloaded_pheno() {
+        // V2's loadings are both below cutoff on either factor; mustload must
+        // still attach it to the factor where its |loading| is largest (F2).
+        let loadings = faer::mat![[0.8, 0.05], [0.10, 0.20], [0.05, 0.7],];
+        let names = vec!["V1".to_string(), "V2".to_string(), "V3".to_string()];
+
+        // Without mustload, V2 is dropped entirely.
+        let without = write_model(&loadings, &names, 0.3, false, false, false, false);
+        assert!(
+            !without.contains("V2"),
+            "V2 should be dropped without mustload"
+        );
+
+        // With mustload, V2 is forced onto F2 (its larger absolute loading).
+        let with = write_model(&loadings, &names, 0.3, false, false, true, false);
+        assert!(with.contains("V2"), "mustload should rescue V2");
+        // F2's definition line should now contain V2.
+        let f2_line = with
+            .lines()
+            .find(|l| l.starts_with("F2 =~"))
+            .expect("F2 definition");
+        assert!(f2_line.contains("V2"), "V2 should attach to F2: {f2_line}");
+    }
+
+    #[test]
+    fn test_write_model_bifactor_adds_common_and_zeros_cross_cov() {
+        let loadings = faer::mat![[0.8, 0.05], [0.7, 0.05], [0.05, 0.8], [0.05, 0.7],];
+        let names = vec![
+            "V1".to_string(),
+            "V2".to_string(),
+            "V3".to_string(),
+            "V4".to_string(),
+        ];
+        let model = write_model(&loadings, &names, 0.3, false, true, false, false);
+
+        // Bifactor: a Common_F orthogonal to every specific factor, and the
+        // specific factors orthogonal to each other.
+        assert!(
+            model.contains("Common_F =~"),
+            "bifactor adds a common factor"
+        );
+        assert!(model.contains("Common_F ~~ 1*Common_F"));
+        assert!(model.contains("Common_F ~~ 0*F1"));
+        assert!(model.contains("Common_F ~~ 0*F2"));
+        assert!(model.contains("F1 ~~ 0*F2"), "specifics must be orthogonal");
+    }
+
+    #[test]
+    fn test_write_model_common_adds_orthogonal_common_factor() {
+        let loadings = faer::mat![[0.8, 0.05], [0.05, 0.8],];
+        let names = vec!["V1".to_string(), "V2".to_string()];
+        let model = write_model(&loadings, &names, 0.3, false, false, false, true);
+
+        assert!(
+            model.contains("Common_F =~"),
+            "common=true adds a common factor"
+        );
+        assert!(model.contains("Common_F ~~ 1*Common_F"));
+        // common (non-bifactor) keeps the common factor orthogonal to specifics
+        // but does NOT zero the cross-specific covariances (that's bifactor).
+        assert!(model.contains("Common_F ~~ 0*F1"));
+        assert!(
+            !model.contains("F1 ~~ 0*F2"),
+            "common!=bifactor: no cross-specific zeroing"
+        );
+    }
 }
