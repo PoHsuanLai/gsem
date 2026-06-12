@@ -48,6 +48,14 @@ jobs:
         run: cargo llvm-cov --workspace --branch --summary-only
       - name: Generate lcov report
         run: cargo llvm-cov --workspace --branch --lcov --output-path lcov.info
+      # Publish to Codecov (serves the README badge + per-PR diffs). Public
+      # repos need no token; this is best-effort so a Codecov outage can't fail
+      # the build.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
       # Coverage floor (workspace-wide). Current: lines ~76.1%, regions ~76.9%,
       # branch ~73.0%. The floor sits just below current so CI stays green;
       # raise it when new tests push coverage up.
