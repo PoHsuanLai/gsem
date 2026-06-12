@@ -147,11 +147,19 @@ jobs:
     name: R-side Coverage (advisory)
     runs-on: ubuntu-latest
     # Advisory only: measures how much of the *R* original our fixture
-    # generators exercise (the cross-language drop-in signal). Coupled to the
-    # GenomicSEM/ source tree + an R toolchain, so it never gates a PR.
+    # generators exercise (the cross-language drop-in signal). It instruments
+    # the upstream GenomicSEM source (checked out below into GenomicSEM/), so it
+    # is decoupled from this repo's tree and never gates a PR.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      # Check out the upstream R package source so covr has something to
+      # instrument. tests/covr_fixture_coverage.R expects it at ./GenomicSEM.
+      - name: Check out upstream GenomicSEM source
+        uses: actions/checkout@v4
+        with:
+          repository: GenomicSEM/GenomicSEM
+          path: GenomicSEM
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: release
