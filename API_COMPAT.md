@@ -62,6 +62,7 @@ including:
 - **multiSNP**: covstruc, model, beta, se, var_snp, ld_matrix, snp_names, SNPSE
 - **multiGene**: covstruc, model, beta, se, var_gene, ld_matrix, gene_names, GeneSE, Genelist
 - **summaryGLS**: covstruc, results
+- **read_fusion**: files, trait.names, binary, N, perm — reads raw FUSION TWAS `.dat` output into the merged TWAS format that `multiGene`/`userGWAS(TWAS=TRUE)` consume (CLI: `gsem read-fusion`)
 - **cores/parallel**: per-call thread budget for `ldsc`, `userGWAS`, `commonfactorGWAS`, and `paLDSC`. Each call builds its own local rayon pool, so concurrent calls do not share thread state and `parallel=FALSE` is fully scoped. Currently a no-op for `munge`, `sumstats`, and `simLDSC` (their underlying implementations are serial).
 
 ## Option-level R-equivalence coverage
@@ -98,11 +99,10 @@ surface; call the original R `GenomicSEM` package if you need them.
 | `summaryGLSbands` | Plotting/confidence-band variant of `summaryGLS`; the core `summaryGLS` numeric path is ported, the band-drawing wrapper is not. |
 | `indexS`, `subSV` | Small matrix/covstruc subsetting helpers. `rgmodel(sub=)` covers the common subsetting need; these standalone helpers are not exposed. |
 | `localSRMD` | Local structural-residual diagnostic; not ported. |
-| `read_fusion` | Reader for FUSION TWAS association output. The Rust `twas_reader` reads the *merged* TWAS sumstats format used by `multiGene`/`userGWAS(TWAS=TRUE)`, not FUSION's per-gene `.dat` output. |
-| `qtrait` | Quantitative-trait simulation helper; not ported. |
+| `qtrait` | Quantitative-trait simulation helper; not ported (also removed from current upstream GenomicSEM). |
 
-20 of the 26 user-facing R functions are ported and validated against R
-reference output; the 6 above are the documented exceptions.
+The remaining exceptions are the deprecated/diagnostic helpers above; the
+behaviour-bearing TWAS on-ramp `read_fusion` **is** ported (see below).
 
 ## Not yet implemented
 

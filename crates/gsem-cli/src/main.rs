@@ -251,6 +251,22 @@ EXAMPLE:
       --out gls.tsv"
     )]
     SummaryGls(SummaryGlsArgs),
+    /// Read FUSION TWAS .dat files into the merged TWAS sumstats format
+    #[command(
+        name = "read-fusion",
+        long_about = "\
+Read raw FUSION TWAS association `.dat` files (one per trait) and write the
+merged TWAS sumstats TSV that `multiGene` / `userGWAS --twas` consume. Converts
+each trait's TWAS Z-statistic into a standardized gene-expression effect and SE
+(binary traits via the liability conversion), then inner-joins on Gene + Panel.
+
+EXAMPLE:
+    gsem read-fusion \\
+      --files T1.dat T2.dat --trait-names T1 T2 \\
+      --binary true,false --N 1e5,8e4 \\
+      --out merged_twas.tsv"
+    )]
+    ReadFusion(ReadFusionArgs),
 }
 
 #[derive(Args)]
@@ -558,6 +574,28 @@ struct SummaryGlsArgs {
     out: PathBuf,
 }
 
+#[derive(Args)]
+struct ReadFusionArgs {
+    /// FUSION .dat association files, one per trait (in LDSC trait order)
+    #[arg(long, num_args = 1.., required = true)]
+    files: Vec<PathBuf>,
+    /// Trait names for the beta.*/se.* columns (defaults to 1..k)
+    #[arg(long, num_args = 1..)]
+    trait_names: Option<Vec<String>>,
+    /// Per-trait binary/continuous flags, comma-separated (e.g. "true,false").
+    /// Omit for all-binary (matches R's default).
+    #[arg(long)]
+    binary: Option<String>,
+    /// Per-trait sample sizes, comma-separated (e.g. "1e5,8e4")
+    #[arg(long, value_delimiter = ',', required = true)]
+    n: Vec<f64>,
+    /// Derive the Z statistic from the permutation p-value (PERM.PV/PERM.N)
+    #[arg(long, default_value = "false")]
+    perm: bool,
+    #[arg(short, long, default_value = "merged_twas.tsv")]
+    out: PathBuf,
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
@@ -579,6 +617,7 @@ fn main() -> Result<()> {
         Commands::Simulate(args) => run_simulate(args),
         Commands::Hdl(args) => run_hdl(args),
         Commands::SummaryGls(args) => run_summary_gls(args),
+        Commands::ReadFusion(args) => run_read_fusion(args),
     }
 }
 
@@ -2316,5 +2355,67 @@ fn run_summary_gls(args: SummaryGlsArgs) -> Result<()> {
     std::fs::write(&args.out, &output)
         .with_context(|| format!("failed to write {}", args.out.display()))?;
     eprintln!("Results written to {}", args.out.display());
+    Ok(())
+}
+
+fn run_read_fusion(args: ReadFusionArgs) -> Result<()> {
+    let k = args.files.len();
+    if args.n.len() != k {
+        anyhow::bail!("--N has {} values but {k} files given", args.n.len());
+    }
+
+    // Parse the comma-separated binary flags (None => all binary, matching R).
+    let binary: Option<Vec<bool>> = match &args.binary {
+        Some(s) => {
+            let flags: Vec<bool> = s
+                .split(',')
+                .map(|t| match t.trim().to_lowercase().as_str() {
+                    "true" | "t" | "1" => Ok(true),
+                    "false" | "f" | "0" => Ok(false),
+                    other => Err(anyhow::anyhow!("invalid --binary flag '{other}'")),
+                })
+                .collect::<Result<_>>()?;
+            if flags.len() != k {
+                anyhow::bail!("--binary has {} flags but {k} files given", flags.len());
+            }
+            Some(flags)
+        }
+        None => None,
+    };
+
+    let res = gsem::io::fusion_reader::read_fusion(
+        &args.files,
+        args.trait_names.as_deref(),
+        binary.as_deref(),
+        &args.n,
+        args.perm,
+    )
+    .context("read_fusion failed")?;
+
+    eprintln!(
+        "Merged {} genes across {} traits",
+        res.genes.len(),
+        res.trait_names.len()
+    );
+
+    // Write the merged TWAS format that twas_reader / multiGene consume:
+    // Gene, Panel, HSQ, beta.<trait>, se.<trait>, ...
+    let mut header = String::from("Gene\tPanel\tHSQ");
+    for t in &res.trait_names {
+        header.push_str(&format!("\tbeta.{t}\tse.{t}"));
+    }
+    let mut output = header;
+    output.push('\n');
+    for g in &res.genes {
+        output.push_str(&format!("{}\t{}\t{}", g.gene, g.panel, g.hsq));
+        for t in 0..res.trait_names.len() {
+            output.push_str(&format!("\t{}\t{}", g.beta[t], g.se[t]));
+        }
+        output.push('\n');
+    }
+
+    std::fs::write(&args.out, &output)
+        .with_context(|| format!("failed to write {}", args.out.display()))?;
+    eprintln!("Merged TWAS sumstats written to {}", args.out.display());
     Ok(())
 }
