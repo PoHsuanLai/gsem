@@ -134,9 +134,39 @@ mod tests {
         let result =
             proportional_enrichment(&s_baseline, &s_annot, &v_annot, &names, &m_annot, m_total);
         assert_eq!(result.annotations.len(), 1);
-        assert!(result.enrichment[0] > 0.0);
-        assert!(result.se[0] > 0.0, "SE should be positive, not placeholder");
-        assert!(result.p[0] >= 0.0 && result.p[0] <= 1.0);
+
+        // Exact arithmetic for this input (regression guard, not a smoke test):
+        //   h2_total  = mean(0.3, 0.4)   = 0.35
+        //   h2_annot  = mean(0.15, 0.2)  = 0.175
+        //   prop_h2   = 0.175 / 0.35     = 0.5
+        //   prop_snps = 1e5 / 1e6        = 0.1
+        //   enrichment = prop_h2/prop_snps = 5.0
+        assert!(
+            (result.enrichment[0] - 5.0).abs() < 1e-12,
+            "enrichment = {}",
+            result.enrichment[0]
+        );
+        //   annot_se   = sqrt((V[0,0]+V[2,2]) / k^2) = sqrt(0.04/4) = 0.1
+        //   se         = (annot_se / h2_total) / prop_snps = (0.1/0.35)/0.1
+        let expect_se = (0.1 / 0.35) / 0.1;
+        assert!(
+            (result.se[0] - expect_se).abs() < 1e-12,
+            "se = {} expected {}",
+            result.se[0],
+            expect_se
+        );
+        //   z = (5 - 1) / se = 1.4 ; p = Phi(-1.4)
+        let z = (5.0 - 1.0) / expect_se;
+        let expect_p = {
+            use statrs::distribution::{ContinuousCDF, Normal};
+            Normal::standard().cdf(-z)
+        };
+        assert!(
+            (result.p[0] - expect_p).abs() < 1e-12,
+            "p = {} expected {}",
+            result.p[0],
+            expect_p
+        );
     }
 
     #[test]
