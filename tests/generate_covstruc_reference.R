@@ -178,5 +178,46 @@ write_fixture(list(
   sub_v_r      = mat_to_list(as.matrix(sub_r_obj$subV))
 ), "subsv")
 
+# ---------------------------------------------------------------------------
+# summaryGLSbands: GLS confidence-band data.
+# ---------------------------------------------------------------------------
+# We reproduce summaryGLSbands' NUMERIC core (the ggplot rendering is not
+# ported, and stock R additionally has two bugs we don't reproduce: the band
+# loop overwrites Ohm with Y on the Y/V_Y input path, and it requires ggplot2 to
+# even return). The band math itself — main GLS fit, then the SE of the fitted
+# value at each re-centred grid origin — is well-defined and is what the Rust
+# `summary_gls_bands` computes. We run that exact math here.
+cat("=== summaryGLSbands (numeric core) ===\n")
+np_b <- 8
+pred_b <- seq(-1.5, 1.5, length.out = np_b)
+y_b <- 0.5 + 0.3 * pred_b
+Ohm_b <- diag(np_b) * 0.01
+intervals_b <- 5
+band_size_b <- 1
+Xb <- cbind(rep(1, np_b), pred_b)
+betas_b <- solve(t(Xb) %*% solve(Ohm_b) %*% Xb) %*% t(Xb) %*% solve(Ohm_b) %*% y_b
+rng_b <- range(pred_b)
+band_se_b <- numeric(intervals_b)
+for (i in 0:(intervals_b - 1)) {
+  centered <- pred_b - (min(rng_b) + i * (max(rng_b) - min(rng_b)) / intervals_b)
+  XX <- cbind(rep(1, np_b), centered)
+  band_se_b[i + 1] <- sqrt(diag(solve(t(XX) %*% solve(Ohm_b) %*% XX)))[1]
+}
+grid_b <- seq(from = min(pred_b), to = max(pred_b), length.out = intervals_b)
+line_b <- betas_b[1] + betas_b[2] * grid_b
+write_fixture(list(
+  predictors = pred_b,
+  y          = y_b,
+  v_y        = mat_to_list(Ohm_b),
+  intervals  = intervals_b,
+  band_size  = band_size_b,
+  betas      = as.numeric(betas_b[, 1]),
+  grid       = grid_b,
+  line       = as.numeric(line_b),
+  band_se    = band_se_b,
+  upper      = as.numeric(line_b + band_size_b * band_se_b),
+  lower      = as.numeric(line_b - band_size_b * band_se_b)
+), "gls_bands")
+
 cat("\n=== covstruc reference fixtures generated ===\n")
 unlink(list.files(".", pattern = "\\.log$", full.names = TRUE))

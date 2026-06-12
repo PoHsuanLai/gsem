@@ -333,3 +333,53 @@ fn test_subsv_matches_r() {
         }
     }
 }
+
+// ── summaryGLSbands: GLS confidence-band data ───────────────────────────────
+
+#[test]
+fn test_summary_gls_bands_matches_r() {
+    let fix = load_fixture("gls_bands");
+    let predictors = json_to_vec(&fix["predictors"]);
+    let y = json_to_vec(&fix["y"]);
+    let v_y = json_to_mat(&fix["v_y"]);
+    let intervals = fix["intervals"].as_u64().unwrap() as usize;
+    let band_size = fix["band_size"].as_f64().unwrap();
+
+    let r_betas = json_to_vec(&fix["betas"]);
+    let r_grid = json_to_vec(&fix["grid"]);
+    let r_line = json_to_vec(&fix["line"]);
+    let r_band_se = json_to_vec(&fix["band_se"]);
+    let r_upper = json_to_vec(&fix["upper"]);
+    let r_lower = json_to_vec(&fix["lower"]);
+
+    let bands = gsem::stats::gls::summary_gls_bands(
+        &predictors,
+        &y,
+        &v_y,
+        true,  // INTERCEPT
+        false, // QUAD
+        &[],   // no CONTROLVARS
+        intervals,
+        band_size,
+    )
+    .expect("summary_gls_bands should solve");
+
+    for (i, (&rust, &r)) in bands.fit.beta.iter().zip(r_betas.iter()).enumerate() {
+        assert_close(rust, r, 1e-9, &format!("GLSbands beta[{i}]"));
+    }
+    for (i, (&rust, &r)) in bands.grid.iter().zip(r_grid.iter()).enumerate() {
+        assert_close(rust, r, 1e-9, &format!("GLSbands grid[{i}]"));
+    }
+    for (i, (&rust, &r)) in bands.line.iter().zip(r_line.iter()).enumerate() {
+        assert_close(rust, r, 1e-9, &format!("GLSbands line[{i}]"));
+    }
+    for (i, (&rust, &r)) in bands.band_se.iter().zip(r_band_se.iter()).enumerate() {
+        assert_close(rust, r, 1e-9, &format!("GLSbands band_se[{i}]"));
+    }
+    for (i, (&rust, &r)) in bands.upper.iter().zip(r_upper.iter()).enumerate() {
+        assert_close(rust, r, 1e-9, &format!("GLSbands upper[{i}]"));
+    }
+    for (i, (&rust, &r)) in bands.lower.iter().zip(r_lower.iter()).enumerate() {
+        assert_close(rust, r, 1e-9, &format!("GLSbands lower[{i}]"));
+    }
+}
