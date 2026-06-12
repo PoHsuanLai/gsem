@@ -18,14 +18,19 @@ pub struct EnrichResult {
 /// Compares baseline vs annotation-specific S/V to test for differential
 /// SNP effects by functional category.
 ///
-/// Port of GenomicSEM's `enrich()`.
+/// NOTE: this is the gsemr "fast proportional enrichment" path used when the
+/// `enrich` wrapper is called with an empty `model` — it has NO direct R
+/// GenomicSEM counterpart (R's `enrich()` is always model-based). The faithful
+/// port of R's model-based `enrich()` is `gsem_sem::enrich_model::model_enrichment`,
+/// which is the path validated against R (`enrich_synth.json`). This function is
+/// therefore covered by its own unit tests rather than an R-equivalence fixture.
 ///
 /// Enrichment SE is computed via the delta method:
 ///   enrichment = (est_annot / est_baseline) / prop_snps
 ///   enrichment_se = (SE_annot / |est_baseline|) / prop_snps
 /// where est and SE come from fitting the model to the annotation-specific S
 /// and computing sandwich SEs using V.
-pub fn enrichment_test(
+pub fn proportional_enrichment(
     s_baseline: &Mat<f64>,
     s_annot: &[Mat<f64>],
     v_annot: &[Mat<f64>],
@@ -126,11 +131,42 @@ mod tests {
         let m_annot = vec![100000.0];
         let m_total = 1000000.0;
 
-        let result = enrichment_test(&s_baseline, &s_annot, &v_annot, &names, &m_annot, m_total);
+        let result =
+            proportional_enrichment(&s_baseline, &s_annot, &v_annot, &names, &m_annot, m_total);
         assert_eq!(result.annotations.len(), 1);
-        assert!(result.enrichment[0] > 0.0);
-        assert!(result.se[0] > 0.0, "SE should be positive, not placeholder");
-        assert!(result.p[0] >= 0.0 && result.p[0] <= 1.0);
+
+        // Exact arithmetic for this input (regression guard, not a smoke test):
+        //   h2_total  = mean(0.3, 0.4)   = 0.35
+        //   h2_annot  = mean(0.15, 0.2)  = 0.175
+        //   prop_h2   = 0.175 / 0.35     = 0.5
+        //   prop_snps = 1e5 / 1e6        = 0.1
+        //   enrichment = prop_h2/prop_snps = 5.0
+        assert!(
+            (result.enrichment[0] - 5.0).abs() < 1e-12,
+            "enrichment = {}",
+            result.enrichment[0]
+        );
+        //   annot_se   = sqrt((V[0,0]+V[2,2]) / k^2) = sqrt(0.04/4) = 0.1
+        //   se         = (annot_se / h2_total) / prop_snps = (0.1/0.35)/0.1
+        let expect_se = (0.1 / 0.35) / 0.1;
+        assert!(
+            (result.se[0] - expect_se).abs() < 1e-12,
+            "se = {} expected {}",
+            result.se[0],
+            expect_se
+        );
+        //   z = (5 - 1) / se = 1.4 ; p = Phi(-1.4)
+        let z = (5.0 - 1.0) / expect_se;
+        let expect_p = {
+            use statrs::distribution::{ContinuousCDF, Normal};
+            Normal::standard().cdf(-z)
+        };
+        assert!(
+            (result.p[0] - expect_p).abs() < 1e-12,
+            "p = {} expected {}",
+            result.p[0],
+            expect_p
+        );
     }
 
     #[test]

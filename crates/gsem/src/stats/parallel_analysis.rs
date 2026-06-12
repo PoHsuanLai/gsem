@@ -199,4 +199,32 @@ mod tests {
         let result = parallel_analysis(&s, &v, 200, 0.95, false, None, None);
         assert!(result.n_factors >= 1);
     }
+
+    #[test]
+    fn test_parallel_analysis_diag_only_branch() {
+        // diag=TRUE in R's paLDSC simulates against diag(V) only. The OBSERVED
+        // eigenvalues come from S, so they must be identical to the full-V run;
+        // only the (RNG-dependent) simulated thresholds may differ. This pins
+        // the diag_only branch and confirms it leaves the observed spectrum
+        // untouched. Off-diagonal V here is nonzero so the two paths truly
+        // diverge in what they simulate against.
+        let s = faer::mat![[1.0, 0.5, 0.3], [0.5, 1.0, 0.4], [0.3, 0.4, 1.0],];
+        let v = Mat::from_fn(6, 6, |i, j| {
+            if i == j {
+                0.01
+            } else {
+                0.003 // nonzero off-diagonal => diag-only path differs
+            }
+        });
+        let full = parallel_analysis(&s, &v, 100, 0.95, false, Some(1), None);
+        let diag = parallel_analysis(&s, &v, 100, 0.95, true, Some(1), None);
+
+        assert_eq!(full.observed.len(), diag.observed.len());
+        for (i, (&f, &d)) in full.observed.iter().zip(diag.observed.iter()).enumerate() {
+            assert!(
+                (f - d).abs() < 1e-12,
+                "observed eig[{i}] must not depend on diag_only: full={f} diag={d}"
+            );
+        }
+    }
 }

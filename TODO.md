@@ -1,14 +1,14 @@
 # TODO
 
-Post-0.1.0 follow-ups. Items already landed on `master` toward the
-0.1.1 release live in [`CHANGELOG.md`](./CHANGELOG.md) under
-`[Unreleased]` — this file is for work still to be done.
+Post-release follow-ups. Work already landed on `master` lives in
+[`CHANGELOG.md`](./CHANGELOG.md) (under the most recent version, or
+`[Unreleased]` if newer) — this file is for work still to be done.
 
 ## Coverage gaps
 
 - [ ] **`convert_hdl_panels`: add Python binding.** Currently R-only. Requires an R `.rda` parser; consider `rdata-rs` or a thin Rust helper that shells out to R's conversion logic.
 - [ ] **`convert_hdl_panels`: add CLI subcommand.** Blocked on the Python binding / Rust helper above.
-- [ ] **`multiGene`: add CLI subcommand.** The engine exists in `crates/gsem/src/gwas/multi_snp.rs` and is exposed via R (`gsemr::multiGene`) and Python (`genomicsem.multi_gene`).  Wiring a clap subcommand is ~30 lines in `crates/gsem/src/main.rs` — clone `MultiSnpArgs` to `MultiGeneArgs` and route through the same dispatcher.
+- [ ] **`multiGene`: add CLI subcommand.** The engine exists in `crates/gsem/src/gwas/multi_snp.rs` and is exposed via R (`gsemr::multiGene`) and Python (`genomicsem.multi_gene`). Wiring a clap subcommand is ~30 lines in `crates/gsem-cli/src/main.rs` — clone `MultiSnpArgs` to `MultiGeneArgs` and route through the same dispatcher. The `read-fusion` subcommand added in 0.2.0 is a worked example of this pattern (it consumes `gsem::io::fusion_reader` and writes the merged TWAS TSV that `multiGene` reads).
 
 ## Possible CRAN-submission follow-ups
 

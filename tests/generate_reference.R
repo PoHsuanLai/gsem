@@ -393,6 +393,80 @@ if (!is.null(fit_2f)) {
 }
 
 # ============================================================
+# Test Case 10b: MISSPECIFIED 1-factor model on the 2-factor S.
+# A single common factor cannot reproduce the block structure of S_2f, so the
+# fit is imperfect: chisq > 0 and CFI < 1. This is the only fixture that
+# exercises CFIcalc against a non-degenerate lavaan CFI (the well-specified
+# fixtures all fit near-perfectly with CFI = 1).
+# ============================================================
+cat("=== misspecified 1-factor SEM (CFI < 1) ===\n")
+model_mis <- "
+F1 =~ NA*V1 + V2 + V3 + V4
+F1 ~~ 1*F1
+V1 ~~ V1
+V2 ~~ V2
+V3 ~~ V3
+V4 ~~ V4
+"
+fit_mis <- tryCatch({
+  sem(model_mis,
+      sample.cov = S_2f,
+      estimator = "DWLS",
+      WLS.V = W_2f,
+      sample.nobs = 200,
+      se = "standard",
+      optim.dx.tol = 0.01)
+}, error = function(e) {
+  cat("misspecified SEM failed:", e$message, "\n"); NULL
+})
+
+if (!is.null(fit_mis)) {
+  # IMPORTANT: the reference chisq/CFI must be GenomicSEM's, NOT raw lavaan's.
+  # GenomicSEM recomputes its own model chisq as the sandwich quadratic form
+  # Q = eta' P Eig^-1 P' eta over the FULL V (usermodel.R:256-265), which differs
+  # from lavaan's DWLS-scaled fitMeasures("chisq"). CFI uses that Q against the
+  # independence-model chisq computed the same way (usermodel.R:488-498). We
+  # reproduce those exact formulas here so the fixture matches what the Rust
+  # fit_indices path (eta'V^-1 eta) actually computes.
+  lower_tri <- function(m) m[lower.tri(m, diag = TRUE)]
+  Eig  <- eigen(V_2f)$values
+  P1   <- eigen(V_2f)$vectors
+  Eig2 <- diag(Eig)
+  implied  <- fitted(fit_mis)$cov[colnames(S_2f), colnames(S_2f)]
+  implied2 <- S_2f - implied
+  eta  <- lower_tri(implied2)
+  Q    <- as.numeric(t(eta) %*% P1 %*% solve(Eig2) %*% t(P1) %*% eta)
+  df_mis <- as.numeric(fitMeasures(fit_mis, "df"))
+
+  # Independence-model chisq for CFI (S with zeroed off-diagonals as the residual).
+  resid_CFI <- S_2f; diag(resid_CFI) <- 0
+  eta_CFI <- lower_tri(resid_CFI)
+  CFI_chi <- as.numeric(t(eta_CFI) %*% P1 %*% solve(Eig2) %*% t(P1) %*% eta_CFI)
+  k_mis  <- ncol(S_2f)
+  dfCFI  <- (k_mis * (k_mis + 1) / 2) - k_mis
+  CFI <- ((CFI_chi - dfCFI) - (Q - df_mis)) / (CFI_chi - dfCFI)
+  CFI <- min(CFI, 1)
+  SRMR <- as.numeric(fitMeasures(fit_mis, "srmr"))
+
+  cat("  GenomicSEM Q =", Q, " CFI =", CFI, " df =", df_mis, "\n")
+  write_fixture(list(
+    s = mat_to_list(S_2f),
+    v = mat_to_list(V_2f),
+    v_diag = as.numeric(diag(V_2f)),
+    model = model_mis,
+    fit_indices = list(
+      chisq   = Q,
+      df      = df_mis,
+      p_chisq = as.numeric(pchisq(Q, df_mis, lower.tail = FALSE)),
+      cfi     = CFI,
+      srmr    = SRMR
+    )
+  ), "sem_misspecified")
+} else {
+  cat("Skipping misspecified fixture\n")
+}
+
+# ============================================================
 # Test Case 11: 1-factor SEM fit with ML (different estimator path)
 # ============================================================
 cat("=== 1-factor ML ===\n")

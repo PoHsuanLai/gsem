@@ -33,6 +33,24 @@ impl FromStr for GcMode {
     }
 }
 
+/// Floor the diagonal of the LD-score intercept matrix at 1.0.
+///
+/// Port of `diag(I_LD) <- ifelse(diag(I_LD) <= 1, 1, diag(I_LD))` from R
+/// GenomicSEM (`userGWAS.R:156`, `commonfactorGWAS.R:86`). The LDSC intercept
+/// can fall slightly below 1 from sampling noise; R clamps it before building
+/// the per-SNP sampling-variance matrix so SNP variances (and Q_SNP) are not
+/// deflated. Off-diagonal elements are left unchanged.
+pub fn floor_intercept_diag(i_ld: &Mat<f64>) -> Mat<f64> {
+    let n = i_ld.nrows();
+    Mat::from_fn(n, n, |r, c| {
+        if r == c {
+            i_ld[(r, c)].max(1.0)
+        } else {
+            i_ld[(r, c)]
+        }
+    })
+}
+
 /// Construct V_SNP matrix (k×k) for a single SNP with genomic control correction.
 ///
 /// Port of `.get_V_SNP()` from GenomicSEM's utils.R.
@@ -88,6 +106,27 @@ mod tests {
         let v = build_v_snp(&se, &i_ld, 0.5, GcMode::None, 2);
         // Diagonal: (se * var_snp)^2 = (0.1 * 0.5)^2 = 0.0025
         assert!((v[(0, 0)] - 0.0025).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_floor_intercept_diag() {
+        // Diagonal entries <= 1 are clamped to 1; entries > 1 and all
+        // off-diagonals are untouched (matches R userGWAS.R:156).
+        let i_ld = faer::mat![[0.993, -0.01], [-0.01, 1.0024]];
+        let floored = floor_intercept_diag(&i_ld);
+        assert!(
+            (floored[(0, 0)] - 1.0).abs() < 1e-15,
+            "0.993 should floor to 1"
+        );
+        assert!(
+            (floored[(1, 1)] - 1.0024).abs() < 1e-15,
+            "1.0024 should be unchanged"
+        );
+        assert!(
+            (floored[(0, 1)] - (-0.01)).abs() < 1e-15,
+            "off-diagonal unchanged"
+        );
+        assert!((floored[(1, 0)] - (-0.01)).abs() < 1e-15);
     }
 
     #[test]

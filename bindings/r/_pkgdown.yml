@@ -1,0 +1,65 @@
+url: https://pohsuanlai.github.io/gsem/
+
+repo:
+  url:
+    home: https://github.com/PoHsuanLai/gsem/
+    source: https://github.com/PoHsuanLai/gsem/blob/master/bindings/r/
+    issue: https://github.com/PoHsuanLai/gsem/issues/
+
+template:
+  bootstrap: 5
+
+navbar:
+  structure:
+    left: [reference, articles]
+    right: [genomicsem, github]
+  components:
+    genomicsem:
+      text: GenomicSEM (R original)
+      href: https://github.com/GenomicSEM/GenomicSEM
+      aria-label: Original R GenomicSEM repository
+
+articles:
+- title: Background
+  navbar: ~
+  contents:
+  - compatibility
+  - architecture
+
+reference:
+- title: Genetic covariance (LDSC)
+  desc: Estimate the genetic covariance structure from GWAS summary statistics.
+  contents:
+  - ldsc
+  - s_ldsc
+  - hdl
+  - convert_hdl_panels
+
+- title: Summary-statistic preparation
+  desc: QC and harmonise raw GWAS files before LDSC / multivariate GWAS.
+  contents:
+  - munge
+  - sumstats
+
+- title: Structural equation models
+  desc: Fit factor models to the genetic covariance structure.
+  contents:
+  - commonfactor
+  - usermodel
+  - write.model
+  - rgmodel
+
+- title: Multivariate GWAS
+  desc: Fit a SEM at every SNP (or gene) in a merged sumstats file.
+  contents:
+  - commonfactorGWAS
+  - userGWAS
+  - multiSNP
+  - multiGene
+
+- title: Diagnostics and downstream analyses
+  contents:
+  - paLDSC
+  - enrich
+  - summaryGLS
+  - simLDSC

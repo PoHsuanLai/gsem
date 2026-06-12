@@ -226,6 +226,125 @@ write_fixture(list(
   i            = mat_to_list(r_ldsc$I)
 ), "ldsc_synth")
 
+# 5b. Liability-scale ldsc: same inputs, but treat the traits as BINARY with
+# sample/population prevalences so R applies the observed->liability conversion
+# (apply_liability_scale on the Rust side). This exercises the prevalence
+# branch that the continuous fixture above leaves untested.
+cat("=== ldsc (liability scale) ===\n")
+samp_prev <- rep(0.5, n_traits)
+pop_prev  <- c(0.10, 0.05, 0.20)[seq_len(n_traits)]
+r_ldsc_liab <- suppressMessages(GenomicSEM::ldsc(
+  traits          = munged_paths,
+  sample.prev     = samp_prev,
+  population.prev = pop_prev,
+  ld              = ld,
+  wld             = ld,
+  trait.names     = trait_names,
+  chr             = chr,
+  n.blocks        = 20,
+  stand           = FALSE
+))
+write_fixture(list(
+  munged_files = paste0("synth/", trait_names, ".sumstats.gz"),
+  ld_dir       = "synth/eur_w_ld_chr",
+  chr          = chr,
+  n_blocks     = 20,
+  trait_names  = trait_names,
+  m_total      = M_5_50,
+  sample_prev  = samp_prev,
+  population_prev = pop_prev,
+  s            = mat_to_list(r_ldsc_liab$S),
+  v            = mat_to_list(r_ldsc_liab$V),
+  i            = mat_to_list(r_ldsc_liab$I)
+), "ldsc_liability")
+
+# 5c. chisq.max filter: a low explicit cutoff (10) drops the synth data's top
+# hits (max chi2 ~ 15-22), exercising the chisq_max=Some(_) branch in LdscConfig
+# that the default (chisq.max = NA -> auto) leaves untested.
+cat("=== ldsc (chisq.max = 10) ===\n")
+chisq_cutoff <- 10
+r_ldsc_chisq <- suppressMessages(GenomicSEM::ldsc(
+  traits          = munged_paths,
+  sample.prev     = rep(NA, n_traits),
+  population.prev = rep(NA, n_traits),
+  ld              = ld,
+  wld             = ld,
+  trait.names     = trait_names,
+  chr             = chr,
+  n.blocks        = 20,
+  chisq.max       = chisq_cutoff,
+  stand           = FALSE
+))
+write_fixture(list(
+  munged_files = paste0("synth/", trait_names, ".sumstats.gz"),
+  ld_dir       = "synth/eur_w_ld_chr",
+  chr          = chr,
+  n_blocks     = 20,
+  trait_names  = trait_names,
+  m_total      = M_5_50,
+  chisq_max    = chisq_cutoff,
+  s            = mat_to_list(r_ldsc_chisq$S),
+  v            = mat_to_list(r_ldsc_chisq$V),
+  i            = mat_to_list(r_ldsc_chisq$I)
+), "ldsc_chisqmax")
+
+# 5d. stand = TRUE: R additionally returns the standardized (correlation-scale)
+# S_Stand / V_Stand. These exercise the gsemr binding's stand=TRUE path
+# (ldsc_result_to_list_stand -> cov_to_cor). Tested at the binding layer
+# (testthat) since stand is a binding-level option, not a core LdscConfig field.
+cat("=== ldsc (stand = TRUE) ===\n")
+r_ldsc_stand <- suppressMessages(GenomicSEM::ldsc(
+  traits          = munged_paths,
+  sample.prev     = rep(NA, n_traits),
+  population.prev = rep(NA, n_traits),
+  ld              = ld,
+  wld             = ld,
+  trait.names     = trait_names,
+  chr             = chr,
+  n.blocks        = 20,
+  stand           = TRUE
+))
+write_fixture(list(
+  munged_files = paste0("synth/", trait_names, ".sumstats.gz"),
+  ld_dir       = "synth/eur_w_ld_chr",
+  chr          = chr,
+  n_blocks     = 20,
+  trait_names  = trait_names,
+  s            = mat_to_list(r_ldsc_stand$S),
+  v            = mat_to_list(r_ldsc_stand$V),
+  i            = mat_to_list(r_ldsc_stand$I),
+  s_stand      = mat_to_list(r_ldsc_stand$S_Stand),
+  v_stand      = mat_to_list(r_ldsc_stand$V_Stand)
+), "ldsc_stand")
+
+# 5e. select = "ODD": restrict LD scores to odd chromosomes. With chr = 2 this
+# keeps only chromosome 1, so S/V/I differ from the full-genome fit. Exercises
+# the binding's `select` chromosome filter (ODD/EVEN/comma-list parsing).
+cat("=== ldsc (select = ODD) ===\n")
+r_ldsc_odd <- suppressMessages(GenomicSEM::ldsc(
+  traits          = munged_paths,
+  sample.prev     = rep(NA, n_traits),
+  population.prev = rep(NA, n_traits),
+  ld              = ld,
+  wld             = ld,
+  trait.names     = trait_names,
+  chr             = chr,
+  n.blocks        = 20,
+  select          = "ODD",
+  stand           = FALSE
+))
+write_fixture(list(
+  munged_files = paste0("synth/", trait_names, ".sumstats.gz"),
+  ld_dir       = "synth/eur_w_ld_chr",
+  chr          = chr,
+  n_blocks     = 20,
+  trait_names  = trait_names,
+  select       = "ODD",
+  s            = mat_to_list(r_ldsc_odd$S),
+  v            = mat_to_list(r_ldsc_odd$V),
+  i            = mat_to_list(r_ldsc_odd$I)
+), "ldsc_select_odd")
+
 # ---------------------------------------------------------------------------
 # 6. Run R GenomicSEM sumstats -> merged per-SNP betas/SEs reference
 # ---------------------------------------------------------------------------
@@ -283,6 +402,39 @@ write_fixture(list(
     none     = mode_fixture(modes$none)
   )
 ), "sumstats_synth")
+
+# 6b. ambig = TRUE: remove strand-ambiguous SNPs (A/T, C/G). The synthetic
+# alleles are random single bases, so ~1/3 of SNPs are ambiguous and dropped,
+# changing the merged SNP set. Exercises the binding's ambig filter (default
+# FALSE KEEPS ambiguous; TRUE removes — matching R GenomicSEM).
+cat("=== sumstats (ambig = TRUE) ===\n")
+r_ambig <- suppressMessages(GenomicSEM::sumstats(
+  files       = raw_paths,
+  ref         = file.path(synthdir, "reference.txt.gz"),
+  trait.names = trait_names,
+  se.logit    = rep(FALSE, n_traits),
+  OLS         = rep(TRUE, n_traits),
+  linprob     = rep(FALSE, n_traits),
+  N           = Nj,
+  betas       = NULL,
+  info.filter = 0.0,
+  maf.filter  = 0.01,
+  ambig       = TRUE
+))
+r_ambig <- r_ambig[order(r_ambig$SNP), ]
+ambig_beta_cols <- grep("^beta\\.", colnames(r_ambig), value = TRUE)
+ambig_se_cols   <- grep("^se\\.",   colnames(r_ambig), value = TRUE)
+write_fixture(list(
+  raw_files   = paste0("synth/", trait_names, ".raw.gz"),
+  ref_file    = "synth/reference.txt.gz",
+  trait_names = trait_names,
+  n           = Nj,
+  snp         = r_ambig$SNP,
+  a1          = toupper(r_ambig$A1),
+  a2          = toupper(r_ambig$A2),
+  beta        = mat_to_list(as.matrix(r_ambig[, ambig_beta_cols])),
+  se          = mat_to_list(as.matrix(r_ambig[, ambig_se_cols]))
+), "sumstats_ambig")
 
 # GenomicSEM munge/sumstats write *.log files into the working dir; remove
 # them so re-running the generator leaves a clean tree.

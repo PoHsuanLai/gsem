@@ -161,6 +161,171 @@ fn test_ldsc_synth_matches_r() {
     }
 }
 
+/// Liability-scale ldsc: binary traits with sample/population prevalences, so R
+/// applies the observed->liability conversion. Pins `apply_liability_scale`
+/// (the prevalence branch the continuous fixture leaves untested) against R.
+#[test]
+fn test_ldsc_liability_matches_r() {
+    let fix = load_fixture("ldsc_liability");
+    let dir = fixtures_dir();
+
+    let munged: Vec<PathBuf> = json_to_strs(&fix["munged_files"])
+        .iter()
+        .map(|p| dir.join(p))
+        .collect();
+    let ld_dir = dir.join(fix["ld_dir"].as_str().unwrap());
+    let chr = fix["chr"].as_u64().unwrap() as usize;
+    let n_blocks = fix["n_blocks"].as_u64().unwrap() as usize;
+
+    let r_s = json_to_mat(&fix["s"]);
+    let r_v = json_to_mat(&fix["v"]);
+    let r_i = json_to_mat(&fix["i"]);
+
+    let sample_prev: Vec<Option<f64>> = json_to_vec(&fix["sample_prev"])
+        .into_iter()
+        .map(Some)
+        .collect();
+    let pop_prev: Vec<Option<f64>> = json_to_vec(&fix["population_prev"])
+        .into_iter()
+        .map(Some)
+        .collect();
+
+    let trait_data = gsem::io::gwas_reader::load_trait_data(&munged).unwrap();
+    let chromosomes: Vec<usize> = (1..=chr).collect();
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&ld_dir, &ld_dir, &chromosomes).unwrap();
+    let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
+    let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
+
+    let k = trait_data.len();
+    let config = gsem_ldsc::LdscConfig {
+        n_blocks,
+        chisq_max: None,
+        num_threads: Some(1),
+    };
+    let result = gsem_ldsc::ldsc(
+        &trait_data,
+        &sample_prev,
+        &pop_prev,
+        &ld_scores,
+        &ld_data.w_ld,
+        &ld_snps,
+        ld_data.total_m,
+        &config,
+        None,
+    )
+    .unwrap();
+
+    // S and V are scaled by the liability conversion; I (intercepts) is not.
+    for i in 0..k {
+        for j in 0..k {
+            assert_close(
+                result.s[(i, j)],
+                r_s[(i, j)],
+                1e-9,
+                1e-4,
+                &format!("ldsc-liab S[{i},{j}]"),
+            );
+            assert_close(
+                result.i_mat[(i, j)],
+                r_i[(i, j)],
+                1e-4,
+                1e-3,
+                &format!("ldsc-liab I[{i},{j}]"),
+            );
+        }
+    }
+    let kstar = k * (k + 1) / 2;
+    for i in 0..kstar {
+        for j in 0..kstar {
+            assert_close(
+                result.v[(i, j)],
+                r_v[(i, j)],
+                1e-12,
+                1e-3,
+                &format!("ldsc-liab V[{i},{j}]"),
+            );
+        }
+    }
+}
+
+/// chisq.max filter: a low explicit cutoff drops the top hits before the LDSC
+/// regression. Pins the `chisq_max = Some(_)` branch that the default (auto)
+/// path leaves untested.
+#[test]
+fn test_ldsc_chisqmax_matches_r() {
+    let fix = load_fixture("ldsc_chisqmax");
+    let dir = fixtures_dir();
+
+    let munged: Vec<PathBuf> = json_to_strs(&fix["munged_files"])
+        .iter()
+        .map(|p| dir.join(p))
+        .collect();
+    let ld_dir = dir.join(fix["ld_dir"].as_str().unwrap());
+    let chr = fix["chr"].as_u64().unwrap() as usize;
+    let n_blocks = fix["n_blocks"].as_u64().unwrap() as usize;
+    let chisq_max = fix["chisq_max"].as_f64().unwrap();
+
+    let r_s = json_to_mat(&fix["s"]);
+    let r_v = json_to_mat(&fix["v"]);
+    let r_i = json_to_mat(&fix["i"]);
+
+    let trait_data = gsem::io::gwas_reader::load_trait_data(&munged).unwrap();
+    let chromosomes: Vec<usize> = (1..=chr).collect();
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&ld_dir, &ld_dir, &chromosomes).unwrap();
+    let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
+    let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
+
+    let k = trait_data.len();
+    let config = gsem_ldsc::LdscConfig {
+        n_blocks,
+        chisq_max: Some(chisq_max),
+        num_threads: Some(1),
+    };
+    let result = gsem_ldsc::ldsc(
+        &trait_data,
+        &vec![None; k],
+        &vec![None; k],
+        &ld_scores,
+        &ld_data.w_ld,
+        &ld_snps,
+        ld_data.total_m,
+        &config,
+        None,
+    )
+    .unwrap();
+
+    for i in 0..k {
+        for j in 0..k {
+            assert_close(
+                result.s[(i, j)],
+                r_s[(i, j)],
+                1e-9,
+                1e-4,
+                &format!("ldsc-chisqmax S[{i},{j}]"),
+            );
+            assert_close(
+                result.i_mat[(i, j)],
+                r_i[(i, j)],
+                1e-4,
+                1e-3,
+                &format!("ldsc-chisqmax I[{i},{j}]"),
+            );
+        }
+    }
+    let kstar = k * (k + 1) / 2;
+    for i in 0..kstar {
+        for j in 0..kstar {
+            assert_close(
+                result.v[(i, j)],
+                r_v[(i, j)],
+                1e-12,
+                1e-3,
+                &format!("ldsc-chisqmax V[{i},{j}]"),
+            );
+        }
+    }
+}
+
 // ── munge: Z / N per SNP ────────────────────────────────────────────────────
 
 #[test]
@@ -403,6 +568,73 @@ fn test_sumstats_ambiguous_semantics() {
         n_ambiguous,
         "keep_ambig=false should drop exactly the {n_ambiguous} ambiguous SNPs (dropped {})",
         kept - dropped
+    );
+
+    // Numeric parity: with keep_ambig=false, the surviving SNPs and their
+    // betas/SEs must match R's real `sumstats(ambig=TRUE)` output, not just the
+    // count. sumstats_ambig.json is that R reference.
+    let ambig_fix = load_fixture("sumstats_ambig");
+    let config = gsem::sumstats::SumstatsConfig {
+        info_filter: 0.0,
+        maf_filter: 0.01,
+        n_overrides: n.iter().map(|&x| Some(x)).collect(),
+        se_logit: vec![false; k],
+        ols: vec![true; k],
+        linprob: vec![false; k],
+        keep_indel: false,
+        keep_ambig: false,
+        beta_overrides: vec![None; k],
+        direct_filter: false,
+        num_threads: Some(1),
+    };
+    let tmp = std::env::temp_dir().join(format!("gsem_ambig_parity_{}.tsv", std::process::id()));
+    gsem::sumstats::merge_sumstats(&raw_refs, &ref_file, &trait_names, &config, &tmp).unwrap();
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(&tmp).unwrap();
+    let _ = std::fs::remove_file(&tmp);
+
+    let mut by_snp: HashMap<String, usize> = HashMap::new();
+    for i in 0..merged.len() {
+        by_snp.insert(merged.snp[i].clone(), i);
+    }
+
+    let ra_snp = json_to_strs(&ambig_fix["snp"]);
+    let ra_beta = json_to_mat(&ambig_fix["beta"]);
+    let ra_se = json_to_mat(&ambig_fix["se"]);
+    assert_eq!(
+        merged.len(),
+        ra_snp.len(),
+        "keep_ambig=false SNP count must match R ambig=TRUE ({} vs {})",
+        merged.len(),
+        ra_snp.len()
+    );
+    let mut compared = 0;
+    for idx in 0..ra_snp.len() {
+        let Some(&ri) = by_snp.get(&ra_snp[idx]) else {
+            panic!("ambig parity: SNP {} missing from Rust output", ra_snp[idx]);
+        };
+        let beta = merged.beta_row(ri);
+        let se = merged.se_row(ri);
+        for t in 0..k {
+            assert_close(
+                beta[t].abs(),
+                ra_beta[(idx, t)].abs(),
+                1e-7,
+                1e-5,
+                &format!("ambig=TRUE |beta| {} trait {t}", ra_snp[idx]),
+            );
+            assert_close(
+                se[t],
+                ra_se[(idx, t)],
+                1e-7,
+                1e-5,
+                &format!("ambig=TRUE se {} trait {t}", ra_snp[idx]),
+            );
+        }
+        compared += 1;
+    }
+    assert!(
+        compared > 100,
+        "too few ambig=TRUE SNPs compared: {compared}"
     );
 }
 

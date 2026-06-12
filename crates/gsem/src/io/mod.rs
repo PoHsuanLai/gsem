@@ -1,4 +1,5 @@
 pub mod column_detect;
+pub mod fusion_reader;
 pub mod gwas_reader;
 pub mod hdl_reader;
 pub mod ld_reader;

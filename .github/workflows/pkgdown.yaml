@@ -1,0 +1,99 @@
+# Build the gsemr (R binding) pkgdown documentation site and publish it to
+# GitHub Pages via the GitHub Actions deployment (no gh-pages branch needed).
+# Adapted from the standard r-lib/actions pkgdown workflow, with the Rust
+# staticlib build steps the package needs before it can be installed.
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+name: pkgdown
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bindings/r/src/rust
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      # Generate the compatibility/architecture article vignettes from the
+      # repo-root markdown (single source of truth) before the package is
+      # resolved and the site is built.
+      - name: Generate article vignettes
+        working-directory: bindings/r
+        run: Rscript tools/build-vignettes.R
+
+      # Install pkgdown + gsemr's R deps. We do NOT use `local::.`: that
+      # source-builds gsemr in a temp dir where the binding's
+      # [patch.crates-io] relative paths to the in-repo crates don't resolve
+      # (the unpublished 0.2.0 crates aren't on crates.io). Instead gsemr is
+      # installed in-tree by `R CMD INSTALL .` below, where the patch applies.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: bindings/r
+          extra-packages: |
+            any::pkgdown
+            any::jsonlite
+          needs: website
+
+      - name: Build Rust staticlib
+        working-directory: bindings/r/src/rust
+        run: cargo build --release
+
+      - name: Install gsemr
+        working-directory: bindings/r
+        run: |
+          cp src/rust/target/release/libgsemr.a src/
+          R CMD INSTALL .
+        env:
+          _R_CHECK_FORCE_SUGGESTS_: false
+
+      - name: Build site
+        working-directory: bindings/r
+        run: pkgdown::build_site(new_process = FALSE, install = FALSE)
+        shell: Rscript {0}
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: bindings/r/docs
+
+  # Deploy the built site to GitHub Pages (skipped on PRs, which only build).
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

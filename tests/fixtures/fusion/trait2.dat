@@ -1,0 +1,3 @@
+PANEL FILE ID TWAS.Z HSQ BEST.GWAS.ID
+x /path/to/GTEx_Brain/ENSG001.wgt.RDat G1 1.10 0.30 rs1
+x /path/to/GTEx_Brain/ENSG002.wgt.RDat G2 3.40 0.18 rs2

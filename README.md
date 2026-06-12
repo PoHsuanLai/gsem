@@ -1,6 +1,8 @@
 # gsem
 
 [![CI](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml/badge.svg)](https://github.com/PoHsuanLai/gsem/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/PoHsuanLai/gsem/branch/master/graph/badge.svg)](https://codecov.io/gh/PoHsuanLai/gsem)
+[![R docs](https://img.shields.io/badge/docs-pkgdown-blue.svg)](https://pohsuanlai.github.io/gsem/)
 [![crates.io](https://img.shields.io/crates/v/gsem.svg)](https://crates.io/crates/gsem)
 [![PyPI](https://img.shields.io/pypi/v/genomicsem.svg)](https://pypi.org/project/genomicsem/)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg?logo=rust)](https://www.rust-lang.org)

@@ -1822,7 +1822,7 @@ fn enrich<'py>(
     let s_annot_mats = extract_mats(s_annot, "s_annot")?;
     let v_annot_mats = extract_mats(v_annot, "v_annot")?;
 
-    let result = gsem::stats::enrich::enrichment_test(
+    let result = gsem::stats::enrich::proportional_enrichment(
         &s_base_mat,
         &s_annot_mats,
         &v_annot_mats,

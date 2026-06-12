@@ -10,6 +10,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes on `master` past the most recent release tag live here until the
 next version is cut.
 
+## [0.2.0] — 2026-06-13
+
+### Added
+
+- **Ported `read_fusion`** (`gsem::io::fusion_reader` + CLI `gsem
+  read-fusion`). Reads raw FUSION TWAS `.dat` association files and converts
+  each trait's `TWAS.Z` into a standardized gene-expression effect/SE (binary
+  traits via the liability conversion `effect/√(effect²·HSQ + π²/3)`,
+  continuous via `Z/√(N·HSQ)`), supports the permutation-Z path, then
+  inner-joins traits on Gene+Panel into the merged TWAS format that
+  `twas_reader` / `multiGene` / `userGWAS(TWAS=TRUE)` consume. This is the
+  on-ramp from raw FUSION output into the Rust TWAS path (previously only
+  pre-merged files could be read). Validated against live R `read_fusion`.
+
+- **Ported `subSV`** (`gsem_matrix::vech::subset_sv`). Subsets `vech(S)` and
+  the `V` sampling-covariance block by a set of 1-based vech positions, for
+  both the with-diagonal (`TYPE="S"`/`"S_Stand"`) and off-diagonal
+  (`TYPE="R"`) numbering. Validated against R to 1e-12. (R's matrix-input
+  path has an undefined-`RMATRIX` bug; the port matches the bug-free
+  `LDSC_OBJECT` path.)
+
+- **Ported `summaryGLSbands`** numeric core
+  (`gsem::stats::gls::summary_gls_bands`). GLS fit plus the confidence-band
+  data — predictor grid, fitted line, and ±`BAND_SIZE`·SE envelope at
+  `INTERVALS` points, with `INTERCEPT`/`QUAD`/`CONTROLVARS` support.
+  Validated against R to 1e-9. The ggplot rendering is not ported.
+
+- **Per-option R-equivalence coverage for the drop-in surface.** New
+  real-package fixtures and tests for previously-untested option branches:
+  `userGWAS` `estimation="ML"` / `GC={conserv,none}` / `Q_SNP` / `std.lv`;
+  `ldsc` `stand=TRUE` (S_Stand/V_Stand) / `select="ODD"` / `chisq.max` /
+  liability-scale; `sumstats` `ambig=TRUE` (full numeric parity); a
+  non-degenerate misspecified-model CFI/chisq fixture; the `paLDSC` `diag`
+  branch; and bindings parity suites (R testthat + Python pytest).
+
+- **Coverage instrumentation in CI.** A `cargo-llvm-cov` coverage job with a
+  ratcheting floor, Codecov upload + README badge, and an advisory R-side
+  covr job.
+
+- **R documentation site (pkgdown).** A published docs site for the `gsemr`
+  binding (reference index + Compatibility/Architecture articles generated
+  from the repo-root docs), deployed to GitHub Pages, with a navbar link to
+  the upstream GenomicSEM project.
+
+### Fixed
+
+- **`std.lv` left the factor scale unidentified.** `parse_model(std_lv=true)`
+  freed the auto-added latent variance instead of fixing it to 1 (lavaan's
+  `std.lv=TRUE` convention: `auto.fix.first=FALSE` + latent variances fixed
+  to 1). Any std.lv model — `userGWAS` / `usermodel` / `rgmodel(std_lv=)` —
+  estimated an unidentified factor scale and was ~12% off R. Now the
+  auto-add fixes the latent variance under `std_lv`. (`crates/gsem-sem/src/syntax.rs`)
+
+- **Q_SNP heterogeneity statistic + LDSC intercept floor.** `compute_q_snp`
+  computed the wrong quadratic form, and the LDSC intercept diagonal was not
+  floored at 1.0 before building the per-SNP `V` (R's `userGWAS.R:156`).
+  Both fixed; Q_SNP now matches R to ~1e-9.
+  (`crates/gsem/src/gwas/{q_snp,gc_correction,user_gwas}.rs`)
+
+---
+
+The following entries accumulated on `master` after 0.1.3 and ship in 0.2.0:
+
 ### Added
 
 - **R-equivalence coverage for `multiSNP`, `multiGene`, `simLDSC`, and
@@ -351,7 +414,8 @@ shipped across four distribution channels:
   support are now attached to the v0.1.0 release via a manual publish
   re-trigger.
 
-[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/PoHsuanLai/gsem/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PoHsuanLai/gsem/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/PoHsuanLai/gsem/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/PoHsuanLai/gsem/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/PoHsuanLai/gsem/compare/v0.1.0...v0.1.1
