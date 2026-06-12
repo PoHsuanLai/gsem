@@ -58,7 +58,18 @@ for (d in docs) {
     ""
   )
 
+  # "Edit this page" footer pointing at the TRUE source (the repo-root .md),
+  # not the generated vignette (which is gitignored).
+  edit_url <- paste0(repo_url, "/", d$src)
+  footer <- c(
+    "",
+    "----",
+    "",
+    paste0("*This page is generated from [`", d$src, "`](", edit_url,
+           ") in the repository — [edit it there](", edit_url, ").*")
+  )
+
   out_path <- file.path(vig_dir, paste0(d$out, ".Rmd"))
-  writeLines(c(header, body), out_path)
+  writeLines(c(header, body, footer), out_path)
   message("wrote ", out_path)
 }

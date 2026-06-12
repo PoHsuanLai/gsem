@@ -1,6 +1,7 @@
 # Build the gsemr (R binding) pkgdown documentation site and publish it to
-# GitHub Pages. Adapted from the standard r-lib/actions pkgdown workflow, with
-# the Rust staticlib build steps the package needs before it can be installed.
+# GitHub Pages via the GitHub Actions deployment (no gh-pages branch needed).
+# Adapted from the standard r-lib/actions pkgdown workflow, with the Rust
+# staticlib build steps the package needs before it can be installed.
 on:
   push:
     branches: [master, main]
@@ -12,13 +13,18 @@ on:
 name: pkgdown
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  pkgdown:
+  build:
     runs-on: ubuntu-latest
-    # Only publish on pushes/releases to the default branch, not on PRs (PRs
-    # build the site to catch errors but don't deploy).
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -63,13 +69,24 @@ jobs:
 
       - name: Build site
         working-directory: bindings/r
-        run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
+        run: pkgdown::build_site(new_process = FALSE, install = FALSE)
         shell: Rscript {0}
 
-      - name: Deploy to GitHub Pages
+      - name: Upload Pages artifact
         if: github.event_name != 'pull_request'
-        uses: JamesIves/github-pages-deploy-action@v4.5.0
+        uses: actions/upload-pages-artifact@v3
         with:
-          clean: false
-          branch: gh-pages
-          folder: bindings/r/docs
+          path: bindings/r/docs
+
+  # Deploy the built site to GitHub Pages (skipped on PRs, which only build).
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
