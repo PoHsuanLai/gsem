@@ -569,6 +569,73 @@ fn test_sumstats_ambiguous_semantics() {
         "keep_ambig=false should drop exactly the {n_ambiguous} ambiguous SNPs (dropped {})",
         kept - dropped
     );
+
+    // Numeric parity: with keep_ambig=false, the surviving SNPs and their
+    // betas/SEs must match R's real `sumstats(ambig=TRUE)` output, not just the
+    // count. sumstats_ambig.json is that R reference.
+    let ambig_fix = load_fixture("sumstats_ambig");
+    let config = gsem::sumstats::SumstatsConfig {
+        info_filter: 0.0,
+        maf_filter: 0.01,
+        n_overrides: n.iter().map(|&x| Some(x)).collect(),
+        se_logit: vec![false; k],
+        ols: vec![true; k],
+        linprob: vec![false; k],
+        keep_indel: false,
+        keep_ambig: false,
+        beta_overrides: vec![None; k],
+        direct_filter: false,
+        num_threads: Some(1),
+    };
+    let tmp = std::env::temp_dir().join(format!("gsem_ambig_parity_{}.tsv", std::process::id()));
+    gsem::sumstats::merge_sumstats(&raw_refs, &ref_file, &trait_names, &config, &tmp).unwrap();
+    let merged = gsem::io::sumstats_reader::read_merged_sumstats(&tmp).unwrap();
+    let _ = std::fs::remove_file(&tmp);
+
+    let mut by_snp: HashMap<String, usize> = HashMap::new();
+    for i in 0..merged.len() {
+        by_snp.insert(merged.snp[i].clone(), i);
+    }
+
+    let ra_snp = json_to_strs(&ambig_fix["snp"]);
+    let ra_beta = json_to_mat(&ambig_fix["beta"]);
+    let ra_se = json_to_mat(&ambig_fix["se"]);
+    assert_eq!(
+        merged.len(),
+        ra_snp.len(),
+        "keep_ambig=false SNP count must match R ambig=TRUE ({} vs {})",
+        merged.len(),
+        ra_snp.len()
+    );
+    let mut compared = 0;
+    for idx in 0..ra_snp.len() {
+        let Some(&ri) = by_snp.get(&ra_snp[idx]) else {
+            panic!("ambig parity: SNP {} missing from Rust output", ra_snp[idx]);
+        };
+        let beta = merged.beta_row(ri);
+        let se = merged.se_row(ri);
+        for t in 0..k {
+            assert_close(
+                beta[t].abs(),
+                ra_beta[(idx, t)].abs(),
+                1e-7,
+                1e-5,
+                &format!("ambig=TRUE |beta| {} trait {t}", ra_snp[idx]),
+            );
+            assert_close(
+                se[t],
+                ra_se[(idx, t)],
+                1e-7,
+                1e-5,
+                &format!("ambig=TRUE se {} trait {t}", ra_snp[idx]),
+            );
+        }
+        compared += 1;
+    }
+    assert!(
+        compared > 100,
+        "too few ambig=TRUE SNPs compared: {compared}"
+    );
 }
 
 /// Validate every one of R GenomicSEM's `sumstats` standardization modes
