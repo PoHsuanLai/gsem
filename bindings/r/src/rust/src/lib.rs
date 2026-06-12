@@ -1311,7 +1311,7 @@ fn enrich_rust(
         Err(e) => return conversions::error_list(e.to_string()),
     };
 
-    let result = gsem::stats::enrich::enrichment_test(
+    let result = gsem::stats::enrich::proportional_enrichment(
         &s_baseline_mat,
         &s_annot_mats,
         &v_annot_mats,

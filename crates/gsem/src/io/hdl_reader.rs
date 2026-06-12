@@ -115,3 +115,61 @@ pub fn load_hdl_pieces(ld_dir: &Path) -> Result<Vec<LdPiece>> {
 
     Ok(ld_pieces)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Build a minimal one-piece HDL reference directory: a pieces index, a
+    /// 2-SNP per-piece file, and its eigen file (eigenvalues row + vector rows).
+    fn write_hdl_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gsem_hdl_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut pieces = std::fs::File::create(dir.join("pieces.tsv")).unwrap();
+        writeln!(pieces, "chr\tpiece\tn").unwrap();
+        writeln!(pieces, "1\t1\t2").unwrap();
+
+        let mut snps = std::fs::File::create(dir.join("chr1.1.snps.tsv")).unwrap();
+        writeln!(snps, "SNP\tA1\tA2\tLD_score").unwrap();
+        writeln!(snps, "rs1\tA\tG\t1.20").unwrap();
+        writeln!(snps, "rs2\tC\tT\t0.80").unwrap();
+
+        // Eigen of a 2x2 block: row 0 = eigenvalues, then 2 eigenvector rows.
+        let mut eig = std::fs::File::create(dir.join("chr1.1.eigen.tsv")).unwrap();
+        writeln!(eig, "1.5\t0.5").unwrap();
+        writeln!(eig, "0.7071067811865476\t-0.7071067811865476").unwrap();
+        writeln!(eig, "0.7071067811865476\t0.7071067811865476").unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn test_load_hdl_pieces() {
+        let dir = write_hdl_dir();
+        let pieces = load_hdl_pieces(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(pieces.len(), 1);
+        let p = &pieces[0];
+        assert_eq!(p.m, 2);
+        assert_eq!(p.snps, vec!["rs1", "rs2"]);
+        assert_eq!(p.a1, vec!["A", "C"]);
+        assert_eq!(p.a2, vec!["G", "T"]);
+        assert!((p.ld_scores[0] - 1.20).abs() < 1e-10);
+        assert_eq!(p.eigenvalues.len(), 2);
+        assert!((p.eigenvalues[0] - 1.5).abs() < 1e-10);
+        assert_eq!(p.eigenvectors.nrows(), 2);
+        assert_eq!(p.eigenvectors.ncols(), 2);
+    }
+
+    #[test]
+    fn test_load_hdl_pieces_missing_index_errors() {
+        let dir = std::env::temp_dir().join(format!("gsem_hdl_empty_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let res = load_hdl_pieces(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(res.is_err(), "missing pieces.tsv should error");
+    }
+}

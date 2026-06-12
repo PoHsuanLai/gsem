@@ -1753,7 +1753,7 @@ fn run_enrich(args: EnrichArgs) -> Result<()> {
         data.annotation_names.len()
     );
 
-    let result = gsem::stats::enrich::enrichment_test(
+    let result = gsem::stats::enrich::proportional_enrichment(
         &s_baseline,
         &s_annot,
         &v_annot,

@@ -211,10 +211,8 @@ pub fn parse_model(model: &str, std_lv: bool) -> Result<ParTable, SemError> {
         let mut observed: Vec<String> = Vec::new();
         for row in &rows {
             match row.op {
-                Op::Loading => {
-                    if !latents.contains(&row.rhs) && !observed.contains(&row.rhs) {
-                        observed.push(row.rhs.clone());
-                    }
+                Op::Loading if !latents.contains(&row.rhs) && !observed.contains(&row.rhs) => {
+                    observed.push(row.rhs.clone());
                 }
                 Op::Regression => {
                     if !latents.contains(&row.lhs) && !observed.contains(&row.lhs) {

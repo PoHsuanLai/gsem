@@ -18,14 +18,19 @@ pub struct EnrichResult {
 /// Compares baseline vs annotation-specific S/V to test for differential
 /// SNP effects by functional category.
 ///
-/// Port of GenomicSEM's `enrich()`.
+/// NOTE: this is the gsemr "fast proportional enrichment" path used when the
+/// `enrich` wrapper is called with an empty `model` — it has NO direct R
+/// GenomicSEM counterpart (R's `enrich()` is always model-based). The faithful
+/// port of R's model-based `enrich()` is `gsem_sem::enrich_model::model_enrichment`,
+/// which is the path validated against R (`enrich_synth.json`). This function is
+/// therefore covered by its own unit tests rather than an R-equivalence fixture.
 ///
 /// Enrichment SE is computed via the delta method:
 ///   enrichment = (est_annot / est_baseline) / prop_snps
 ///   enrichment_se = (SE_annot / |est_baseline|) / prop_snps
 /// where est and SE come from fitting the model to the annotation-specific S
 /// and computing sandwich SEs using V.
-pub fn enrichment_test(
+pub fn proportional_enrichment(
     s_baseline: &Mat<f64>,
     s_annot: &[Mat<f64>],
     v_annot: &[Mat<f64>],
@@ -126,7 +131,8 @@ mod tests {
         let m_annot = vec![100000.0];
         let m_total = 1000000.0;
 
-        let result = enrichment_test(&s_baseline, &s_annot, &v_annot, &names, &m_annot, m_total);
+        let result =
+            proportional_enrichment(&s_baseline, &s_annot, &v_annot, &names, &m_annot, m_total);
         assert_eq!(result.annotations.len(), 1);
         assert!(result.enrichment[0] > 0.0);
         assert!(result.se[0] > 0.0, "SE should be positive, not placeholder");
