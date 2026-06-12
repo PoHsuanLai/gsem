@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use statrs::distribution::ContinuousCDF;
 
 use super::add_snps;
-use super::gc_correction::GcMode;
+use super::gc_correction::{GcMode, floor_intercept_diag};
 use gsem_sem::EstimationMethod;
 use gsem_sem::syntax::Op;
 
@@ -123,6 +123,12 @@ pub fn run_user_gwas(
 ) -> Vec<SnpResult> {
     let n_snps = var_snp.len();
     let k = s_ld.nrows();
+
+    // Floor the LDSC intercept diagonal at 1.0 before building per-SNP V, matching
+    // R GenomicSEM userGWAS.R:156 `diag(I_LD) <- ifelse(diag(I_LD) <= 1, 1, diag(I_LD))`.
+    // The intercept can dip below 1 from sampling noise; R clamps it so the SNP
+    // sampling variances (and hence Q_SNP) are not deflated.
+    let i_ld = &floor_intercept_diag(i_ld);
 
     let mut pt = config.model.clone();
 
@@ -406,11 +412,42 @@ fn process_single_snp(
         None,
     );
 
-    // Compute Q_SNP if requested
+    // Compute Q_SNP if requested. R computes Q_SNP per factor that has an
+    // estimated `factor ~ SNP` effect, over that factor's indicators only
+    // (df = #indicators - 1). The scalar SnpResult holds the first such
+    // factor's Q (the common single-factor GWAS case); multi-factor per-row
+    // attribution is a future extension.
     let (q_snp_val, q_snp_df_val, q_snp_p_val) = if config.q_snp {
-        let (q, df, p) = super::q_snp::compute_q_snp(&s_full, &sigma_hat, &v_full)
-            .expect("q_snp: matrices must be square");
-        (Some(q), Some(df), Some(p))
+        // Factors with a `factor ~ SNP` regression.
+        let snp_factors: std::collections::HashSet<&str> = pt_snp
+            .rows
+            .iter()
+            .filter(|r| r.op == Op::Regression && r.rhs == snp_label)
+            .map(|r| r.lhs.as_str())
+            .collect();
+
+        // Indicators (phenotype indices, 0-based) of the first SNP-effect
+        // factor, mapped through obs_names (index 0 = SNP, 1..=k = phenotypes).
+        let indicators: Vec<usize> = pt_snp
+            .rows
+            .iter()
+            .filter(|r| r.op == Op::Loading && snp_factors.contains(r.lhs.as_str()))
+            .filter_map(|r| {
+                obs_names
+                    .iter()
+                    .position(|name| name == &r.rhs)
+                    .map(|pos| pos - 1) // phenotype index = obs position - 1 (SNP at 0)
+            })
+            .collect();
+
+        if indicators.is_empty() {
+            (None, None, None)
+        } else {
+            let residual = &s_full - &sigma_hat;
+            let (q, df, p) = super::q_snp::compute_q_snp(&residual, &v_full, &indicators)
+                .expect("q_snp: matrices must be square");
+            (Some(q), Some(df), Some(p))
+        }
     } else {
         (None, None, None)
     };

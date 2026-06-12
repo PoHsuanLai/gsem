@@ -237,4 +237,84 @@ fixture <- list(
 path <- file.path(outdir, "gwas_per_snp.json")
 writeLines(toJSON(fixture, auto_unbox = TRUE, digits = 15), path)
 cat("\nWrote", path, "\n")
+
+# ===========================================================================
+# OPTION MATRIX (gwas_options.json)
+#
+# Phase 1 of the coverage plan: exercise the behaviour-changing arguments of
+# userGWAS/commonfactorGWAS that the Rust port already implements but no
+# fixture covers (estimation=ML, GC modes, Q_SNP, fix_measurement). Each
+# variant calls the REAL package and stores the per-SNP F1~SNP effect under a
+# named key, mirroring the sumstats `modes` map pattern.
+#
+# The baseline DWLS/Standard/fix_measurement=TRUE case stays in
+# gwas_per_snp.json above; here we vary one option at a time off that baseline.
+# ===========================================================================
+setwd(bench_dir)
+
+# Extract the F1~SNP effect row per unique SNP from a userGWAS result list,
+# preserving Q_SNP columns when present. Returns a list keyed by SNP order.
+extract_user_snp_effects <- function(res) {
+  if (is.null(res)) return(NULL)
+  df <- if (is.list(res) && !is.data.frame(res)) do.call(rbind, res) else res
+  unique_snps <- unique(df$SNP)
+  lapply(unique_snps, function(snp_id) {
+    sd <- df[df$SNP == snp_id, ]
+    eff <- sd[sd$op == "~" & sd$rhs == "SNP", ]
+    if (nrow(eff) == 0) eff <- sd[sd$free > 0, ]
+    if (nrow(eff) == 0) return(NULL)
+    row <- eff[1, ]
+    getn <- function(col) if (col %in% colnames(row)) as.numeric(row[[col]]) else NA
+    list(
+      SNP      = as.character(snp_id),
+      est      = as.numeric(row$est),
+      se       = getn("SE"),
+      z        = getn("Z_Estimate"),
+      p        = getn("Pval_Estimate"),
+      chisq    = getn("chisq"),
+      chisq_df = getn("chisq_df"),
+      q_snp     = getn("Q_SNP"),
+      q_snp_df  = getn("Q_SNP_df"),
+      q_snp_p   = getn("Q_SNP_pval")
+    )
+  })
+}
+
+run_user_variant <- function(label, ...) {
+  cat("  userGWAS variant:", label, "...\n")
+  res <- tryCatch(
+    GenomicSEM::userGWAS(covstruc = r_cov, SNPs = snps_subset,
+                         model = user_model, parallel = FALSE, ...),
+    error = function(e) { cat("    (", label, " failed: ", e$message, ")\n"); NULL }
+  )
+  extract_user_snp_effects(res)
+}
+
+options_fixture <- list(
+  # estimation = "ML" (baseline is DWLS) → EstimationMethod::Ml
+  ml             = run_user_variant("ml", estimation = "ML"),
+  # GC modes (baseline is "standard") → GcMode::{Conservative,None}.
+  # Note: R's userGWAS uses the abbreviated "conserv", not "conservative".
+  gc_conservative = run_user_variant("gc_conservative", GC = "conserv"),
+  gc_none        = run_user_variant("gc_none", GC = "none")
+  # Q_SNP heterogeneity statistic → compute_q_snp (Rust q_snp.rs, currently 0%)
+  , q_snp        = run_user_variant("q_snp", Q_SNP = TRUE)
+  # NB: fix_measurement=FALSE is NOT included — on this 3-trait / sample.nobs=2
+  # subset R's free-measurement fit is computationally singular (reciprocal
+  # condition ~2e-17), so there is no R reference to compare against. The
+  # fix_measurement=TRUE baseline is the tested path (gwas_per_snp.json).
+)
+
+# Carry the shared S/V/I/SNP inputs so the Rust test is self-contained.
+options_fixture$s           <- fixture$s
+options_fixture$v           <- fixture$v
+options_fixture$i_mat       <- fixture$i_mat
+options_fixture$trait_names <- trait_names
+options_fixture$snps        <- fixture$snps
+options_fixture$model       <- user_model
+
+setwd(file.path("..", "tests"))
+opath <- file.path(outdir, "gwas_options.json")
+writeLines(toJSON(options_fixture, auto_unbox = TRUE, digits = 15), opath)
+cat("Wrote", opath, "\n")
 cat("Done.\n")
