@@ -11,6 +11,8 @@ Description: A Rust-accelerated implementation of GenomicSEM for multivariate
     identical results and significantly faster execution.
 License: GPL-3
 Encoding: UTF-8
+URL: https://github.com/PoHsuanLai/gsem, https://pohsuanlai.github.io/gsem/
+BugReports: https://github.com/PoHsuanLai/gsem/issues
 SystemRequirements: Rust (>= 1.70), cargo
 Suggests: bench, psych
 RoxygenNote: 7.3.3
