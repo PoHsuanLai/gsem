@@ -20,7 +20,15 @@
 suppressMessages({
   library(jsonlite); library(GenomicSEM); library(dplyr); library(Matrix)
 })
-source("/tmp/multiGene_patched.R")   # patched multiGene (V_SNP -> V_Gene)
+# Build the minimally-patched multiGene self-containedly: take the installed
+# GenomicSEM::multiGene source and fix the single `V_SNP` -> `V_Gene` typo that
+# otherwise aborts the function for k >= 2 traits.
+multiGene <- local({
+  src <- deparse(GenomicSEM:::multiGene)
+  # multiGene has no legitimate V_SNP, only the typo, so replace the name.
+  src <- gsub("V_SNP", "V_Gene", src)
+  eval(parse(text = paste(src, collapse = "\n")))
+})
 outdir <- "fixtures"
 mat_to_list <- function(m) lapply(seq_len(nrow(m)), function(i) as.numeric(m[i, ]))
 
