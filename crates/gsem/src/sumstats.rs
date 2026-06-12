@@ -11,10 +11,102 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use statrs::distribution::{ContinuousCDF, Normal};
 
 use crate::io::column_detect;
 use crate::io::gwas_reader::open_file_reader;
 use crate::munge::allele::{AlleleMatch, alleles_match};
+
+/// Per-trait beta standardization mode, mirroring R GenomicSEM's
+/// `sumstats()` OLS / linprob / se.logit / betas arguments. The default
+/// (no flag) applies R's logistic "none" transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdMode {
+    /// `OLS=TRUE`: continuous trait. beta = Z/sqrt(N*varSNP), se = 1/sqrt(N*varSNP).
+    Ols,
+    /// `linprob=TRUE`: binary trait via linear-probability model.
+    Linprob,
+    /// `se.logit=TRUE`: logistic effect with logistic SE.
+    SeLogit,
+    /// Default: logistic effect, SE on the OR scale.
+    None,
+    /// `betas=<col>`: betas already standardized — pass through unchanged.
+    Passthrough,
+}
+
+/// Z = sign(effect) * sqrt(qchisq(p, df=1, lower.tail=FALSE))
+///   = sign(effect) * |qnorm(p/2)|.  Matches R GenomicSEM's Z derivation.
+fn z_from_p(effect: f64, p: f64, normal: &Normal) -> f64 {
+    if effect == 0.0 {
+        return 0.0;
+    }
+    if p <= 0.0 {
+        return if effect > 0.0 { 37.0 } else { -37.0 };
+    }
+    let z_abs = normal.inverse_cdf(1.0 - p / 2.0);
+    if !z_abs.is_finite() {
+        return if effect > 0.0 { 37.0 } else { -37.0 };
+    }
+    if effect > 0.0 { z_abs } else { -z_abs }
+}
+
+/// Apply R GenomicSEM's per-trait beta/SE standardization. Returns
+/// `(beta, se)` on the standardized genetic-covariance scale, or `None`
+/// if the SNP cannot be standardized (missing N/P, degenerate varSNP).
+fn standardize(
+    mode: StdMode,
+    effect: f64,
+    se: f64,
+    p: Option<f64>,
+    n: Option<f64>,
+    var_snp: f64,
+    normal: &Normal,
+) -> Option<(f64, f64)> {
+    if var_snp <= 0.0 || !var_snp.is_finite() {
+        return None;
+    }
+    let logit_denom = (effect * effect * var_snp + std::f64::consts::PI.powi(2) / 3.0).sqrt();
+    match mode {
+        StdMode::Passthrough => Some((effect, se)),
+        StdMode::Ols => {
+            let (p, n) = (p?, n?);
+            let z = z_from_p(effect, p, normal);
+            if z == 0.0 || n <= 0.0 {
+                return None;
+            }
+            let beta = z / (n * var_snp).sqrt();
+            let se_out = (beta / z).abs(); // == 1/sqrt(N*varSNP)
+            Some((beta, se_out))
+        }
+        StdMode::Linprob => {
+            let (p, n) = (p?, n?);
+            let z = z_from_p(effect, p, normal);
+            if n <= 0.0 {
+                return None;
+            }
+            let e = z / ((n / 4.0) * var_snp).sqrt();
+            let s = 1.0 / ((n / 4.0) * var_snp).sqrt();
+            let denom = (e * e * var_snp + std::f64::consts::PI.powi(2) / 3.0).sqrt();
+            Some((e / denom, s / denom))
+        }
+        StdMode::SeLogit => Some((effect / logit_denom, se / logit_denom)),
+        StdMode::None => Some((effect / logit_denom, (se / effect.exp()) / logit_denom)),
+    }
+}
+
+fn std_mode_for(config: &SumstatsConfig, i: usize) -> StdMode {
+    if config.beta_overrides.get(i).is_some_and(|o| o.is_some()) {
+        StdMode::Passthrough
+    } else if config.ols.get(i).copied().unwrap_or(false) {
+        StdMode::Ols
+    } else if config.linprob.get(i).copied().unwrap_or(false) {
+        StdMode::Linprob
+    } else if config.se_logit.get(i).copied().unwrap_or(false) {
+        StdMode::SeLogit
+    } else {
+        StdMode::None
+    }
+}
 
 /// Configuration for the sumstats merge pipeline.
 #[derive(Debug, Clone)]
@@ -327,6 +419,8 @@ struct GwasColumnPlan {
     se: Option<usize>,
     info: Option<usize>,
     maf: Option<usize>,
+    p: Option<usize>,
+    n: Option<usize>,
 }
 
 /// Read a GWAS file and apply QC filters in a single streaming pass.
@@ -389,10 +483,17 @@ fn read_and_qc_gwas(
         se: detected.get("SE"),
         info: detected.get("INFO"),
         maf: detected.get("MAF"),
+        p: detected.get("P"),
+        n: detected.get("N"),
     };
 
     let skip_or_detect = config.se_logit.get(trait_idx).copied().unwrap_or(false)
         || config.ols.get(trait_idx).copied().unwrap_or(false);
+
+    // Beta standardization mode for this trait (R: OLS/linprob/se.logit/betas).
+    let std_mode = std_mode_for(config, trait_idx);
+    let n_override = config.n_overrides.get(trait_idx).copied().flatten();
+    let normal = Normal::new(0.0, 1.0).expect("standard normal");
 
     // Preallocate assuming most reference SNPs will also be present in the
     // file — close enough that we avoid most resizes.
@@ -419,6 +520,8 @@ fn read_and_qc_gwas(
         let mut se: Option<f64> = None;
         let mut info: Option<f64> = None;
         let mut maf_raw: Option<f64> = None;
+        let mut p_val: Option<f64> = None;
+        let mut n_val: Option<f64> = None;
 
         for (i, field) in line_fields(trimmed).enumerate() {
             if i == plan.snp {
@@ -435,6 +538,10 @@ fn read_and_qc_gwas(
                 info = field.parse().ok();
             } else if plan.maf == Some(i) {
                 maf_raw = field.parse().ok();
+            } else if plan.p == Some(i) {
+                p_val = field.parse().ok();
+            } else if plan.n == Some(i) {
+                n_val = field.parse().ok();
             }
         }
 
@@ -446,10 +553,20 @@ fn read_and_qc_gwas(
             continue;
         }
 
-        // Must have effect and SE. R's sumstats stops when these are missing.
+        // Must have a finite effect. SE is only required for the modes that
+        // consume it directly (se.logit / none / passthrough); OLS and
+        // linprob recompute SE from N and varSNP, so R does not require it.
         let Some(effect) = effect else { continue };
-        let Some(se) = se else { continue };
-        if !effect.is_finite() || se <= 0.0 || !se.is_finite() {
+        if !effect.is_finite() {
+            continue;
+        }
+        let needs_se = matches!(
+            std_mode,
+            StdMode::SeLogit | StdMode::None | StdMode::Passthrough
+        );
+        let se = se.unwrap_or(f64::NAN);
+        let se_ok = se.is_finite() && se > 0.0;
+        if needs_se && !se_ok {
             continue;
         }
 
@@ -483,13 +600,40 @@ fn read_and_qc_gwas(
 
         // Detect and convert OR to log(OR). Skip auto-detect if se_logit or
         // ols is set for this trait (effects are already on the correct scale).
-        let beta = if !skip_or_detect && is_or_value(effect) {
+        let effect_conv = if !skip_or_detect && is_or_value(effect) {
             if effect <= 0.0 {
                 continue;
             }
             effect.ln()
         } else {
             effect
+        };
+
+        // R removes effect==0 rows (they break matrix inversion downstream).
+        if effect_conv == 0.0 {
+            continue;
+        }
+
+        // varSNP = 2*MAF*(1-MAF). R prefers the GWAS file's MAF, falling back
+        // to the reference panel MAF; SNPs with MAF == 0 or 1 are dropped.
+        let maf_eff = match maf {
+            Some(m) if m > 0.0 && m < 1.0 => m,
+            Some(_) => continue, // file MAF == 0 or 1
+            None => match ref_snps.get(snp).and_then(|r| r.maf) {
+                Some(m) if m > 0.0 && m < 1.0 => m,
+                _ => continue,
+            },
+        };
+        let var_snp = 2.0 * maf_eff * (1.0 - maf_eff);
+
+        // Effective sample size: user override (config.n_overrides) takes
+        // precedence over the file's N column, matching R's N argument.
+        let n_eff = n_override.or(n_val);
+
+        let Some((beta, se)) =
+            standardize(std_mode, effect_conv, se, p_val, n_eff, var_snp, &normal)
+        else {
+            continue;
         };
 
         records.insert(

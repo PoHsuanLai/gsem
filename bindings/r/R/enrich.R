@@ -58,107 +58,30 @@ enrich <- function(s_covstruc, model = "", params = NULL, fix = "regressions",
     return(as.data.frame(result, stringsAsFactors = FALSE))
   }
 
-  # SEM-based enrichment: fit model per annotation and compare to baseline
-  n_annot <- length(s_covstruc$S_annot)
-  annotation_names <- as.character(s_covstruc$annotation_names)
+
+  # SEM-based enrichment via the validated Rust implementation
+  # (gsem_sem::enrich_model::model_enrichment), matching R GenomicSEM's
+  # `enrich`: fit the model to the baseline annotation, fix the
+  # regressions/loadings (per `fix`), re-fit each annotation freeing the
+  # remaining parameters, and report enrichment = (est_annot/est_base)/Prop.
+  as_num_matrix <- function(M) { M <- as.matrix(M); matrix(as.numeric(M), nrow = nrow(M)) }
+  s_list <- lapply(s_covstruc$S_annot, as_num_matrix)
+  v_list <- lapply(s_covstruc$V_annot, as_num_matrix)
   m_annot <- as.numeric(s_covstruc$m_annot)
-
-  # Tau parameterization: convert S_annot to per-SNP contribution
-  # tau = S_annot / m_annot (removes M scaling, gives per-SNP genetic covariance)
-  s_annot_use <- s_covstruc$S_annot
-  if (tau) {
-    s_annot_use <- lapply(seq_len(n_annot), function(a) {
-      if (m_annot[a] > 0) {
-        as.matrix(s_covstruc$S_annot[[a]]) / m_annot[a]
-      } else {
-        as.matrix(s_covstruc$S_annot[[a]])
-      }
-    })
+  # Proportion of SNPs per annotation relative to the baseline (base = 1).
+  prop <- m_annot / m_annot[1]
+  annot_names <- as.character(s_covstruc$annotation_names)
+  obs_names <- colnames(as.matrix(s_covstruc$S_annot[[1]]))
+  if (is.null(obs_names)) obs_names <- paste0("V", seq_len(nrow(s_list[[1]])))
+  if (is.null(params)) {
+    stop("gsemr::enrich: 'params' must specify the target parameter(s), e.g. \"F1~~F1\".")
   }
 
-  # Fit baseline model
-  baseline_covstruc <- list(
-    S = as.matrix(s_covstruc$S_baseline),
-    V = s_covstruc$V_annot[[1]],  # Use first annotation's V as baseline V
-    I = diag(nrow(as.matrix(s_covstruc$S_baseline))),
-    N = NULL,
-    m = s_covstruc$m_total
+  result <- .Call("wrap__enrich_model_rust",
+    s_list, v_list, as.numeric(prop),
+    as.character(obs_names), annot_names,
+    as.character(model), as.character(params), as.character(fix)
   )
-  baseline_fit <- usermodel(baseline_covstruc, model = model, std.lv = std.lv,
-                            toler = toler, CFIcalc = FALSE)
-  baseline_params <- baseline_fit$results
-
-  # Apply fixparam if specified
-  model_with_fixes <- model
-  if (!is.null(fixparam)) {
-    for (pname in names(fixparam)) {
-      # fixparam adds constraints like "param_name == value"
-      model_with_fixes <- paste0(model_with_fixes, "\n", pname, " == ", fixparam[[pname]])
-    }
-  }
-
-  # Determine which baseline params to fix based on 'fix' argument
-  if (identical(fix, "regressions")) {
-    fix_rows <- baseline_params[baseline_params$op == "~", ]
-  } else if (identical(fix, "loadings")) {
-    fix_rows <- baseline_params[baseline_params$op == "=~", ]
-  } else {
-    fix_rows <- data.frame()
-  }
-
-  # Build per-annotation model with fixed parameters from baseline
-  annot_model <- model_with_fixes
-  if (nrow(fix_rows) > 0) {
-    for (i in seq_len(nrow(fix_rows))) {
-      constraint <- paste0(fix_rows$lhs[i], " ", fix_rows$op[i], " ",
-                           format(fix_rows$est[i], digits = 10), "*", fix_rows$rhs[i])
-      annot_model <- paste0(annot_model, "\n", constraint)
-    }
-  }
-
-  # Fit model per annotation
-  results_list <- list()
-  for (a in seq_len(n_annot)) {
-    annot_covstruc <- list(
-      S = as.matrix(s_annot_use[[a]]),
-      V = as.matrix(s_covstruc$V_annot[[a]]),
-      I = diag(nrow(as.matrix(s_annot_use[[a]]))),
-      N = NULL,
-      m = if (tau) 1.0 else s_covstruc$m_annot[a]
-    )
-
-    annot_fit <- tryCatch(
-      usermodel(annot_covstruc, model = annot_model, std.lv = std.lv,
-                toler = toler, CFIcalc = FALSE),
-      error = function(e) NULL
-    )
-
-    if (is.null(annot_fit)) {
-      results_list[[a]] <- data.frame(
-        annotation = annotation_names[a],
-        stringsAsFactors = FALSE
-      )
-      next
-    }
-
-    annot_params <- annot_fit$results
-
-    # Filter to requested params
-    if (!is.null(params)) {
-      param_keys <- paste0(annot_params$lhs, annot_params$op, annot_params$rhs)
-      annot_params <- annot_params[param_keys %in% params, ]
-    }
-
-    if (nrow(annot_params) > 0) {
-      annot_params$annotation <- annotation_names[a]
-      results_list[[a]] <- annot_params
-    } else {
-      results_list[[a]] <- data.frame(
-        annotation = annotation_names[a],
-        stringsAsFactors = FALSE
-      )
-    }
-  }
-
-  do.call(rbind, results_list)
+  if (!is.null(result$error)) stop("gsemr::enrich error: ", result$error)
+  as.data.frame(result, stringsAsFactors = FALSE)
 }

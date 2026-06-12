@@ -87,11 +87,23 @@ pub fn load_hdl_pieces(ld_dir: &Path) -> Result<Vec<LdPiece>> {
 
         let m = snps.len();
         if m > 0 {
+            // Eigen-decomposition of the block LD matrix (lam / V), required by
+            // the HDL likelihood. Stored alongside the SNP file.
+            let eigen_file = ld_dir.join(format!("chr{chr_val}.{piece_val}.eigen.tsv"));
+            let (eigenvalues, eigenvectors) = gsem_ldsc::hdl::read_eigen_file(&eigen_file)
+                .with_context(|| {
+                    format!(
+                        "HDL piece chr{chr_val}.{piece_val} is missing its eigen file {}",
+                        eigen_file.display()
+                    )
+                })?;
             ld_pieces.push(LdPiece {
                 snps,
                 a1,
                 a2,
                 ld_scores,
+                eigenvalues,
+                eigenvectors,
                 m,
             });
         }

@@ -22,15 +22,44 @@ impl Default for SimConfig {
     }
 }
 
+/// Per-SNP variance-covariance matrix of Z statistics for a single LD score.
+///
+/// This is the deterministic core of GenomicSEM's `simLDSC()` (the matrix the
+/// random Z vector is drawn from). For an LD score `ld`:
+///   - `Sigma[i,i] = int_i + (N_i * S_ii / M) * ld`
+///   - `Sigma[i,j] = (sqrt(N_i N_j) * S_ij / M) * ld + rPheno_ij * N_ij/sqrt(N_i N_j)`
+///
+/// `intercepts` carries the per-trait LDSC intercepts on its diagonal (off-diagonal
+/// ignored). The phenotypic-overlap term uses the scalar `n_overlap`, which equals
+/// R's `N_ij/sqrt(N_i N_j)` when the sample-overlap matrix is constructed that way.
+pub fn per_snp_z_cov(
+    s: &Mat<f64>,
+    n_per_trait: &[f64],
+    ld: f64,
+    m: f64,
+    intercepts: &Mat<f64>,
+    r_pheno: Option<&Mat<f64>>,
+    n_overlap: f64,
+) -> Mat<f64> {
+    let k = s.nrows();
+    Mat::from_fn(k, k, |i, j| {
+        let sqrt_nn = (n_per_trait[i] * n_per_trait[j]).sqrt();
+        let genetic = s[(i, j)] / m * ld * sqrt_nn;
+        if i == j {
+            intercepts[(i, i)] + genetic
+        } else {
+            let env = r_pheno.map_or(0.0, |rp| rp[(i, j)] * n_overlap);
+            genetic + env
+        }
+    })
+}
+
 /// Simulate GWAS summary statistics under a specified genetic model.
 ///
-/// Port of GenomicSEM's `simLDSC()`.
-///
-/// For each SNP with LD score `l`, the per-SNP Z covariance is:
-///   `Sigma_Z[i,j] = int[i,j] + S[i,j]/M * l * sqrt(N_i * N_j)`
-///
-/// When `r_pheno` and `n_overlap` are provided, an environmental component is added:
-///   `Sigma_Z[i,j] += r_pheno[i,j] * n_overlap * sqrt(N_i * N_j) / n_snps`
+/// Port of GenomicSEM's `simLDSC()`. For each SNP the per-SNP Z covariance is
+/// built by [`per_snp_z_cov`]; an independent multivariate-normal Z vector is
+/// then drawn from it. (The random draw is platform-dependent; the deterministic
+/// `per_snp_z_cov` is the R-equivalent piece.)
 pub fn simulate_sumstats(
     s: &Mat<f64>,
     n_per_trait: &[f64],
@@ -42,9 +71,6 @@ pub fn simulate_sumstats(
     let n_snps = ld_scores.len();
     let mut rng = rand::rng();
 
-    // Pre-compute sqrt(N_i * N_j)
-    let sqrt_nn: Mat<f64> = Mat::from_fn(k, k, |i, j| (n_per_trait[i] * n_per_trait[j]).sqrt());
-
     // Intercept matrix (default: identity)
     let int_mat = config
         .intercepts
@@ -52,26 +78,22 @@ pub fn simulate_sumstats(
         .cloned()
         .unwrap_or_else(|| Mat::<f64>::identity(k, k));
 
-    // Environmental covariance contribution (constant across SNPs)
-    let env_cov = match &config.r_pheno {
-        Some(r_pheno) if config.n_overlap > 0.0 => Some(Mat::from_fn(k, k, |i, j| {
-            r_pheno[(i, j)] * config.n_overlap * sqrt_nn[(i, j)] / n_snps as f64
-        })),
-        _ => None,
-    };
-
     let mut z_all = vec![vec![0.0; n_snps]; k];
     let mut ind = vec![0.0; k];
 
     for s_idx in 0..n_snps {
         let ld = ld_scores[s_idx];
 
-        // Build per-SNP covariance: int + (S/M * ld) * sqrt(Ni*Nj) + env
-        let sigma_z = Mat::from_fn(k, k, |i, j| {
-            let genetic = s[(i, j)] / m * ld * sqrt_nn[(i, j)];
-            let env = env_cov.as_ref().map_or(0.0, |e| e[(i, j)]);
-            int_mat[(i, j)] + genetic + env
-        });
+        // Build per-SNP covariance (deterministic R-equivalent construction).
+        let sigma_z = per_snp_z_cov(
+            s,
+            n_per_trait,
+            ld,
+            m,
+            &int_mat,
+            config.r_pheno.as_ref(),
+            config.n_overlap,
+        );
 
         // Cholesky of per-SNP covariance
         let chol = cholesky_or_sqrt(&sigma_z, k);

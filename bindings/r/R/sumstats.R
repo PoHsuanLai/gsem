@@ -25,7 +25,8 @@
 #'   \code{length(files) + 1} don't help. On many-core machines (32+)
 #'   or when the underlying BLAS is multithreaded, set this explicitly
 #'   to avoid oversubscribing CPUs with nested BLAS threads.
-#' @param ambig Keep ambiguous SNPs (default FALSE)
+#' @param ambig Remove strand-ambiguous SNPs (A/T, C/G). Matches R
+#'   GenomicSEM: default FALSE KEEPS ambiguous SNPs; TRUE removes them.
 #' @param direct.filter Apply MAF filter directly to GWAS file frequencies (default FALSE)
 #' @param out Output file path for the merged sumstats TSV (default "merged_sumstats.tsv")
 #' @return Path to the merged output file
@@ -96,7 +97,9 @@ sumstats <- function(files, ref, trait.names=NULL, se.logit, OLS=NULL, linprob=N
     as.character(out),
     as.integer(se.logit), as.integer(OLS), as.integer(linprob),
     as.character(n_overrides_json),
-    as.logical(ambig),
+    # R GenomicSEM's `ambig` means "remove ambiguous"; the Rust core takes
+    # keep_ambig (the inverse). ambig=FALSE (default) -> keep_ambig=TRUE.
+    as.logical(!ambig),
     as.character(betas_json),
     as.logical(direct.filter),
     num_threads

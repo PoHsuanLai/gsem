@@ -17,6 +17,10 @@
 #' \describe{
 #'   \item{pieces.tsv}{Tab-delimited index: chr, piece, n_snps}
 #'   \item{chr\{N\}.\{P\}.snps.tsv}{Per-piece SNP data: SNP, A1, A2, LDsc}
+#'   \item{chr\{N\}.\{P\}.eigen.tsv}{Per-piece eigen-decomposition of the block
+#'     LD matrix: line 1 = eigenvalues (\code{lam}); the next m lines = the m x m
+#'     eigenvector matrix (\code{V}). The HDL likelihood is evaluated in this
+#'     eigenspace, so this file is required.}
 #' }
 #'
 #' These files are read by \code{genomicsem hdl --ld-path <out.path>}.
@@ -85,10 +89,12 @@ convert_hdl_panels <- function(ld.path, out.path, verbose = TRUE) {
       next
     }
 
-    # Load LD scores
+    # Load LD scores plus the eigen-decomposition (lam, V).
     piece.env <- new.env()
     load(rda.files[1], envir = piece.env)
     ldsc <- piece.env$LDsc
+    lam <- piece.env$lam
+    V <- piece.env$V
 
     # Load bim file (PLINK format: CHR, SNP, CM, BP, A1, A2)
     bim <- read.table(bim.files[1], header = FALSE, stringsAsFactors = FALSE)
@@ -104,6 +110,18 @@ convert_hdl_panels <- function(ld.path, out.path, verbose = TRUE) {
 
     out.file <- file.path(out.path, sprintf("chr%d.%d.snps.tsv", chr, p))
     write.table(out.df, out.file, sep = "\t", row.names = FALSE, quote = FALSE)
+
+    # Emit the eigen file: line 1 = eigenvalues, then the m x m eigenvector matrix.
+    if (!is.null(lam) && !is.null(V)) {
+      eigen.file <- file.path(out.path, sprintf("chr%d.%d.eigen.tsv", chr, p))
+      con <- file(eigen.file, "w")
+      writeLines(paste(lam[1:n_snps], collapse = "\t"), con)
+      Vsub <- as.matrix(V)[1:n_snps, 1:n_snps, drop = FALSE]
+      for (r in seq_len(n_snps)) {
+        writeLines(paste(Vsub[r, ], collapse = "\t"), con)
+      }
+      close(con)
+    }
     n_converted <- n_converted + 1
 
     if (verbose && n_converted %% 50 == 0) {

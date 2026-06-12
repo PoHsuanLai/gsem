@@ -266,6 +266,78 @@ fn read_m_annot_file(path: &Path) -> Result<Vec<f64>> {
 
 /// Read PLINK `.frq` files for the given chromosomes.
 ///
+/// Read per-chromosome `.annot.gz` membership files and a `.frq` MAF filter,
+/// and return the annotation overlap cross-product matrix
+/// `cross[f,a] = Σ_SNP annot_f · annot_a` over MAF-filtered SNPs (R's
+/// `annot.matrix`). Used by stratified LDSC to compute overlap-weighted
+/// partitioned heritability. Annotation columns are taken in file order
+/// (skipping CHR/SNP/BP/CM/MAF), matching the LD-score reader's ordering.
+pub fn read_annot_cross(
+    annot_dir: &Path,
+    frq_dir: &Path,
+    chromosomes: &[usize],
+) -> Result<Mat<f64>> {
+    let keep = read_frq_files(frq_dir, chromosomes)?;
+    let mut cross: Option<Vec<Vec<f64>>> = None;
+
+    for &chr in chromosomes {
+        let path = annot_dir.join(format!("{chr}.annot.gz"));
+        if !path.exists() {
+            continue;
+        }
+        let file = std::fs::File::open(&path)
+            .with_context(|| format!("cannot open {}", path.display()))?;
+        let reader = BufReader::new(GzDecoder::new(file));
+        let mut lines = reader.lines();
+
+        let header = lines.next().context("empty annot file")??;
+        let fields: Vec<&str> = if header.contains('\t') {
+            header.split('\t').collect()
+        } else {
+            header.split_whitespace().collect()
+        };
+        let snp_idx = fields
+            .iter()
+            .position(|&h| h == "SNP")
+            .context("SNP column not found in annot file")?;
+        let skip: std::collections::HashSet<&str> =
+            ["CHR", "SNP", "BP", "CM", "MAF"].iter().copied().collect();
+        let annot_cols: Vec<usize> = fields
+            .iter()
+            .enumerate()
+            .filter(|&(_, name)| !skip.contains(name))
+            .map(|(i, _)| i)
+            .collect();
+        let n_annot = annot_cols.len();
+        let cross = cross.get_or_insert_with(|| vec![vec![0.0; n_annot]; n_annot]);
+
+        for line in lines {
+            let line = line?;
+            let flds: Vec<&str> = if line.contains('\t') {
+                line.split('\t').collect()
+            } else {
+                line.split_whitespace().collect()
+            };
+            if flds.len() <= snp_idx || !keep.contains_key(flds[snp_idx]) {
+                continue;
+            }
+            let vals: Vec<f64> = annot_cols
+                .iter()
+                .map(|&c| flds.get(c).and_then(|v| v.parse().ok()).unwrap_or(0.0))
+                .collect();
+            for f in 0..n_annot {
+                for a in 0..n_annot {
+                    cross[f][a] += vals[f] * vals[a];
+                }
+            }
+        }
+    }
+
+    let cross = cross.context("no annotation files found")?;
+    let n = cross.len();
+    Ok(Mat::from_fn(n, n, |i, j| cross[i][j]))
+}
+
 /// Expects files at `{frq_dir}/{chr}.frq` with columns: CHR, SNP, A1, A2, MAF, NCHROBS.
 /// Returns a map of SNP → MAF for SNPs with MAF in (0.05, 0.95).
 pub fn read_frq_files(frq_dir: &Path, chromosomes: &[usize]) -> Result<HashMap<String, f64>> {

@@ -6,7 +6,7 @@
 //! The piecewise method (default in GenomicSEM) partitions the genome
 //! into LD blocks and optimizes the likelihood per block.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use faer::Mat;
@@ -36,6 +36,11 @@ pub struct HdlResult {
 }
 
 /// Per-piece LD reference data (pre-computed).
+///
+/// Matches the contents of GenomicSEM/HDL's per-piece `.rda` reference files:
+/// the LD scores (`LDsc`, used for the OLS/WLS starting values) plus the
+/// eigen-decomposition of the block LD correlation matrix (`lam` = eigenvalues,
+/// `V` = eigenvectors). The HDL likelihood is evaluated in this eigenspace.
 pub struct LdPiece {
     /// SNP names in this piece
     pub snps: Vec<String>,
@@ -43,8 +48,12 @@ pub struct LdPiece {
     pub a1: Vec<String>,
     /// A2 alleles
     pub a2: Vec<String>,
-    /// LD scores (eigenvalues of LD correlation matrix)
+    /// LD scores (per SNP) — used only for the OLS/WLS starting values
     pub ld_scores: Vec<f64>,
+    /// Eigenvalues of the block LD correlation matrix (`lam` in HDL)
+    pub eigenvalues: Vec<f64>,
+    /// Eigenvectors of the block LD correlation matrix (`V`, m x m, columns)
+    pub eigenvectors: Mat<f64>,
     /// Number of SNPs in piece
     pub m: usize,
 }
@@ -149,6 +158,7 @@ pub fn hdl(
                     h2_d_pieces.push(estimate_h2_piece(&traits[d], piece, config.n_ref));
                 }
 
+                let rho12 = genome_wide_z_cor(&traits[j], &traits[d]);
                 for (p_idx, piece) in ld_pieces.iter().enumerate() {
                     let (gcov, intercept) = estimate_gcov_piece(
                         &traits[j],
@@ -157,6 +167,7 @@ pub fn hdl(
                         config.n_ref,
                         h2_j_pieces[p_idx],
                         h2_d_pieces[p_idx],
+                        rho12,
                     );
                     piece_estimates.push(gcov);
                     piece_intercepts.push(intercept);
@@ -206,35 +217,118 @@ pub fn hdl(
     Ok(result)
 }
 
-/// Estimate h2 for a single LD piece.
+/// Parse a per-piece eigen file: line 1 = `m` eigenvalues (tab-separated);
+/// the next `m` lines = the `m x m` eigenvector matrix (one row per line).
+///
+/// This is the text encoding of the `lam` / `V` objects in an HDL `.rda`
+/// reference piece (emitted by `convert_hdl_panels`).
+pub fn read_eigen_file(path: &std::path::Path) -> Result<(Vec<f64>, Mat<f64>)> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read eigen file {}: {e}", path.display()))?;
+    let lines: Vec<&str> = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
+        anyhow::bail!("empty eigen file {}", path.display());
+    }
+    let eigenvalues: Vec<f64> = lines[0]
+        .split('\t')
+        .map(|s| s.parse::<f64>())
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| anyhow::anyhow!("bad eigenvalue in {}: {e}", path.display()))?;
+    let m = eigenvalues.len();
+    if lines.len() < m + 1 {
+        anyhow::bail!(
+            "eigen file {} has {} eigenvalues but only {} vector rows",
+            path.display(),
+            m,
+            lines.len() - 1
+        );
+    }
+    let mut eigenvectors = Mat::zeros(m, m);
+    for (i, row) in lines[1..=m].iter().enumerate() {
+        let vals: Vec<f64> = row
+            .split('\t')
+            .map(|s| s.parse::<f64>())
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| anyhow::anyhow!("bad eigenvector value in {}: {e}", path.display()))?;
+        if vals.len() != m {
+            anyhow::bail!(
+                "eigen file {} row {} has {} values, expected {m}",
+                path.display(),
+                i,
+                vals.len()
+            );
+        }
+        for (j, &v) in vals.iter().enumerate() {
+            eigenvectors[(i, j)] = v;
+        }
+    }
+    Ok((eigenvalues, eigenvectors))
+}
+
+/// Project a per-SNP vector onto the piece eigenvectors: `bstar = V' * bhat`.
+fn project(eigenvectors: &Mat<f64>, bhat: &[f64]) -> Vec<f64> {
+    let m = bhat.len();
+    (0..m)
+        .map(|col| (0..m).map(|row| eigenvectors[(row, col)] * bhat[row]).sum())
+        .collect()
+}
+
+/// Median of a slice (R's `median`), used for the per-trait reference N.
+fn median(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
+    let mut v: Vec<f64> = xs.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
+}
+
+/// Estimate h2 for a single LD piece (HDL eigenspace likelihood).
 /// Returns (h2_contribution, intercept).
 fn estimate_h2_piece(trait_data: &HdlTraitData, piece: &LdPiece, n_ref: f64) -> (f64, f64) {
     let m = piece.m as f64;
 
-    // Match trait SNPs to piece SNPs
+    // Match trait SNPs to piece SNPs (aligned, missing -> 0).
     let bhat = extract_bhat(trait_data, piece);
     if bhat.is_empty() {
         return (0.0, 1.0);
     }
 
-    let mean_n = trait_data.n.iter().sum::<f64>() / trait_data.n.len() as f64;
+    // R uses N1 = median(N) as the per-trait reference sample size.
+    let n1 = median(&trait_data.n);
 
-    // Initial OLS: a11 = bhat^2, regress on LD scores
+    // Project into the eigenspace: bstar = V' * bhat.
+    let bstar = project(&piece.eigenvectors, &bhat);
+
+    // Starting values: WLS of a11 = bhat^2 on the LD scores (HDL convention).
     let a11: Vec<f64> = bhat.iter().map(|b| b * b).collect();
-    let (slope_ols, int_ols) = simple_regression(&a11, &piece.ld_scores);
+    let (slope_ols, _int_ols) = simple_regression(&a11, &piece.ld_scores);
+    let h11v: Vec<f64> = piece
+        .ld_scores
+        .iter()
+        .map(|&l| ((slope_ols * l) + 1.0 / n1).powi(2))
+        .collect();
+    let (slope_wls, _) = weighted_regression(&a11, &piece.ld_scores, &h11v);
+    let h2_init = (slope_wls * m).clamp(0.0, 1.0);
 
-    let h2_init = (slope_ols * m).clamp(0.001, 0.999);
-    let int_init = (int_ols * mean_n).clamp(0.5, 2.0);
-
-    // Optimize likelihood
-    lbfgs_minimize_2d(
-        |p| h2_neg_loglik(&bhat, &piece.ld_scores, p[0], p[1], mean_n, m, n_ref),
-        [(0.0001, 0.9999), (0.1, 10.0)],
-        [h2_init, int_init],
+    // Optimize the HDL likelihood in the eigenspace (lam = eigenvalues).
+    minimize_2d(
+        |p| h2_neg_loglik(&bstar, &piece.eigenvalues, p[0], p[1], n1, m, n_ref),
+        [(0.0, 1.0), (0.0, 10.0)],
+        [h2_init, 1.0],
     )
 }
 
-/// Estimate genetic covariance for a single LD piece.
+/// Estimate genetic covariance for a single LD piece (HDL eigenspace likelihood).
 fn estimate_gcov_piece(
     trait_j: &HdlTraitData,
     trait_d: &HdlTraitData,
@@ -242,6 +336,7 @@ fn estimate_gcov_piece(
     n_ref: f64,
     h2_j: (f64, f64), // (h2, intercept) for trait j
     h2_d: (f64, f64), // (h2, intercept) for trait d
+    rho12: f64,       // genome-wide Z correlation (starting value for intercept)
 ) -> (f64, f64) {
     let m = piece.m as f64;
 
@@ -252,36 +347,107 @@ fn estimate_gcov_piece(
         return (0.0, 0.0);
     }
 
-    let mean_n_j = trait_j.n.iter().sum::<f64>() / trait_j.n.len() as f64;
-    let mean_n_d = trait_d.n.iter().sum::<f64>() / trait_d.n.len() as f64;
-    let n0 = mean_n_j.min(mean_n_d); // approximate overlap
+    let n1 = median(&trait_j.n);
+    let n2 = median(&trait_d.n);
+    let n0 = n1.min(n2); // sample overlap
 
-    // Initial OLS: a12 = bhat_j * bhat_d, regress on LD scores
+    // Project into the eigenspace.
+    let bstar_j = project(&piece.eigenvectors, &bhat_j);
+    let bstar_d = project(&piece.eigenvectors, &bhat_d);
+
+    // Starting value for h12: WLS slope of a12 = bhat_j*bhat_d on LD scores.
     let a12: Vec<f64> = bhat_j
         .iter()
         .zip(bhat_d.iter())
         .map(|(a, b)| a * b)
         .collect();
-    let (slope_ols, int_ols) = simple_regression(&a12, &piece.ld_scores);
+    let (slope_ols, _) = simple_regression(&a12, &piece.ld_scores);
+    let h12v: Vec<f64> = piece
+        .ld_scores
+        .iter()
+        .map(|&l| (slope_ols * l).powi(2) + 1e-12)
+        .collect();
+    let (slope_wls, _) = weighted_regression(&a12, &piece.ld_scores, &h12v);
+    let h12_init = (slope_wls * m).clamp(-1.0, 1.0);
 
-    let h12_init = (slope_ols * m).clamp(-0.999, 0.999);
-    let int_init = int_ols * (mean_n_j * mean_n_d).sqrt();
-
-    // Optimize covariance likelihood conditioned on h2 estimates
+    // Optimize covariance likelihood conditioned on h2 estimates (lam = eigenvalues).
     optimize_gcov_likelihood(
-        &bhat_j,
-        &bhat_d,
-        &piece.ld_scores,
-        mean_n_j,
-        mean_n_d,
+        &bstar_j,
+        &bstar_d,
+        &piece.eigenvalues,
+        n1,
+        n2,
         n0,
         m,
         n_ref,
         h2_j,
         h2_d,
         h12_init,
-        int_init,
+        rho12,
     )
+}
+
+/// Genome-wide Pearson correlation of Z statistics over SNPs shared by two
+/// traits (HDL's `rho12`, used as the gcov intercept starting value).
+fn genome_wide_z_cor(trait_j: &HdlTraitData, trait_d: &HdlTraitData) -> f64 {
+    use std::collections::HashMap;
+    let map_d: HashMap<&str, f64> = trait_d
+        .snp
+        .iter()
+        .zip(trait_d.z.iter())
+        .map(|(s, &z)| (s.as_str(), z))
+        .collect();
+    let mut xs = Vec::new();
+    let mut ys = Vec::new();
+    for (s, &z) in trait_j.snp.iter().zip(trait_j.z.iter()) {
+        if let Some(&zd) = map_d.get(s.as_str()) {
+            xs.push(z);
+            ys.push(zd);
+        }
+    }
+    let n = xs.len() as f64;
+    if n < 2.0 {
+        return 0.0;
+    }
+    let mx = xs.iter().sum::<f64>() / n;
+    let my = ys.iter().sum::<f64>() / n;
+    let mut sxy = 0.0;
+    let mut sxx = 0.0;
+    let mut syy = 0.0;
+    for (&x, &y) in xs.iter().zip(ys.iter()) {
+        sxy += (x - mx) * (y - my);
+        sxx += (x - mx).powi(2);
+        syy += (y - my).powi(2);
+    }
+    if sxx <= 0.0 || syy <= 0.0 {
+        0.0
+    } else {
+        sxy / (sxx * syy).sqrt()
+    }
+}
+
+/// Weighted least squares: y = slope*x + intercept with weights `1/var`.
+fn weighted_regression(y: &[f64], x: &[f64], var: &[f64]) -> (f64, f64) {
+    let mut sw = 0.0;
+    let mut swx = 0.0;
+    let mut swy = 0.0;
+    let mut swxx = 0.0;
+    let mut swxy = 0.0;
+    for i in 0..y.len() {
+        let w = if var[i] > 1e-300 { 1.0 / var[i] } else { 0.0 };
+        sw += w;
+        swx += w * x[i];
+        swy += w * y[i];
+        swxx += w * x[i] * x[i];
+        swxy += w * x[i] * y[i];
+    }
+    let denom = sw * swxx - swx * swx;
+    if denom.abs() < 1e-300 {
+        return (0.0, 0.0);
+    }
+    let slope = (sw * swxy - swx * swy) / denom;
+    let intercept = (swy - slope * swx) / sw;
+    (slope, intercept)
 }
 
 /// Extract aligned bhat values for SNPs in a piece.
@@ -337,133 +503,78 @@ fn simple_regression(y: &[f64], x: &[f64]) -> (f64, f64) {
     (slope, intercept)
 }
 
-/// Generic L-BFGS optimizer for 2-parameter problems.
+/// Box-constrained projected-gradient minimizer for HDL's per-piece 2D
+/// likelihood, mirroring R's `optim(method = "L-BFGS-B")` behavior.
 ///
-/// Minimizes `obj_fn` over 2D parameter space with box constraints.
-fn lbfgs_minimize_2d(
+/// HDL's intercept enters the likelihood weakly (`int * lam / N`), so its
+/// gradient direction is nearly flat; a gradient method (like R's) leaves it
+/// close to its starting value while still driving the well-identified
+/// heritability parameter to its optimum. A derivative-free simplex, by
+/// contrast, over-explores that flat direction and drifts. Central differences
+/// plus a backtracking Armijo line search keep this robust and deterministic.
+fn minimize_2d(
     obj_fn: impl Fn(&[f64; 2]) -> f64,
     bounds: [(f64, f64); 2],
     init: [f64; 2],
 ) -> (f64, f64) {
-    let mut params = init;
-    let eps = 1e-7;
-    let memory_size = 5;
-    let max_iter = 100;
-    let c1 = 1e-4;
-
-    let grad_fn = |p: &[f64; 2]| -> [f64; 2] {
-        let f0 = obj_fn(p);
-        let mut g = [0.0; 2];
-        for i in 0..2 {
-            let mut p_plus = *p;
-            p_plus[i] += eps;
-            p_plus[i] = p_plus[i].clamp(bounds[i].0, bounds[i].1);
-            g[i] = (obj_fn(&p_plus) - f0) / eps;
-        }
-        g
+    let clamp = |p: [f64; 2]| -> [f64; 2] {
+        [
+            p[0].clamp(bounds[0].0, bounds[0].1),
+            p[1].clamp(bounds[1].0, bounds[1].1),
+        ]
     };
+    let eps = [
+        ((bounds[0].1 - bounds[0].0) * 1e-6).max(1e-8),
+        ((bounds[1].1 - bounds[1].0) * 1e-6).max(1e-8),
+    ];
 
-    let mut s_hist: VecDeque<[f64; 2]> = VecDeque::with_capacity(memory_size);
-    let mut y_hist: VecDeque<[f64; 2]> = VecDeque::with_capacity(memory_size);
-    let mut rho_hist: VecDeque<f64> = VecDeque::with_capacity(memory_size);
+    let mut x = clamp(init);
+    let mut fx = obj_fn(&x);
 
-    let mut obj = obj_fn(&params);
-    let mut grad = grad_fn(&params);
-
-    for _ in 0..max_iter {
-        let grad_norm = (grad[0] * grad[0] + grad[1] * grad[1]).sqrt();
-        if grad_norm < 1e-6 {
+    for _ in 0..200 {
+        // Central-difference gradient.
+        let mut g = [0.0_f64; 2];
+        for i in 0..2 {
+            let mut xp = x;
+            let mut xm = x;
+            xp[i] = (x[i] + eps[i]).min(bounds[i].1);
+            xm[i] = (x[i] - eps[i]).max(bounds[i].0);
+            let h = xp[i] - xm[i];
+            if h > 0.0 {
+                g[i] = (obj_fn(&xp) - obj_fn(&xm)) / h;
+            }
+        }
+        // Project the gradient: zero components pushing out of an active bound.
+        for i in 0..2 {
+            if (x[i] <= bounds[i].0 && g[i] > 0.0) || (x[i] >= bounds[i].1 && g[i] < 0.0) {
+                g[i] = 0.0;
+            }
+        }
+        let gnorm = (g[0] * g[0] + g[1] * g[1]).sqrt();
+        if gnorm < 1e-8 {
             break;
         }
 
-        let direction = lbfgs_direction_2d(&grad, &s_hist, &y_hist, &rho_hist);
-
-        let dg: f64 = direction[0] * grad[0] + direction[1] * grad[1];
-        let direction = if dg >= 0.0 {
-            [-grad[0], -grad[1]]
-        } else {
-            direction
-        };
-
-        let mut step = 1.0;
-        let mut new_params = params;
-        let mut found = false;
-
-        for _ in 0..20 {
-            new_params[0] = (params[0] + step * direction[0]).clamp(bounds[0].0, bounds[0].1);
-            new_params[1] = (params[1] + step * direction[1]).clamp(bounds[1].0, bounds[1].1);
-            let new_obj = obj_fn(&new_params);
-            if new_obj.is_finite() && new_obj <= obj + c1 * step * dg.min(0.0) {
-                found = true;
-                obj = new_obj;
+        // Backtracking line search along the steepest-descent direction.
+        let mut step = 1.0 / gnorm.max(1.0);
+        let mut improved = false;
+        for _ in 0..40 {
+            let cand = clamp([x[0] - step * g[0], x[1] - step * g[1]]);
+            let fc = obj_fn(&cand);
+            if fc.is_finite() && fc < fx - 1e-4 * step * gnorm * gnorm {
+                x = cand;
+                fx = fc;
+                improved = true;
                 break;
             }
             step *= 0.5;
         }
-
-        if !found {
+        if !improved {
             break;
         }
-
-        let new_grad = grad_fn(&new_params);
-
-        let s_k = [new_params[0] - params[0], new_params[1] - params[1]];
-        let y_k = [new_grad[0] - grad[0], new_grad[1] - grad[1]];
-        let sy = s_k[0] * y_k[0] + s_k[1] * y_k[1];
-
-        if sy > 1e-10 {
-            if s_hist.len() >= memory_size {
-                s_hist.pop_front();
-                y_hist.pop_front();
-                rho_hist.pop_front();
-            }
-            s_hist.push_back(s_k);
-            y_hist.push_back(y_k);
-            rho_hist.push_back(1.0 / sy);
-        }
-
-        params = new_params;
-        grad = new_grad;
     }
 
-    (params[0], params[1])
-}
-
-/// L-BFGS two-loop recursion for 2D direction computation.
-fn lbfgs_direction_2d(
-    grad: &[f64; 2],
-    s_hist: &VecDeque<[f64; 2]>,
-    y_hist: &VecDeque<[f64; 2]>,
-    rho_hist: &VecDeque<f64>,
-) -> [f64; 2] {
-    let m = s_hist.len();
-    if m == 0 {
-        return [-grad[0], -grad[1]];
-    }
-
-    let mut q = *grad;
-    let mut alpha = vec![0.0; m];
-
-    for i in (0..m).rev() {
-        alpha[i] = rho_hist[i] * (s_hist[i][0] * q[0] + s_hist[i][1] * q[1]);
-        q[0] -= alpha[i] * y_hist[i][0];
-        q[1] -= alpha[i] * y_hist[i][1];
-    }
-
-    let last = m - 1;
-    let sy = s_hist[last][0] * y_hist[last][0] + s_hist[last][1] * y_hist[last][1];
-    let yy = y_hist[last][0] * y_hist[last][0] + y_hist[last][1] * y_hist[last][1];
-    let gamma = if yy > 1e-30 { sy / yy } else { 1.0 };
-
-    let mut r = [gamma * q[0], gamma * q[1]];
-
-    for i in 0..m {
-        let beta = rho_hist[i] * (y_hist[i][0] * r[0] + y_hist[i][1] * r[1]);
-        r[0] += (alpha[i] - beta) * s_hist[i][0];
-        r[1] += (alpha[i] - beta) * s_hist[i][1];
-    }
-
-    [-r[0], -r[1]]
+    (x[0], x[1])
 }
 
 /// Negative log-likelihood for h2 estimation.
@@ -477,7 +588,7 @@ fn h2_neg_loglik(
     m: f64,
     n_ref: f64,
 ) -> f64 {
-    let floor = (-10.0_f64).exp();
+    let floor = (-18.0_f64).exp();
     let mut ll = 0.0;
 
     for (&b, &l) in bhat.iter().zip(lam.iter()) {
@@ -504,7 +615,7 @@ fn optimize_gcov_likelihood(
     gcov_init: f64,
     int_init: f64,
 ) -> (f64, f64) {
-    lbfgs_minimize_2d(
+    minimize_2d(
         |p| {
             gcov_neg_loglik(
                 bhat_j, bhat_d, ld_scores, p[0], p[1], n_j, n_d, n0, m, n_ref, h2_j, h2_d,
@@ -531,7 +642,7 @@ fn gcov_neg_loglik(
     h2_j: (f64, f64),
     h2_d: (f64, f64),
 ) -> f64 {
-    let floor = (-10.0_f64).exp();
+    let floor = (-18.0_f64).exp();
     let p1 = if n_j > 0.0 { n0 / n_j } else { 0.0 };
     let p2 = if n_d > 0.0 { n0 / n_d } else { 0.0 };
     let mut ll = 0.0;
@@ -685,6 +796,8 @@ mod tests {
             a1: vec!["A".to_string(), "C".to_string()],
             a2: vec!["G".to_string(), "T".to_string()],
             ld_scores: vec![10.0, 20.0],
+            eigenvalues: vec![1.0, 1.0],
+            eigenvectors: Mat::identity(2, 2),
             m: 2,
         };
         let bhat = extract_bhat(&trait_data, &piece);

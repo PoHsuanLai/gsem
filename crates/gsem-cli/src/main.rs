@@ -337,6 +337,10 @@ struct SumstatsArgs {
     /// rows will be dropped with a warning at load time.
     #[arg(long)]
     keep_indel: bool,
+    /// Remove strand-ambiguous SNPs (A/T, C/G). Matches R GenomicSEM's
+    /// `ambig` argument: default (unset) KEEPS ambiguous SNPs.
+    #[arg(long)]
+    ambig: bool,
     #[arg(short, long, default_value = "merged_sumstats.tsv")]
     out: PathBuf,
     /// Number of threads for parallel file reads. Defaults to rayon's
@@ -464,6 +468,10 @@ struct SLdscArgs {
     ld: PathBuf,
     #[arg(long)]
     wld: Option<PathBuf>,
+    /// Directory of `.frq` allele-frequency files. Required for R's
+    /// overlap-weighted partitioned heritability (otherwise raw tau is used).
+    #[arg(long)]
+    frq: Option<PathBuf>,
     #[arg(long, default_value = "200")]
     n_blocks: usize,
     #[arg(long, default_value = "22")]
@@ -644,7 +652,9 @@ fn run_sumstats(args: SumstatsArgs) -> Result<()> {
         ols: vec![false; k],
         linprob: vec![false; k],
         keep_indel: args.keep_indel,
-        keep_ambig: false,
+        // R GenomicSEM removes ambiguous SNPs only when ambig=TRUE; its
+        // default keeps them. keep_ambig is the inverse of R's `ambig`.
+        keep_ambig: !args.ambig,
         beta_overrides: Vec::new(),
         direct_filter: false,
         num_threads: args.threads,
@@ -815,6 +825,11 @@ fn run_s_ldsc(args: SLdscArgs) -> Result<()> {
         flank_kb: 500,
     };
 
+    // Overlap cross-product for R's overlap-weighted partitioned heritability.
+    let annot_cross = args.frq.as_ref().and_then(|frq| {
+        gsem_ldsc::annot_reader::read_annot_cross(&args.ld, frq, &chromosomes).ok()
+    });
+
     eprintln!("Running stratified LDSC...");
     let result = gsem_ldsc::stratified::s_ldsc(
         &trait_data,
@@ -828,6 +843,7 @@ fn run_s_ldsc(args: SLdscArgs) -> Result<()> {
         &config,
         Some(&annot_data.chr),
         Some(&annot_data.bp),
+        annot_cross.as_ref(),
     )?;
 
     // Write JSON output
@@ -1905,6 +1921,7 @@ fn run_multi_snp_cmd(args: MultiSnpArgs) -> Result<()> {
         &config,
         &ldsc_result.s,
         &ldsc_result.v,
+        &ldsc_result.i_mat,
         &beta_snp,
         &se_snp,
         &var_snp,
@@ -2153,11 +2170,21 @@ fn run_hdl(args: HdlArgs) -> Result<()> {
 
         let m = snps.len();
         if m > 0 {
+            let eigen_file = ld_path.join(format!("piece.{piece_idx}.eigen.tsv"));
+            let (eigenvalues, eigenvectors) = gsem_ldsc::hdl::read_eigen_file(&eigen_file)
+                .with_context(|| {
+                    format!(
+                        "HDL piece {piece_idx} is missing its eigen file {}",
+                        eigen_file.display()
+                    )
+                })?;
             ld_pieces.push(LdPiece {
                 snps,
                 a1,
                 a2,
                 ld_scores,
+                eigenvalues,
+                eigenvectors,
                 m,
             });
         }
