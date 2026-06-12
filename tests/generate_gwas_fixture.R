@@ -241,11 +241,10 @@ cat("\nWrote", path, "\n")
 # ===========================================================================
 # OPTION MATRIX (gwas_options.json)
 #
-# Phase 1 of the coverage plan: exercise the behaviour-changing arguments of
-# userGWAS/commonfactorGWAS that the Rust port already implements but no
-# fixture covers (estimation=ML, GC modes, Q_SNP, fix_measurement). Each
-# variant calls the REAL package and stores the per-SNP F1~SNP effect under a
-# named key, mirroring the sumstats `modes` map pattern.
+# Exercise the behaviour-changing arguments of userGWAS/commonfactorGWAS
+# (estimation=ML, GC modes, Q_SNP, std.lv). Each variant calls the REAL package
+# and stores the per-SNP F1~SNP effect under a named key, mirroring the sumstats
+# `modes` map pattern.
 #
 # The baseline DWLS/Standard/fix_measurement=TRUE case stays in
 # gwas_per_snp.json above; here we vary one option at a time off that baseline.
@@ -307,7 +306,7 @@ options_fixture <- list(
   # Note: R's userGWAS uses the abbreviated "conserv", not "conservative".
   gc_conservative = run_user_variant("gc_conservative", GC = "conserv"),
   gc_none        = run_user_variant("gc_none", GC = "none")
-  # Q_SNP heterogeneity statistic → compute_q_snp (Rust q_snp.rs, currently 0%)
+  # Q_SNP heterogeneity statistic → compute_q_snp (Rust q_snp.rs)
   , q_snp        = run_user_variant("q_snp", Q_SNP = TRUE)
   # std.lv=TRUE: factor scale set by fixing the factor variance to 1 internally
   # rather than fixing the first loading → parse_model(..., std_lv=true).

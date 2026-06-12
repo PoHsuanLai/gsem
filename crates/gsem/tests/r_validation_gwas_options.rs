@@ -1,4 +1,4 @@
-//! Per-option R-equivalence for the GWAS path (Phase 1 of the coverage plan).
+//! Per-option R-equivalence for the GWAS path.
 //!
 //! The baseline DWLS / GC=standard / fix_measurement=TRUE case is covered by
 //! `r_validation.rs::test_user_gwas_per_snp_match_r`. This file varies ONE
@@ -245,7 +245,7 @@ fn test_user_gwas_gc_none_matches_r() {
     assert_est_parity(&inp, r_rows, &cfg, 1e-3, "userGWAS[GC=none]");
 }
 
-// ── Q_SNP heterogeneity statistic (covers q_snp.rs, previously 0%) ──────────
+// ── Q_SNP heterogeneity statistic ───────────────────────────────────────────
 
 #[test]
 fn test_user_gwas_q_snp_matches_r() {
@@ -257,7 +257,7 @@ fn test_user_gwas_q_snp_matches_r() {
     // First confirm the SNP effect still matches with Q_SNP on.
     assert_est_parity(&inp, r_rows, &cfg, 1e-3, "userGWAS[Q_SNP].est");
 
-    // Now the actual Q_SNP statistic — this is the path that was 0% covered.
+    // Now the Q_SNP statistic itself.
     let results = run(&inp, &cfg);
     let measure = std::env::var("MEASURE").is_ok();
 

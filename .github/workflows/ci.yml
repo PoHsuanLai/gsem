@@ -44,23 +44,13 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       # Branch coverage is the headline drop-in metric; region% is the gate
       # (cargo-llvm-cov gates reliably on lines/regions, tracks branch%).
-      # Floors are ratcheted upward as the test suite grows — see
-      # .claude/plans / CHANGELOG for the phased coverage plan.
       - name: Coverage summary (with branch)
         run: cargo llvm-cov --workspace --branch --summary-only
       - name: Generate lcov report
         run: cargo llvm-cov --workspace --branch --lcov --output-path lcov.info
-      # Coverage ratchet (workspace-wide, bumped per phase of the coverage plan):
-      #   session start : lines 72.5% regions 73.0% branch 58.6%
-      #   after Phase 1 : lines 73.1% regions 73.6% branch 59.4% (GWAS options + Q_SNP)
-      #   after Phase 3 : lines 74.6% regions 75.3% branch 59.6% (io writer/hdl_reader)
-      #   after Phase 4 : lines 74.7% regions 75.4% branch 60.1% (ldsc liability + chisq.max)
-      #   after Phase 5 : lines 75.6% regions 76.5% branch 61.2% (write.model + rgmodel sub)
-      #   gap-closure   : lines 75.7% regions 76.7% branch 72.1% (std.lv fix, stand/select/
-      #                   ambig, misspecified CFI, twas/enrich/paLDSC-diag branches)
-      #   new ports     : lines 76.1% regions 76.9% branch 73.0% (read_fusion, subSV,
-      #                   summaryGLSbands numeric core — all R-validated)
-      # Floors sit just below current so CI is green; raise them as tests land.
+      # Coverage floor (workspace-wide). Current: lines ~76.1%, regions ~76.9%,
+      # branch ~73.0%. The floor sits just below current so CI stays green;
+      # raise it when new tests push coverage up.
       - name: Enforce coverage floor
         run: cargo llvm-cov report --fail-under-lines 75 --fail-under-regions 76
       - name: Upload lcov artifact
