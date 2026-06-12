@@ -2170,11 +2170,21 @@ fn run_hdl(args: HdlArgs) -> Result<()> {
 
         let m = snps.len();
         if m > 0 {
+            let eigen_file = ld_path.join(format!("piece.{piece_idx}.eigen.tsv"));
+            let (eigenvalues, eigenvectors) = gsem_ldsc::hdl::read_eigen_file(&eigen_file)
+                .with_context(|| {
+                    format!(
+                        "HDL piece {piece_idx} is missing its eigen file {}",
+                        eigen_file.display()
+                    )
+                })?;
             ld_pieces.push(LdPiece {
                 snps,
                 a1,
                 a2,
                 ld_scores,
+                eigenvalues,
+                eigenvectors,
                 m,
             });
         }

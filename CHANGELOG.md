@@ -10,7 +10,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes on `master` past the most recent release tag live here until the
 next version is cut.
 
+### Added
+
+- **R-equivalence coverage for `multiSNP`, `multiGene`, `simLDSC`, and
+  `hdl`.** New live-R fixtures and tests validate the four previously
+  untested functions, closing the last function-coverage gaps. `multiSNP`
+  and `multiGene` reproduce R's augmented `S_Full`/`V_Full` matrices to
+  1e-12/1e-14; `simLDSC`'s deterministic per-SNP Z covariance matches R's
+  exact `varZ`/`covZ` algebra to 1e-9; `hdl` reproduces R's genetic-
+  covariance matrix `S` to optimiser-level precision on a synthetic LD
+  panel built in R's exact `.rda`/`.bim` format.
+
+### Changed
+
+- **`hdl` evaluated in the eigenspace (match R).** gsem's HDL likelihood
+  was fed raw LD scores as `lam` and the raw per-SNP `bhat`, whereas R
+  GenomicSEM/HDL evaluates the likelihood in the LD-block eigenspace:
+  `lam` = eigenvalues of the block correlation matrix and
+  `bstar = Vᵀ·bhat` (projection onto eigenvectors). `LdPiece` now carries
+  the per-piece eigenvalues/eigenvectors (read from the `.rda` panel, or
+  the new `chr*.eigen.tsv` text file emitted by `convert_hdl_panels`), the
+  per-trait reference N uses R's `median(N)`, the likelihood floor matches
+  R's `exp(-18)`, and the per-piece optimiser is a projected-gradient
+  method mirroring R's `optim(L-BFGS-B)`. (`crates/gsem-ldsc/src/hdl.rs`)
+
 ### Fixed
+
+- **`simLDSC` phenotypic-overlap term.** The off-diagonal environmental
+  contribution to the per-SNP Z covariance was
+  `rPheno·n_overlap·√(NᵢNⱼ)/n_snps`, carrying a spurious `√(NᵢNⱼ)/n_snps`
+  factor. R GenomicSEM uses `rPheno_ij · N_ij/√(NᵢNⱼ)` (= `rPheno·n_overlap`
+  for scalar sample overlap). Fixed and exposed as the deterministic
+  `per_snp_z_cov`, validated against R's construction.
+  (`crates/gsem/src/stats/simulation.rs`)
+
+- **`multiSNP`/`multiGene` `V_Full` construction.** `run_multi_snp` built
+  `V_Full` as a diagonal approximation that ignored the LDSC intercept
+  matrix. The new `build_multi_snp_sv` reproduces R's full sampling
+  covariance — SNP-trait variances `(SE·I_diag·varSNP)²`, cross-trait
+  within-SNP, cross-SNP within-trait, and cross-SNP cross-trait blocks,
+  plus the trait-trait `V_LD` block — matching R bit-for-bit.
+  (`crates/gsem/src/gwas/multi_snp.rs`)
+
+#### Documented R bugs (gsem implements the correct behavior)
+
+- **`multiSNP`/`multiGene` constant cross-SNP cross-trait LD.** R weights
+  every cross-SNP cross-trait sampling-covariance cell by a single
+  constant LD value (`LD2[(f²−f)/2]`, the last lower-triangle entry)
+  rather than the actual SNP-pair LD. gsem uses the correct per-pair
+  `LD[a,b]`; the two coincide when the off-diagonal LD is constant (as in
+  the equivalence fixtures). A unit test locks gsem's corrected path.
+
+- **`multiGene` aborts for k ≥ 2 traits.** R's `multiGene` assigns into
+  `V_SNP[y,x]` — a variable that does not exist in `multiGene` (a typo for
+  `V_Gene`) — so the function errors with `object 'V_SNP' not found`
+  whenever there is more than one trait. gsem implements the corrected
+  algorithm (identical to `multiSNP` with gene heritabilities as the
+  "variances"); the reference is generated from a minimally-patched
+  `multiGene`.
+
+- **`hdl` intercept weak identification.** The per-piece HDL intercept
+  enters the likelihood only as `int·lam/N` and is weakly identified on
+  small panels; R's `optim` drifts on some LD blocks while gsem's gradient
+  method recovers the construction-true intercept. The genetic-covariance
+  matrix `S` (HDL's primary output) is robustly identified and matches R.
 
 - **`sumstats` beta standardization.** gsem's `sumstats` wrote the raw
   input betas/SEs instead of standardizing them like R GenomicSEM. Since
