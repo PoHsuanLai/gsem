@@ -10,7 +10,7 @@
 //!   * GC = "none"                → `GcMode::None`
 //!   * Q_SNP = TRUE               → `q_snp::compute_q_snp` (the heterogeneity stat)
 //!   * std.lv = TRUE              → `parse_model(.., std_lv=true)` (factor scaled
-//!                                  by fixing its variance, first loading freed)
+//!     by fixing its variance, first loading freed)
 //!
 //! (fix_measurement=FALSE is intentionally absent: R's free-measurement fit is
 //! computationally singular on this subset, so there is no reference to match.)
