@@ -446,6 +446,99 @@ fn test_sem_estimates_match_r() {
     );
 }
 
+// ── Test Case 8c: CFI on a MISSPECIFIED model (CFIcalc, non-degenerate) ──────
+// The well-specified fixtures all fit near-perfectly (chisq ~ 0, CFI = 1), so
+// they never exercise the chisq/CFI formulas' interesting range. This fits a
+// 1-factor model to 2-factor data, where GenomicSEM reports Q (chisq) = 80.81,
+// CFI = 0.7195, df = 2.
+//
+// The reference is GenomicSEM's own chisq — the sandwich quadratic form
+// Q = eta' V^-1 eta over the FULL V (usermodel.R:256-265) — NOT lavaan's
+// DWLS-scaled fitMeasures("chisq") (which is a different statistic, 51.97 here).
+// The Rust fit_indices path computes exactly that Q, and the fixture records it.
+// We build the null (independence) model the same way commonfactor.rs does so
+// CFI is assembled identically, then assert the full triple (chisq, CFI, SRMR).
+
+#[test]
+fn test_sem_misspecified_cfi_matches_r() {
+    let fix = load_fixture("sem_misspecified");
+    let s = json_to_mat(&fix["s"]);
+    let v = json_to_mat(&fix["v"]);
+    let v_diag = json_to_vec(&fix["v_diag"]);
+    let model_str = fix["model"].as_str().unwrap();
+
+    let obs_names: Vec<String> = vec!["V1", "V2", "V3", "V4"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let k = obs_names.len();
+    let kstar = k * (k + 1) / 2;
+
+    // Fit the misspecified 1-factor model.
+    let pt = gsem_sem::syntax::parse_model(model_str, false).unwrap();
+    let mut model = gsem_sem::model::Model::from_partable(&pt, &obs_names);
+    let fit = gsem_sem::estimator::fit_dwls(&mut model, &s, &v_diag, 1000, None);
+    assert!(fit.converged, "misspecified SEM should still converge");
+    let sigma_hat = model.implied_cov();
+    let n_free = model.n_free();
+    let df = kstar - n_free;
+
+    // Null (independence) model — variances only, all covariances 0 — exactly as
+    // commonfactor.rs builds it for CFI.
+    let null_model_str: String = obs_names
+        .iter()
+        .map(|vn| format!("{vn} ~~ {vn}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let null_pt = gsem_sem::syntax::parse_model(&null_model_str, false).unwrap();
+    let mut null_model = gsem_sem::model::Model::from_partable(&null_pt, &obs_names);
+    let _ = gsem_sem::estimator::fit_dwls(&mut null_model, &s, &v_diag, 1000, None);
+    let null_sigma = null_model.implied_cov();
+    let null_df = kstar - k;
+    let null_fit = gsem_sem::fit_indices::compute_fit(&s, &null_sigma, &v, null_df, k, None, None);
+
+    let fit_stats = gsem_sem::fit_indices::compute_fit(
+        &s,
+        &sigma_hat,
+        &v,
+        df,
+        n_free,
+        Some(null_fit.chisq),
+        Some(null_df),
+    );
+
+    let r_fit = &fix["fit_indices"];
+    let r_chisq = r_fit["chisq"].as_f64().unwrap();
+    let r_df = r_fit["df"].as_f64().unwrap() as usize;
+    let r_cfi = r_fit["cfi"].as_f64().unwrap();
+    let r_srmr = r_fit["srmr"].as_f64().unwrap();
+
+    assert_eq!(df, r_df, "misspecified df mismatch");
+    assert!(
+        r_cfi < 0.99,
+        "fixture must be genuinely misspecified (CFI<1)"
+    );
+
+    let chisq_diff = (fit_stats.chisq - r_chisq).abs();
+    assert!(
+        chisq_diff < 1e-6,
+        "misspecified chisq: Rust={:.6} R={r_chisq:.6} diff={chisq_diff:.2e}",
+        fit_stats.chisq
+    );
+    let cfi_diff = (fit_stats.cfi - r_cfi).abs();
+    assert!(
+        cfi_diff < 1e-6,
+        "misspecified CFI: Rust={:.6} R={r_cfi:.6} diff={cfi_diff:.2e}",
+        fit_stats.cfi
+    );
+    let srmr_diff = (fit_stats.srmr - r_srmr).abs();
+    assert!(
+        srmr_diff < 1e-6,
+        "misspecified SRMR: Rust={:.6} R={r_srmr:.6} diff={srmr_diff:.2e}",
+        fit_stats.srmr
+    );
+}
+
 // ── Test Case 8b: 2-factor SEM with fixed rows in middle of partable ────────
 // This specifically tests that parameter indexing is correct when fixed rows
 // (F1~~1*F1, F2~~1*F2) appear between free rows in the partable.
