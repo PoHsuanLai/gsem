@@ -275,3 +275,61 @@ fn test_paldsc_observed_eigenvalues_match_r() {
         assert_close(obs, r, 1e-9, &format!("paLDSC observed eig[{i}]"));
     }
 }
+
+// ── subSV: vech-position subsetting of S and V ──────────────────────────────
+
+#[test]
+fn test_subsv_matches_r() {
+    use gsem_matrix::vech::{SubsetType, subset_sv};
+
+    let fix = load_fixture("subsv");
+    let s = json_to_mat(&fix["s"]);
+    let v = json_to_mat(&fix["v"]);
+    let r_corr = json_to_mat(&fix["r_corr"]);
+    let v_r = json_to_mat(&fix["v_r"]);
+
+    let to_idx =
+        |val: &Value| -> Vec<usize> { json_to_vec(val).iter().map(|&x| x as usize).collect() };
+    let index_s = to_idx(&fix["index_s"]);
+    let index_r = to_idx(&fix["index_r"]);
+
+    let r_sub_s = json_to_vec(&fix["sub_s"]);
+    let r_sub_v = json_to_mat(&fix["sub_v"]);
+    let r_sub_s_r = json_to_vec(&fix["sub_s_r"]);
+    let r_sub_v_r = json_to_mat(&fix["sub_v_r"]);
+
+    // TYPE = "S": full lower triangle incl. diagonal.
+    let out = subset_sv(&s, &v, &index_s, SubsetType::WithDiagonal).unwrap();
+    assert_eq!(out.sub_s.len(), r_sub_s.len(), "subSV[S] subS length");
+    for (i, (&rust, &r)) in out.sub_s.iter().zip(r_sub_s.iter()).enumerate() {
+        assert_close(rust, r, 1e-12, &format!("subSV[S] subS[{i}]"));
+    }
+    for i in 0..r_sub_v.nrows() {
+        for j in 0..r_sub_v.ncols() {
+            assert_close(
+                out.sub_v[(i, j)],
+                r_sub_v[(i, j)],
+                1e-12,
+                &format!("subSV[S] subV[{i},{j}]"),
+            );
+        }
+    }
+
+    // TYPE = "R": strict lower triangle (off-diagonal numbering) on the
+    // correlation matrix.
+    let out_r = subset_sv(&r_corr, &v_r, &index_r, SubsetType::OffDiagonal).unwrap();
+    assert_eq!(out_r.sub_s.len(), r_sub_s_r.len(), "subSV[R] subS length");
+    for (i, (&rust, &r)) in out_r.sub_s.iter().zip(r_sub_s_r.iter()).enumerate() {
+        assert_close(rust, r, 1e-12, &format!("subSV[R] subS[{i}]"));
+    }
+    for i in 0..r_sub_v_r.nrows() {
+        for j in 0..r_sub_v_r.ncols() {
+            assert_close(
+                out_r.sub_v[(i, j)],
+                r_sub_v_r[(i, j)],
+                1e-12,
+                &format!("subSV[R] subV[{i},{j}]"),
+            );
+        }
+    }
+}

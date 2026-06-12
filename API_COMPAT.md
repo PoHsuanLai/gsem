@@ -63,6 +63,7 @@ including:
 - **multiGene**: covstruc, model, beta, se, var_gene, ld_matrix, gene_names, GeneSE, Genelist
 - **summaryGLS**: covstruc, results
 - **read_fusion**: files, trait.names, binary, N, perm — reads raw FUSION TWAS `.dat` output into the merged TWAS format that `multiGene`/`userGWAS(TWAS=TRUE)` consume (CLI: `gsem read-fusion`)
+- **subSV**: subset `vech(S)` and the `V` block by 1-based vech positions, for `TYPE` S/S_Stand (with-diagonal) and R (off-diagonal) numbering — `gsem_matrix::vech::subset_sv`. (R's matrix-input path has an undefined-`RMATRIX` bug; the Rust port matches the bug-free `LDSC_OBJECT` path.)
 - **cores/parallel**: per-call thread budget for `ldsc`, `userGWAS`, `commonfactorGWAS`, and `paLDSC`. Each call builds its own local rayon pool, so concurrent calls do not share thread state and `parallel=FALSE` is fully scoped. Currently a no-op for `munge`, `sumstats`, and `simLDSC` (their underlying implementations are serial).
 
 ## Option-level R-equivalence coverage
@@ -97,7 +98,7 @@ surface; call the original R `GenomicSEM` package if you need them.
 | `addSNPs` | Deprecated in R GenomicSEM (superseded by `userGWAS`/`commonfactorGWAS`). |
 | `addGenes` | Deprecated in R GenomicSEM (superseded by the TWAS path in `userGWAS`/`multiGene`). |
 | `summaryGLSbands` | Plotting/confidence-band variant of `summaryGLS`; the core `summaryGLS` numeric path is ported, the band-drawing wrapper is not. |
-| `indexS`, `subSV` | Small matrix/covstruc subsetting helpers. `rgmodel(sub=)` covers the common subsetting need; these standalone helpers are not exposed. |
+| `indexS` | Tiny vech-index lookup helper; the same column-major lower-triangle indexing is available via `gsem_matrix::vech`. Not exposed standalone. |
 | `localSRMD` | Local structural-residual diagnostic; not ported. |
 | `qtrait` | Quantitative-trait simulation helper; not ported (also removed from current upstream GenomicSEM). |
 

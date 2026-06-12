@@ -92,13 +92,20 @@ I_mat <- diag(k)
 N_vec <- rep(50000, k)
 m_snps <- 1000
 covstruc <- list(V = V, S = S, I = I_mat, N = N_vec, m = m_snps)
-rg <- GenomicSEM::rgmodel(covstruc)
-write_fixture(list(
-  s   = mat_to_list(S),
-  v   = mat_to_list(V),
-  r   = mat_to_list(as.matrix(rg$R)),
-  v_r = mat_to_list(as.matrix(rg$V_R))
-), "rgmodel")
+# rgmodel pulls in `simsalapar`; if it isn't installed, keep the committed
+# rgmodel.json and skip regenerating it rather than aborting the whole script
+# (the other fixtures below don't depend on it).
+rg <- tryCatch(GenomicSEM::rgmodel(covstruc), error = function(e) {
+  cat("  (skipping rgmodel regen:", conditionMessage(e), ")\n"); NULL
+})
+if (!is.null(rg)) {
+  write_fixture(list(
+    s   = mat_to_list(S),
+    v   = mat_to_list(V),
+    r   = mat_to_list(as.matrix(rg$R)),
+    v_r = mat_to_list(as.matrix(rg$V_R))
+  ), "rgmodel")
+}
 
 # ---------------------------------------------------------------------------
 # write.model: factor -> indicator assignment. R emits random residual-
@@ -134,6 +141,42 @@ write_fixture(list(
   # one indicator list per factor, in factor order
   indicators = unname(facmap)
 ), "write_model")
+
+# ---------------------------------------------------------------------------
+# subSV: subset vech(S) and the V block by a set of 1-based vech positions.
+# ---------------------------------------------------------------------------
+# NOTE: stock R subSV has a bug in its matrix-input validation branch (it
+# references an undefined `RMATRIX`), so passing SMATRIX/VMATRIX directly errors.
+# The LDSC_OBJECT path is bug-free, so we drive it that way — the numeric result
+# is identical to what the (fixed) matrix path would return.
+cat("=== subSV ===\n")
+subsv_index_s <- c(1, 3, 6, 10)          # TYPE="S": positions in vech(S), incl diag
+sub_s_obj <- GenomicSEM::subSV(
+  LDSC_OBJECT = list(S = S, V = V),
+  INDEXVALS = subsv_index_s, TYPE = "S"
+)
+# TYPE="R": off-diagonal numbering on the correlation matrix. For k=4 the strict
+# lower triangle has k(k-1)/2 = 6 positions, so V_R is 6x6.
+R_corr <- cov2cor(S)
+kstar_r <- k * (k - 1) / 2               # 6
+V_R <- diag(kstar_r) * 0.0015
+subsv_index_r <- c(1, 4, 6)
+sub_r_obj <- GenomicSEM::subSV(
+  LDSC_OBJECT = list(R = R_corr, V_R = V_R),
+  INDEXVALS = subsv_index_r, TYPE = "R"
+)
+write_fixture(list(
+  s            = mat_to_list(S),
+  v            = mat_to_list(V),
+  r_corr       = mat_to_list(R_corr),
+  v_r          = mat_to_list(V_R),
+  index_s      = subsv_index_s,
+  index_r      = subsv_index_r,
+  sub_s        = as.numeric(sub_s_obj$subS),
+  sub_v        = mat_to_list(as.matrix(sub_s_obj$subV)),
+  sub_s_r      = as.numeric(sub_r_obj$subS),
+  sub_v_r      = mat_to_list(as.matrix(sub_r_obj$subV))
+), "subsv")
 
 cat("\n=== covstruc reference fixtures generated ===\n")
 unlink(list.files(".", pattern = "\\.log$", full.names = TRUE))
