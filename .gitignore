@@ -40,6 +40,16 @@ src/*.dll
 # Bench diagnostic cache (ldsc/sumstats RDS fixtures for one-shot scripts)
 /bench/cache/
 
+# Generated coverage / diagnostic reports (produced by the covr driver and
+# one-shot diagnostic scripts; not committed — CI regenerates them).
+/bench/covr_by_function.txt
+/bench/r_fixture_coverage.md
+/bench/diag_*.txt
+
+# Local scratch directory (personal GWAS runs / SLURM scripts), not part of the
+# project.
+/gSEM/
+
 # Test data / outputs
 *.sumstats.gz
 *.rds
