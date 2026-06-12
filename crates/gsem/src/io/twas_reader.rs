@@ -135,4 +135,29 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn test_read_twas_sumstats_skips_malformed_rows() {
+        // Exercises every skip branch in the row loop: blank line, a row too
+        // short to reach max_idx, an unparseable HSQ, and an unparseable
+        // beta/se. Only the two well-formed genes should survive.
+        let dir = std::env::temp_dir().join("gsem_test_twas_malformed");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("malformed.tsv");
+
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "Gene\tPanel\tHSQ\tbeta.T1\tse.T1").unwrap();
+        writeln!(f, "GOOD1\tP\t0.10\t0.05\t0.01").unwrap();
+        writeln!(f).unwrap(); // blank line -> skipped
+        writeln!(f, "SHORT\tP\t0.10").unwrap(); // too few fields -> skipped
+        writeln!(f, "BADHSQ\tP\tNA\t0.05\t0.01").unwrap(); // HSQ unparseable -> skipped
+        writeln!(f, "BADBETA\tP\t0.10\tNA\t0.01").unwrap(); // beta unparseable -> skipped
+        writeln!(f, "GOOD2\tP\t0.20\t0.07\t0.02").unwrap();
+
+        let result = read_twas_sumstats(&path).unwrap();
+        let names: Vec<&str> = result.genes.iter().map(|g| g.gene.as_str()).collect();
+        assert_eq!(names, vec!["GOOD1", "GOOD2"], "only well-formed rows kept");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
