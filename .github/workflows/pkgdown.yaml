@@ -49,26 +49,28 @@ jobs:
         working-directory: bindings/r
         run: Rscript tools/build-vignettes.R
 
-      # Build the Rust staticlib and stage it BEFORE resolving R deps: the
-      # gsemr source package can't be compiled without it, and `local::.`
-      # below builds the package as part of dependency resolution.
+      # Install pkgdown + gsemr's R deps. We do NOT use `local::.`: that
+      # source-builds gsemr in a temp dir where the binding's
+      # [patch.crates-io] relative paths to the in-repo crates don't resolve
+      # (the unpublished 0.2.0 crates aren't on crates.io). Instead gsemr is
+      # installed in-tree by `R CMD INSTALL .` below, where the patch applies.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: bindings/r
+          extra-packages: |
+            any::pkgdown
+            any::jsonlite
+          needs: website
+
       - name: Build Rust staticlib
         working-directory: bindings/r/src/rust
         run: cargo build --release
 
-      - name: Stage staticlib
-        working-directory: bindings/r
-        run: cp src/rust/target/release/libgsemr.a src/
-
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          working-directory: bindings/r
-          extra-packages: any::pkgdown, local::.
-          needs: website
-
       - name: Install gsemr
         working-directory: bindings/r
-        run: R CMD INSTALL .
+        run: |
+          cp src/rust/target/release/libgsemr.a src/
+          R CMD INSTALL .
         env:
           _R_CHECK_FORCE_SUGGESTS_: false
 
