@@ -161,6 +161,171 @@ fn test_ldsc_synth_matches_r() {
     }
 }
 
+/// Liability-scale ldsc: binary traits with sample/population prevalences, so R
+/// applies the observed->liability conversion. Pins `apply_liability_scale`
+/// (the prevalence branch the continuous fixture leaves untested) against R.
+#[test]
+fn test_ldsc_liability_matches_r() {
+    let fix = load_fixture("ldsc_liability");
+    let dir = fixtures_dir();
+
+    let munged: Vec<PathBuf> = json_to_strs(&fix["munged_files"])
+        .iter()
+        .map(|p| dir.join(p))
+        .collect();
+    let ld_dir = dir.join(fix["ld_dir"].as_str().unwrap());
+    let chr = fix["chr"].as_u64().unwrap() as usize;
+    let n_blocks = fix["n_blocks"].as_u64().unwrap() as usize;
+
+    let r_s = json_to_mat(&fix["s"]);
+    let r_v = json_to_mat(&fix["v"]);
+    let r_i = json_to_mat(&fix["i"]);
+
+    let sample_prev: Vec<Option<f64>> = json_to_vec(&fix["sample_prev"])
+        .into_iter()
+        .map(Some)
+        .collect();
+    let pop_prev: Vec<Option<f64>> = json_to_vec(&fix["population_prev"])
+        .into_iter()
+        .map(Some)
+        .collect();
+
+    let trait_data = gsem::io::gwas_reader::load_trait_data(&munged).unwrap();
+    let chromosomes: Vec<usize> = (1..=chr).collect();
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&ld_dir, &ld_dir, &chromosomes).unwrap();
+    let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
+    let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
+
+    let k = trait_data.len();
+    let config = gsem_ldsc::LdscConfig {
+        n_blocks,
+        chisq_max: None,
+        num_threads: Some(1),
+    };
+    let result = gsem_ldsc::ldsc(
+        &trait_data,
+        &sample_prev,
+        &pop_prev,
+        &ld_scores,
+        &ld_data.w_ld,
+        &ld_snps,
+        ld_data.total_m,
+        &config,
+        None,
+    )
+    .unwrap();
+
+    // S and V are scaled by the liability conversion; I (intercepts) is not.
+    for i in 0..k {
+        for j in 0..k {
+            assert_close(
+                result.s[(i, j)],
+                r_s[(i, j)],
+                1e-9,
+                1e-4,
+                &format!("ldsc-liab S[{i},{j}]"),
+            );
+            assert_close(
+                result.i_mat[(i, j)],
+                r_i[(i, j)],
+                1e-4,
+                1e-3,
+                &format!("ldsc-liab I[{i},{j}]"),
+            );
+        }
+    }
+    let kstar = k * (k + 1) / 2;
+    for i in 0..kstar {
+        for j in 0..kstar {
+            assert_close(
+                result.v[(i, j)],
+                r_v[(i, j)],
+                1e-12,
+                1e-3,
+                &format!("ldsc-liab V[{i},{j}]"),
+            );
+        }
+    }
+}
+
+/// chisq.max filter: a low explicit cutoff drops the top hits before the LDSC
+/// regression. Pins the `chisq_max = Some(_)` branch that the default (auto)
+/// path leaves untested.
+#[test]
+fn test_ldsc_chisqmax_matches_r() {
+    let fix = load_fixture("ldsc_chisqmax");
+    let dir = fixtures_dir();
+
+    let munged: Vec<PathBuf> = json_to_strs(&fix["munged_files"])
+        .iter()
+        .map(|p| dir.join(p))
+        .collect();
+    let ld_dir = dir.join(fix["ld_dir"].as_str().unwrap());
+    let chr = fix["chr"].as_u64().unwrap() as usize;
+    let n_blocks = fix["n_blocks"].as_u64().unwrap() as usize;
+    let chisq_max = fix["chisq_max"].as_f64().unwrap();
+
+    let r_s = json_to_mat(&fix["s"]);
+    let r_v = json_to_mat(&fix["v"]);
+    let r_i = json_to_mat(&fix["i"]);
+
+    let trait_data = gsem::io::gwas_reader::load_trait_data(&munged).unwrap();
+    let chromosomes: Vec<usize> = (1..=chr).collect();
+    let ld_data = gsem::io::ld_reader::read_ld_scores(&ld_dir, &ld_dir, &chromosomes).unwrap();
+    let ld_snps: Vec<String> = ld_data.records.iter().map(|r| r.snp.clone()).collect();
+    let ld_scores: Vec<f64> = ld_data.records.iter().map(|r| r.l2).collect();
+
+    let k = trait_data.len();
+    let config = gsem_ldsc::LdscConfig {
+        n_blocks,
+        chisq_max: Some(chisq_max),
+        num_threads: Some(1),
+    };
+    let result = gsem_ldsc::ldsc(
+        &trait_data,
+        &vec![None; k],
+        &vec![None; k],
+        &ld_scores,
+        &ld_data.w_ld,
+        &ld_snps,
+        ld_data.total_m,
+        &config,
+        None,
+    )
+    .unwrap();
+
+    for i in 0..k {
+        for j in 0..k {
+            assert_close(
+                result.s[(i, j)],
+                r_s[(i, j)],
+                1e-9,
+                1e-4,
+                &format!("ldsc-chisqmax S[{i},{j}]"),
+            );
+            assert_close(
+                result.i_mat[(i, j)],
+                r_i[(i, j)],
+                1e-4,
+                1e-3,
+                &format!("ldsc-chisqmax I[{i},{j}]"),
+            );
+        }
+    }
+    let kstar = k * (k + 1) / 2;
+    for i in 0..kstar {
+        for j in 0..kstar {
+            assert_close(
+                result.v[(i, j)],
+                r_v[(i, j)],
+                1e-12,
+                1e-3,
+                &format!("ldsc-chisqmax V[{i},{j}]"),
+            );
+        }
+    }
+}
+
 // ── munge: Z / N per SNP ────────────────────────────────────────────────────
 
 #[test]

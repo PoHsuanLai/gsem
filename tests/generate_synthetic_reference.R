@@ -226,6 +226,68 @@ write_fixture(list(
   i            = mat_to_list(r_ldsc$I)
 ), "ldsc_synth")
 
+# 5b. Liability-scale ldsc: same inputs, but treat the traits as BINARY with
+# sample/population prevalences so R applies the observed->liability conversion
+# (apply_liability_scale on the Rust side). This exercises the prevalence
+# branch that the continuous fixture above leaves untested.
+cat("=== ldsc (liability scale) ===\n")
+samp_prev <- rep(0.5, n_traits)
+pop_prev  <- c(0.10, 0.05, 0.20)[seq_len(n_traits)]
+r_ldsc_liab <- suppressMessages(GenomicSEM::ldsc(
+  traits          = munged_paths,
+  sample.prev     = samp_prev,
+  population.prev = pop_prev,
+  ld              = ld,
+  wld             = ld,
+  trait.names     = trait_names,
+  chr             = chr,
+  n.blocks        = 20,
+  stand           = FALSE
+))
+write_fixture(list(
+  munged_files = paste0("synth/", trait_names, ".sumstats.gz"),
+  ld_dir       = "synth/eur_w_ld_chr",
+  chr          = chr,
+  n_blocks     = 20,
+  trait_names  = trait_names,
+  m_total      = M_5_50,
+  sample_prev  = samp_prev,
+  population_prev = pop_prev,
+  s            = mat_to_list(r_ldsc_liab$S),
+  v            = mat_to_list(r_ldsc_liab$V),
+  i            = mat_to_list(r_ldsc_liab$I)
+), "ldsc_liability")
+
+# 5c. chisq.max filter: a low explicit cutoff (10) drops the synth data's top
+# hits (max chi2 ~ 15-22), exercising the chisq_max=Some(_) branch in LdscConfig
+# that the default (chisq.max = NA -> auto) leaves untested.
+cat("=== ldsc (chisq.max = 10) ===\n")
+chisq_cutoff <- 10
+r_ldsc_chisq <- suppressMessages(GenomicSEM::ldsc(
+  traits          = munged_paths,
+  sample.prev     = rep(NA, n_traits),
+  population.prev = rep(NA, n_traits),
+  ld              = ld,
+  wld             = ld,
+  trait.names     = trait_names,
+  chr             = chr,
+  n.blocks        = 20,
+  chisq.max       = chisq_cutoff,
+  stand           = FALSE
+))
+write_fixture(list(
+  munged_files = paste0("synth/", trait_names, ".sumstats.gz"),
+  ld_dir       = "synth/eur_w_ld_chr",
+  chr          = chr,
+  n_blocks     = 20,
+  trait_names  = trait_names,
+  m_total      = M_5_50,
+  chisq_max    = chisq_cutoff,
+  s            = mat_to_list(r_ldsc_chisq$S),
+  v            = mat_to_list(r_ldsc_chisq$V),
+  i            = mat_to_list(r_ldsc_chisq$I)
+), "ldsc_chisqmax")
+
 # ---------------------------------------------------------------------------
 # 6. Run R GenomicSEM sumstats -> merged per-SNP betas/SEs reference
 # ---------------------------------------------------------------------------
