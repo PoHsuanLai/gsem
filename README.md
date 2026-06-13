@@ -66,19 +66,19 @@ for your platform — **no Rust toolchain needed**:
 ```r
 # Linux (x86_64):
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.3/gsemr_0.1.3_linux.tar.gz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.2.0/gsemr_0.2.0_linux.tar.gz",
   repos = NULL
 )
 
 # macOS:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.3/gsemr_0.1.3.tgz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.2.0/gsemr_0.2.0.tgz",
   repos = NULL
 )
 
 # Windows:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.3/gsemr_0.1.3.zip",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.2.0/gsemr_0.2.0.zip",
   repos = NULL
 )
 ```
@@ -92,7 +92,7 @@ match, or for dev builds. You'll need [Rust](https://rustup.rs/)
 ```r
 # Source tarball — fetches internal crates from crates.io:
 install.packages(
-  "https://github.com/PoHsuanLai/gsem/releases/download/v0.1.3/gsemr_0.1.3.tar.gz",
+  "https://github.com/PoHsuanLai/gsem/releases/download/v0.2.0/gsemr_0.2.0.tar.gz",
   repos = NULL, type = "source"
 )
 
@@ -121,10 +121,10 @@ cargo install --path crates/gsem
 
 ```toml
 [dependencies]
-gsem-matrix = "0.1"
-gsem-ldsc   = "0.1"
-gsem-sem    = "0.1"
-gsem        = "0.1"   # pipeline + binary
+gsem-matrix = "0.2"
+gsem-ldsc   = "0.2"
+gsem-sem    = "0.2"
+gsem        = "0.2"   # pipeline + binary
 ```
 
 ## Usage
