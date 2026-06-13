@@ -221,6 +221,45 @@ jobs:
           R CMD INSTALL --build "$src_tarball"
           ls -la gsemr_*
 
+      # Guard the headline promise: the pre-built binary installs and loads
+      # with NO Rust toolchain. Strip cargo/rustc/rustup from PATH, install the
+      # just-built binary into a temp library, load it, and call a Rust-backed
+      # function. If the .so/.dll were not self-contained this fails here
+      # instead of silently shipping a broken "no-toolchain" install.
+      - name: Verify binary installs without a Rust toolchain
+        shell: bash
+        run: |
+          set -e
+          # Pick this platform's binary artifact.
+          case "${{ matrix.os }}" in
+            ubuntu-latest)  bin=$(ls gsemr_*_R_*-linux-gnu.tar.gz | head -n1) ;;
+            macos-latest)   bin=$(ls gsemr_*.tgz | head -n1) ;;
+            windows-latest) bin=$(ls gsemr_*.zip | head -n1) ;;
+          esac
+          echo "Verifying binary: $bin"
+
+          # Rebuild PATH without any Rust toolchain entries.
+          clean_path=$(printf '%s' "$PATH" | tr ':' '\n' \
+            | grep -viE 'cargo|rustup|[/\\]\.rustup|[/\\]rust' | paste -sd ':' -)
+          export PATH="$clean_path"
+          if command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo still on PATH; cannot prove toolchain-free install"; exit 1
+          fi
+          echo "cargo present after strip: no"
+
+          mkdir -p verify_lib
+          R CMD INSTALL --library=verify_lib "$bin"
+          Rscript -e '
+            .libPaths(c("verify_lib", .libPaths()))
+            stopifnot(nchar(Sys.which("cargo")) == 0)
+            library(gsemr)
+            # Exercise the Rust .so/.dll through an exported function.
+            m <- gsemr::write.model(matrix(c(0.8, 0.7, 0.6), 3, 1), diag(3), cutoff = 0.3)
+            stopifnot(is.character(m), nchar(m) > 0)
+            cat("OK: gsemr", as.character(packageVersion("gsemr")),
+                "loads and runs without a Rust toolchain\n")
+          '
+
       # Rename Linux binary to an unambiguous, user-friendly filename.
       # R produces `gsemr_<ver>_R_x86_64-pc-linux-gnu.tar.gz` which
       # collides with the source tarball extension. Rename to
