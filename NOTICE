@@ -1,0 +1,34 @@
+gsem — a Rust implementation of GenomicSEM
+Copyright (C) 2025 Po-Hsuan Lai
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. See the LICENSE file for the full text.
+
+--------------------------------------------------------------------------
+
+This work is derived from GenomicSEM, the reference R implementation of
+Genomic Structural Equation Modeling:
+
+    GenomicSEM
+    Copyright (C) the GenomicSEM authors
+    https://github.com/GenomicSEM/GenomicSEM
+    Licensed under GPL-3.0
+
+gsem is an independent reimplementation in Rust of the algorithms and
+public API of GenomicSEM. It links no GenomicSEM code and contains no
+copied source, but it is a port of that package's methods and is offered
+under the same GPL-3.0 license in keeping with the original work.
+
+GenomicSEM is the canonical reference implementation and the academic
+citation target. If you use this software, please cite the original
+paper:
+
+    Grotzinger, A. D., Rhemtulla, M., de Vlaming, R., Ritchie, S. J.,
+    Mallard, T. T., Hill, W. D., Ip, H. F., Marioni, R. E.,
+    McIntosh, A. M., Deary, I. J., Koellinger, P. D., Harden, K. P.,
+    Nivard, M. G., & Tucker-Drob, E. M. (2019). Genomic structural
+    equation modelling provides insights into the multivariate genetic
+    architecture of complex traits. Nature Human Behaviour, 3(5),
+    513-525. https://doi.org/10.1038/s41562-019-0566-x

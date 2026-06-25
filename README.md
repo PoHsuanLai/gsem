@@ -12,6 +12,14 @@ Rust implementation of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM) �
 
 Available as an **R package** (`gsemr`), **Python package** (`genomicsem`), **Rust crates**, and a **CLI**.
 
+> **Derived work.** gsem is an independent Rust reimplementation of the
+> algorithms and public API of [GenomicSEM](https://github.com/GenomicSEM/GenomicSEM)
+> (© the GenomicSEM authors, GPL-3.0). It is not a fork and links no
+> GenomicSEM code, but it is a port of that package's methods and is
+> released under the same GPL-3.0 license. GenomicSEM remains the
+> canonical reference implementation and citation target — see
+> [Citation](#citation) and the [NOTICE](NOTICE) file.
+
 ## Performance
 
 ![gsemr vs R GenomicSEM — wall-clock time on PGC Anxiety/OCD/PTSD sumstats](bench/benchmark_headline.png)
